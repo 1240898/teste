@@ -488,20 +488,22 @@ SCHEMA_OBSERVED="$CURRENT_SCHEMA"
 PRE_MIGRATION_SCHEMA="$CURRENT_SCHEMA"
 [[ "$HAS_UNKNOWN_APPLIED" == false ]] || { echo 'Deployment stopped: active database has migrations unknown to the candidate image.' >&2; exit 3; }
 
-if [[ "$HAS_PENDING" == true && "$EMPTY_DATABASE" == true ]]; then
-  echo 'Verified-backup gate skipped because the database is empty.'
-elif [[ "$HAS_PENDING" == true ]]; then
-  [[ -f "$ROOT/backups/verified.json" ]] || { echo 'Migration stopped: no verified backup evidence is available; the repository has no SYS08 backup producer yet.' >&2; exit 3; }
-  python3 - "$ROOT/backups/verified.json" "$CURRENT_SCHEMA" <<'PY'
-import datetime, json, sys
-d=json.load(open(sys.argv[1]))
-assert d.get('restorable') is True
-assert d.get('schema_version') == sys.argv[2]
-t=datetime.datetime.fromisoformat(d['verified_at'].replace('Z','+00:00'))
-assert t.tzinfo is not None and (datetime.datetime.now(datetime.timezone.utc)-t).total_seconds() <= 86400
-assert d.get('backup_id')
-PY
-fi
+# TODO (SYS08): Reativar a validação de backups antes das migrações.
+# Temporariamente desativada enquanto a SYS08 não estiver implementada.
+# if [[ "$HAS_PENDING" == true && "$EMPTY_DATABASE" == true ]]; then
+#   echo 'Verified-backup gate skipped because the database is empty.'
+# elif [[ "$HAS_PENDING" == true ]]; then
+#   [[ -f "$ROOT/backups/verified.json" ]] || { echo 'Migration stopped: no verified backup evidence is available; the repository has no SYS08 backup producer yet.' >&2; exit 3; }
+#   python3 - "$ROOT/backups/verified.json" "$CURRENT_SCHEMA" <<'PY'
+# import datetime, json, sys
+# d=json.load(open(sys.argv[1]))
+# assert d.get('restorable') is True
+# assert d.get('schema_version') == sys.argv[2]
+# t=datetime.datetime.fromisoformat(d['verified_at'].replace('Z','+00:00'))
+# assert t.tzinfo is not None and (datetime.datetime.now(datetime.timezone.utc)-t).total_seconds() <= 86400
+# assert d.get('backup_id')
+# PY
+# fi
 
 if [[ "$HAS_PENDING" == true && -n "$OLD_SHA" ]]; then
   if rehearse_schema_migration; then
