@@ -437,8 +437,22 @@ assert re.fullmatch(r'sha256:[0-9a-f]{64}', api) and re.fullmatch(r'sha256:[0-9a
 print(api, web)
 PY
 )"
-  export API_IMAGE_TAG="$OLD_SHA-${active_api_id#sha256:}" WEB_IMAGE_TAG="$OLD_SHA-${active_web_id#sha256:}"
-  ACTIVE_COMPOSE="$OPT_RELEASES/$OLD_SHA/$OLD_REV/docker-compose.yml"
+ACTIVE_API_REF=$(python3 -c \
+'import json,sys; print(json.load(open(sys.argv[1])).get("api_image_tag", ""))' \
+"$ACTIVE_MANIFEST")
+
+ACTIVE_WEB_REF=$(python3 -c \
+  'import json,sys; print(json.load(open(sys.argv[1])).get("web_image_tag", ""))' \
+  "$ACTIVE_MANIFEST")
+
+ACTIVE_API_REF=$(image_ref_for_manifest \
+  laprizza-api "$OLD_SHA" "$active_api_id" "$ACTIVE_API_REF") || exit 2
+
+ACTIVE_WEB_REF=$(image_ref_for_manifest \
+  laprizza-web "$OLD_SHA" "$active_web_id" "$ACTIVE_WEB_REF") || exit 2
+
+export API_IMAGE_TAG="${ACTIVE_API_REF#laprizza-api:}"
+export WEB_IMAGE_TAG="${ACTIVE_WEB_REF#laprizza-web:}"
   [[ -r "$ACTIVE_COMPOSE" ]] || { echo 'Active release files are missing' >&2; exit 2; }
   verify_running_images "$ACTIVE_COMPOSE" "$active_api_id" "$active_web_id" || {
     echo 'Active containers do not match the image IDs recorded for the active release.' >&2
