@@ -1,0 +1,536 @@
+name: DEI deployment
+
+on:
+  schedule:
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Deploy the default branch or recover a retained release
+        required: true
+        type: choice
+        options: [deploy, rollback]
+        default: deploy
+      release_sha:
+        description: Full commit SHA (required for rollback; optional for deploy)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+# Deploy, manual rollback and scheduled runs share one FIFO queue. Do not cancel an
+# active deployment: its automatic recovery must finish before the next operation.
+concurrency:
+  group: dei-release
+  queue: max
+
+env:
+  NODE_ENV: test
+
+jobs:
+  resolve:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name != 'workflow_dispatch' || inputs.operation == 'deploy')
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.revision.outputs.sha }}
+      config_revision: ${{ vars.DEI_CONFIG_REVISION }}
+      public_host: ${{ vars.DEI_PUBLIC_HOST }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate approved revision
+        id: revision
+        env:
+          REQUESTED_SHA: ${{ inputs.release_sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          sha="${REQUESTED_SHA:-${GITHUB_SHA}}"
+          [[ "$sha" =~ ^[0-9a-fA-F]{40}$ ]]
+          sha="${sha,,}"
+          git fetch --no-tags origin "$DEFAULT_BRANCH"
+          git cat-file -e "$sha^{commit}"
+          git merge-base --is-ancestor "$sha" "origin/$DEFAULT_BRANCH"
+          printf 'sha=%s\n' "$sha" >> "$GITHUB_OUTPUT"
+
+  backend-validation:
+    needs: resolve
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: laprizza_test
+          POSTGRES_USER: laprizza
+          POSTGRES_PASSWORD: laprizza_test_password
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U laprizza -d laprizza_test"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      RUN_DATABASE_TESTS: '1'
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGDATABASE: laprizza_test
+      PGUSER: laprizza
+      PGPASSWORD: laprizza_test_password
+      PGSSLMODE: disable
+      PGPOOL_MAX: '10'
+      JWT_SECRET: ci-only-secret-with-at-least-32-bytes
+      SESSION_COOKIE_SECURE: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Install and lint
+        working-directory: backend
+        run: npm ci && npm run lint
+      - name: Require and migrate isolated runner PostgreSQL
+        working-directory: backend
+        run: |
+          test "$RUN_DATABASE_TESTS" = 1
+          npm run db:migrate
+      - name: Run unit and PostgreSQL integration suites
+        id: backend-jest
+        working-directory: backend
+        run: |
+          mkdir -p reports
+          npm run test:coverage -- --runInBand --json --outputFile=reports/jest-results.json
+      - name: Archive backend test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-reports-${{ github.run_id }}
+          path: backend/coverage/
+          if-no-files-found: ignore
+          retention-days: 90
+      - name: Archive backend Jest results
+        if: always() && (steps.backend-jest.outcome == 'success' || steps.backend-jest.outcome == 'failure')
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-jest-results-${{ github.run_id }}
+          path: backend/reports/jest-results.json
+          if-no-files-found: error
+          retention-days: 90
+
+  frontend-validation:
+    needs: resolve
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install and lint
+        working-directory: frontend
+        run: npm ci && npm run lint
+      - name: Run frontend tests
+        id: frontend-jest
+        working-directory: frontend
+        run: |
+          mkdir -p reports
+          npm test -- --runInBand --coverage --json --outputFile=reports/jest-results.json
+      - name: Run API health integration test
+        working-directory: frontend
+        run: npm --prefix ../backend ci && npm run test:integration
+      - name: Archive frontend test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-test-reports-${{ github.run_id }}
+          path: frontend/coverage/
+          if-no-files-found: ignore
+          retention-days: 90
+      - name: Archive frontend Jest results
+        if: always() && (steps.frontend-jest.outcome == 'success' || steps.frontend-jest.outcome == 'failure')
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-jest-results-${{ github.run_id }}
+          path: frontend/reports/jest-results.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Build and scan production bundle
+        working-directory: frontend
+        env:
+          VITE_BACKEND_BASE_URL: /api/v1
+        run: npm run build && npm run check:bundle
+
+  package:
+    needs: [resolve, backend-validation, frontend-validation]
+    runs-on: ubuntu-latest
+    outputs:
+      artifact_name: ${{ steps.meta.outputs.artifact_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+      - name: Build immutable images and release manifest
+        id: meta
+        env:
+          RELEASE_SHA: ${{ needs.resolve.outputs.sha }}
+          CONFIG_REV: ${{ needs.resolve.outputs.config_revision }}
+          IMAGE_BUILD_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          [[ -n "$CONFIG_REV" && "$CONFIG_REV" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]
+          [[ "$IMAGE_BUILD_ID" =~ ^[0-9]+$ ]]
+          mkdir -p release-bundle
+
+          docker build --pull -t "laprizza-api:$RELEASE_SHA" backend
+          docker build --pull --build-arg VITE_BACKEND_BASE_URL=/api/v1 -t "laprizza-web:$RELEASE_SHA" frontend
+
+          api_build_id="$(docker image inspect --format '{{.Id}}' "laprizza-api:$RELEASE_SHA")"
+          web_build_id="$(docker image inspect --format '{{.Id}}' "laprizza-web:$RELEASE_SHA")"
+          [[ "$api_build_id" =~ ^sha256:[0-9a-f]{64}$ && "$web_build_id" =~ ^sha256:[0-9a-f]{64}$ ]]
+          api_tag="$RELEASE_SHA-${api_build_id#sha256:}-$IMAGE_BUILD_ID"
+          web_tag="$RELEASE_SHA-${web_build_id#sha256:}-$IMAGE_BUILD_ID"
+          docker tag "laprizza-api:$RELEASE_SHA" "laprizza-api:$api_tag"
+          docker tag "laprizza-web:$RELEASE_SHA" "laprizza-web:$web_tag"
+
+          docker save "laprizza-api:$api_tag" "laprizza-web:$web_tag" -o release-bundle/images.tar
+          target_schema="$(find backend/migrations -maxdepth 1 -name '*.sql' -print | sed 's|.*/||' | sort | tail -n 1)"
+
+          python3 - "$RELEASE_SHA" "$CONFIG_REV" "$target_schema" "laprizza-api:$api_tag" "laprizza-web:$web_tag" release-bundle/images.tar > release-bundle/manifest.json <<'PY'
+          import hashlib
+          import json
+          import sys
+          import tarfile
+
+          release_sha, config_revision, target_schema, api_tag, web_tag, archive_path = sys.argv[1:]
+
+          with tarfile.open(archive_path, 'r:*') as archive:
+              entries = json.load(archive.extractfile('manifest.json'))
+
+              def image_id(tag):
+                  matches = [entry for entry in entries if tag in (entry.get('RepoTags') or [])]
+                  if len(matches) != 1:
+                      raise SystemExit(f'Expected one archive image tagged {tag}')
+                  config = archive.extractfile(matches[0]['Config'])
+                  if config is None:
+                      raise SystemExit(f'Archive image config is missing for {tag}')
+                  return 'sha256:' + hashlib.sha256(config.read()).hexdigest()
+
+              api_id = image_id(api_tag)
+              web_id = image_id(web_tag)
+
+          print(json.dumps({
+              'release_sha': release_sha,
+              'config_revision': config_revision,
+              'api_image_id': api_id,
+              'web_image_id': web_id,
+              'target_schema_version': target_schema,
+              'api_image_tag': api_tag,
+              'web_image_tag': web_tag,
+          }))
+          PY
+          cp deploy/docker-compose.yml deploy/deploy.sh deploy/rollback.sh release-bundle/
+          printf 'artifact_name=dei-release-%s\n' "$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dei-release-${{ needs.resolve.outputs.sha }}
+          path: release-bundle/
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dei-manifest-${{ needs.resolve.outputs.sha }}
+          path: release-bundle/manifest.json
+          if-no-files-found: error
+          retention-days: 90
+
+  deploy:
+    needs: [resolve, package]
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    environment: dei
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dei-release-${{ needs.resolve.outputs.sha }}
+          path: release-bundle
+      - name: Configure pinned SSH access
+        env:
+          SSH_KEY: ${{ secrets.DEI_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEI_SSH_KNOWN_HOSTS }}
+          SSH_HOST: ${{ vars.DEI_SSH_HOST }}
+          SSH_PORT: ${{ vars.DEI_SSH_PORT }}
+          SSH_USER: ${{ vars.DEI_SSH_USER }}
+        run: |
+          set -euo pipefail
+          exec > >(tee -a release-bundle/deployment.log) 2>&1
+          test -n "$SSH_KEY" && test -n "$KNOWN_HOSTS" && test -n "$SSH_HOST" && test -n "$SSH_PORT"
+          [[ "$SSH_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$SSH_PORT" =~ ^[0-9]{1,5}$ ]] && (( SSH_PORT >= 1 && SSH_PORT <= 65535 ))
+          [[ "$SSH_USER" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]]
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/dei_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 0600 ~/.ssh/dei_key ~/.ssh/known_hosts
+          printf 'Host dei-vm\n  HostName %s\n  Port %s\n  User %s\n  IdentityFile ~/.ssh/dei_key\n  IdentitiesOnly yes\n  BatchMode yes\n  ClearAllForwardings yes\n  ServerAliveInterval 30\n  ServerAliveCountMax 4\n  StrictHostKeyChecking yes\n' "$SSH_HOST" "$SSH_PORT" "$SSH_USER" >> ~/.ssh/config
+          chmod 0600 ~/.ssh/config
+      - name: Transfer release and deploy under VM lock
+        id: deploy-operation
+        env:
+          RELEASE_SHA: ${{ needs.resolve.outputs.sha }}
+          CONFIG_REVISION: ${{ needs.resolve.outputs.config_revision }}
+          PUBLIC_HOST: ${{ needs.resolve.outputs.public_host }}
+          SSH_USER: ${{ vars.DEI_SSH_USER }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          exec > >(tee -a release-bundle/deployment.log) 2>&1
+          test -n "$CONFIG_REVISION" && test -n "$PUBLIC_HOST" && test -n "$SSH_USER"
+          [[ "$CONFIG_REVISION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]
+          [[ "$PUBLIC_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$SSH_USER" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]]
+          remote="${SSH_USER}@dei-vm"
+          incoming="/var/lib/laprizza/incoming/${RUN_ID}"
+          # Values interpolated into the remote command are fixed-path IDs and validated above.
+          # shellcheck disable=SC2029
+          ssh "$remote" "install -d -m 0700 '$incoming'"
+          scp release-bundle/* "$remote:$incoming/"
+          # shellcheck disable=SC2029
+          ssh "$remote" "INCOMING_DIR='$incoming' RELEASE_SHA='$RELEASE_SHA' DEI_CONFIG_REVISION='$CONFIG_REVISION' DEI_PUBLIC_HOST='$PUBLIC_HOST' DEPLOY_RUN_ID='${RUN_ID}-${RUN_ATTEMPT}' bash '$incoming/deploy.sh'"
+      - name: Collect remote deployment result
+        if: always()
+        env:
+          SSH_USER: ${{ vars.DEI_SSH_USER }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          REMOTE_OUTCOME: ${{ steps.deploy-operation.outcome }}
+          EXPECTED_SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          set -euo pipefail
+          result_file=release-bundle/operation-result.json
+          result_collected=false
+          if [[ -f ~/.ssh/config && -n "${SSH_USER:-}" ]]; then
+            remote="${SSH_USER}@dei-vm"
+            # The remote filename contains only GitHub's numeric run ID and attempt.
+            # shellcheck disable=SC2029
+            if ssh "$remote" "cat '/var/lib/laprizza/operations/${RUN_ID}-${RUN_ATTEMPT}-deploy.json'" > "$result_file" 2>> release-bundle/deployment.log; then
+              result_collected=true
+            else
+              rm -f "$result_file"
+              echo 'Remote deployment result was unavailable; see SSH diagnostics above.' >> release-bundle/deployment.log
+            fi
+          else
+            echo 'SSH preparation did not complete; remote result was not available.' >> release-bundle/deployment.log
+          fi
+          if [[ "$result_collected" == true ]]; then
+            if python3 - "$result_file" "${RUN_ID}-${RUN_ATTEMPT}" "$EXPECTED_SHA" "$REMOTE_OUTCOME" <<'PY'
+          import json, re, sys
+          path, run_id, expected_sha, remote_outcome = sys.argv[1:]
+          try:
+              with open(path) as stream:
+                  result = json.load(stream)
+          except Exception:
+              raise SystemExit('Remote deployment result is not valid JSON.')
+          if not isinstance(result, dict):
+              raise SystemExit('Remote deployment result has an invalid shape.')
+          if result.get('operation') != 'deploy' or result.get('run_id') != run_id:
+              raise SystemExit('Remote deployment result does not match this operation.')
+          requested_sha = result.get('requested_release_sha')
+          if requested_sha not in (None, expected_sha):
+              raise SystemExit('Remote deployment result has a different requested SHA.')
+          status = result.get('status')
+          code = result.get('exit_code')
+          if remote_outcome == 'success' and status != 'result-succeeded':
+              raise SystemExit('Successful deployment step has a failed result manifest.')
+          if status == 'result-succeeded':
+              if type(code) is not int or code != 0:
+                  raise SystemExit('Successful deployment result has a nonzero exit code.')
+              if remote_outcome == 'success':
+                  if requested_sha != expected_sha:
+                      raise SystemExit('Successful deployment result is missing the requested SHA.')
+                  if result.get('active_release_sha') != expected_sha:
+                      raise SystemExit('Successful deployment result has the wrong active SHA.')
+                  if not all(re.fullmatch(r'sha256:[0-9a-f]{64}', result.get(key, '')) for key in ('api_image_id', 'web_image_id')):
+                      raise SystemExit('Successful deployment result is missing valid image IDs.')
+                  if not isinstance(result.get('config_revision'), str) or not result['config_revision']:
+                      raise SystemExit('Successful deployment result is missing the config revision.')
+                  if not isinstance(result.get('schema_version_observed'), str) or not result['schema_version_observed']:
+                      raise SystemExit('Successful deployment result is missing the observed schema.')
+          elif status == 'result-failed':
+              if type(code) is not int or code == 0:
+                  raise SystemExit('Failed deployment result has an invalid exit code.')
+          else:
+              raise SystemExit('Remote deployment result has an invalid status.')
+          PY
+            then
+              echo 'Collected and validated sanitized remote deployment result.' >> release-bundle/deployment.log
+            else
+              rm -f "$result_file"
+              echo 'Remote deployment result was invalid and was not archived.' >> release-bundle/deployment.log
+              if [[ "$REMOTE_OUTCOME" == success ]]; then
+                echo 'Remote deployment reported success without a valid result manifest.' >&2
+                exit 1
+              fi
+            fi
+          elif [[ "$REMOTE_OUTCOME" == success ]]; then
+            echo 'Remote deployment reported success but its result manifest could not be collected.' >&2
+            exit 1
+          fi
+      - name: Archive deployment result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-result-${{ github.run_id }}
+          path: |
+            release-bundle/deployment.log
+            release-bundle/operation-result.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+  rollback:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && github.event_name == 'workflow_dispatch' && inputs.operation == 'rollback'
+    runs-on: ubuntu-latest
+    environment: dei-rollback
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: deploy/rollback.sh
+      - name: Validate retained revision
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-fA-F]{40}$ ]]
+      - name: Configure pinned SSH access
+        env:
+          SSH_KEY: ${{ secrets.DEI_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEI_SSH_KNOWN_HOSTS }}
+          SSH_HOST: ${{ vars.DEI_SSH_HOST }}
+          SSH_PORT: ${{ vars.DEI_SSH_PORT }}
+          SSH_USER: ${{ vars.DEI_SSH_USER }}
+        run: |
+          set -euo pipefail
+          exec > >(tee -a deployment.log) 2>&1
+          test -n "$SSH_KEY" && test -n "$KNOWN_HOSTS" && test -n "$SSH_HOST" && test -n "$SSH_PORT"
+          [[ "$SSH_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$SSH_PORT" =~ ^[0-9]{1,5}$ ]] && (( SSH_PORT >= 1 && SSH_PORT <= 65535 ))
+          [[ "$SSH_USER" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]]
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/dei_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 0600 ~/.ssh/dei_key ~/.ssh/known_hosts
+          printf 'Host dei-vm\n  HostName %s\n  Port %s\n  User %s\n  IdentityFile ~/.ssh/dei_key\n  IdentitiesOnly yes\n  BatchMode yes\n  ClearAllForwardings yes\n  ServerAliveInterval 30\n  ServerAliveCountMax 4\n  StrictHostKeyChecking yes\n' "$SSH_HOST" "$SSH_PORT" "$SSH_USER" >> ~/.ssh/config
+          chmod 0600 ~/.ssh/config
+      - name: Run retained release recovery
+        id: rollback-operation
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          SSH_USER: ${{ vars.DEI_SSH_USER }}
+          PUBLIC_HOST: ${{ vars.DEI_PUBLIC_HOST }}
+        run: |
+          set -euo pipefail
+          exec > >(tee -a deployment.log) 2>&1
+          [[ "$PUBLIC_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$SSH_USER" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]]
+          remote="${SSH_USER}@dei-vm"
+          # The fixed incoming path and validated SHA/host are intentionally expanded client-side.
+          # shellcheck disable=SC2029
+          scp deploy/rollback.sh "$remote:/var/lib/laprizza/incoming/rollback-${GITHUB_RUN_ID}.sh"
+          # shellcheck disable=SC2029
+          ssh "$remote" "RELEASE_SHA='$RELEASE_SHA' DEI_PUBLIC_HOST='$PUBLIC_HOST' DEPLOY_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' bash '/var/lib/laprizza/incoming/rollback-${GITHUB_RUN_ID}.sh'"
+      - name: Collect remote rollback result
+        if: always()
+        env:
+          SSH_USER: ${{ vars.DEI_SSH_USER }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          REMOTE_OUTCOME: ${{ steps.rollback-operation.outcome }}
+          EXPECTED_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          result_file=operation-result.json
+          result_collected=false
+          if [[ -f ~/.ssh/config && -n "${SSH_USER:-}" ]]; then
+            remote="${SSH_USER}@dei-vm"
+            # The remote filename contains only GitHub's numeric run ID and attempt.
+            # shellcheck disable=SC2029
+            if ssh "$remote" "cat '/var/lib/laprizza/operations/${RUN_ID}-${RUN_ATTEMPT}-rollback.json'" > "$result_file" 2>> deployment.log; then
+              result_collected=true
+            else
+              rm -f "$result_file"
+              echo 'Remote rollback result was unavailable; see SSH diagnostics above.' >> deployment.log
+            fi
+          else
+            echo 'SSH preparation did not complete; remote result was not available.' >> deployment.log
+          fi
+          if [[ "$result_collected" == true ]]; then
+            if python3 - "$result_file" "${RUN_ID}-${RUN_ATTEMPT}" "$EXPECTED_SHA" "$REMOTE_OUTCOME" <<'PY'
+          import json, re, sys
+          path, run_id, expected_sha, remote_outcome = sys.argv[1:]
+          expected_sha = expected_sha.lower()
+          try:
+              with open(path) as stream:
+                  result = json.load(stream)
+          except Exception:
+              raise SystemExit('Remote rollback result is not valid JSON.')
+          if not isinstance(result, dict):
+              raise SystemExit('Remote rollback result has an invalid shape.')
+          if result.get('operation') != 'rollback' or result.get('run_id') != run_id:
+              raise SystemExit('Remote rollback result does not match this operation.')
+          if result.get('requested_release_sha') != expected_sha:
+              raise SystemExit('Remote rollback result has a different requested SHA.')
+          status = result.get('status')
+          code = result.get('exit_code')
+          if remote_outcome == 'success' and status != 'result-succeeded':
+              raise SystemExit('Successful rollback step has a failed result manifest.')
+          if status == 'result-succeeded':
+              if type(code) is not int or code != 0:
+                  raise SystemExit('Successful rollback result has a nonzero exit code.')
+              if remote_outcome == 'success':
+                  if result.get('active_release_sha') != expected_sha:
+                      raise SystemExit('Successful rollback result has the wrong active SHA.')
+                  if not all(re.fullmatch(r'sha256:[0-9a-f]{64}', result.get(key, '')) for key in ('api_image_id', 'web_image_id')):
+                      raise SystemExit('Successful rollback result is missing valid image IDs.')
+                  if not isinstance(result.get('config_revision'), str) or not result['config_revision']:
+                      raise SystemExit('Successful rollback result is missing the config revision.')
+                  if not isinstance(result.get('schema_version_observed'), str) or not result['schema_version_observed']:
+                      raise SystemExit('Successful rollback result is missing the observed schema.')
+          elif status == 'result-failed':
+              if type(code) is not int or code == 0:
+                  raise SystemExit('Failed rollback result has an invalid exit code.')
+          else:
+              raise SystemExit('Remote rollback result has an invalid status.')
+          PY
+            then
+              echo 'Collected and validated sanitized remote rollback result.' >> deployment.log
+            else
+              rm -f "$result_file"
+              echo 'Remote rollback result was invalid and was not archived.' >> deployment.log
+              if [[ "$REMOTE_OUTCOME" == success ]]; then
+                echo 'Remote rollback reported success without a valid result manifest.' >&2
+                exit 1
+              fi
+            fi
+          elif [[ "$REMOTE_OUTCOME" == success ]]; then
+            echo 'Remote rollback reported success but its result manifest could not be collected.' >&2
+            exit 1
+          fi
+      - name: Archive rollback result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rollback-result-${{ github.run_id }}
+          path: |
+            deployment.log
+            operation-result.json
+          if-no-files-found: ignore
+          retention-days: 90
