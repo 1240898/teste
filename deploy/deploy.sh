@@ -429,6 +429,7 @@ fi
 
 if [[ "$OLD_SHA" == "$SHA" && "$OLD_REV" == "$CONFIG_REV" ]]; then
   ACTIVE_MANIFEST="$ROOT/releases/$OLD_SHA/$OLD_REV/manifest.json"
+  ACTIVE_COMPOSE="$OPT_RELEASES/$OLD_SHA/$OLD_REV/docker-compose.yml"
   [[ -r "$ACTIVE_MANIFEST" ]] || { echo 'Active release manifest is missing' >&2; exit 2; }
   read -r active_api_id active_web_id <<<"$(python3 - "$ACTIVE_MANIFEST" <<'PY'
 import json, re, sys
