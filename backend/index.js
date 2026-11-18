@@ -116,6 +116,11 @@ try {
   console.error(
     'API startup failed. Check security configuration, database configuration and availability.',
   );
+  console.error('Startup error:', {
+    name: error?.name,
+    code: error?.code,
+    message: error?.message,
+  });
   await database?.close();
   process.exitCode = 1;
 }
