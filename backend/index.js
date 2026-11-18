@@ -112,7 +112,7 @@ try {
   });
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);
-} catch {
+} catch (error){
   console.error(
     'API startup failed. Check security configuration, database configuration and availability.',
   );
