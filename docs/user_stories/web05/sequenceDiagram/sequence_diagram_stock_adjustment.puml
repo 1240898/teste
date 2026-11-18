@@ -1,0 +1,160 @@
+@startuml sequence_diagram_stock_adjustment
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - WEB05 Stock Adjustment (BCK09)
+
+actor User as "Manager"
+participant Page as "StockManagementPage\n(WEB05)"
+participant API as "stockApi\n(WEB01 adapter)"
+participant Req as "ModuleRequest\n(WEB01)"
+participant Client as "apiClient\n(WEB01)"
+participant Routes as "StockRoutes\n(Back-End)"
+participant AuthM as "AuthMiddleware"
+participant RoleM as "RoleMiddleware"
+participant ValMW as "ValidationMiddleware"
+participant Ctrl as "StockController"
+participant Svc as "StockManagementService\n(BCK09)"
+participant UoW as "PostgresUnitOfWork"
+participant Repo as "PostgresStockRepository"
+participant Errors as "errorHandler"
+
+note over User, Repo
+    WEB05 provides the stock adjustment page; stock rules and persistence belong to BCK09.
+    Endpoint: POST /api/v1/stock/{productId}/adjustments (relative to apiClient).
+    The adjustment is performed transactionally.
+end note
+
+activate User
+User -> Page : submits adjustment (productId, direction, units)
+activate Page
+Page -> Page : validate form and prepare payload
+
+Page -> API : adjust(accessToken, productId, payload)
+activate API
+API -> Req : request("POST", "/stock/" + encodeURIComponent(productId) + "/adjustments", { accessToken, body: payload })
+activate Req
+Req -> Client : request("POST", "/stock/" + encodeURIComponent(productId) + "/adjustments", { accessToken, body: payload })
+activate Client
+Client -> Routes : HTTP POST + Bearer Token (/api/v1 prefix added)
+activate Routes
+
+Routes -> AuthM : verifyToken(req, res, next)
+activate AuthM
+AuthM --> Routes : authenticated actor
+deactivate AuthM
+
+Routes -> RoleM : requireRole("MANAGER")
+activate RoleM
+RoleM --> Routes : role verified
+deactivate RoleM
+
+Routes -> ValMW : validate parameters and body
+activate ValMW
+
+alt Request validation fails
+    ValMW --> Routes : throws AppError(400, "Invalid request body")
+    deactivate ValMW
+    Routes -> Errors : handle(error, req, res, next)
+    activate Errors
+    Errors --> Routes : HTTP 400 error response
+    deactivate Errors
+    deactivate Routes
+    Routes --> Client : HTTP 400 Bad Request
+    deactivate Client
+    Client --> Req : throws ApiError(400)
+    deactivate Req
+    Req --> API : throws request error
+    deactivate Req
+    API --> Page : throws request error
+    deactivate API
+    Page --> User : displays validation feedback; preserves input
+
+else Request validation succeeds
+    ValMW --> Routes : validated request
+    deactivate ValMW
+    Routes -> Ctrl : adjust(req, res)
+    activate Ctrl
+    Ctrl -> Svc : adjustStock(ProductId, StockAdjustmentDTO)
+    activate Svc
+    Svc -> UoW : withTransaction(work)
+    activate UoW
+    UoW -> Repo : findCurrentByProductIdForUpdate(productId, tx)
+    activate Repo
+    Repo --> UoW : current StockInformation
+    deactivate Repo
+
+    alt Business rule fails (404 / 409)
+        UoW --> Svc : throws AppError (transaction rolled back)
+        deactivate UoW
+        Svc --> Ctrl : propagates error
+        deactivate Svc
+        Ctrl --> Routes : propagates error
+        deactivate Ctrl
+        Routes -> Errors : handle(error, req, res, next)
+        activate Errors
+        Errors --> Routes : HTTP 4xx error response
+        deactivate Errors
+        deactivate Routes
+        Routes --> Client : HTTP 4xx response
+        deactivate Client
+        Client --> Req : throws ApiError
+        deactivate Client
+        Req --> API : throws request error
+        deactivate Req
+        API --> Page : throws request error
+        deactivate API
+        Page --> User : displays business feedback; preserves input
+
+    else Timeout / Network drop / Server Error (5xx) during non-idempotent adjustment (BR 25)
+        UoW -> Repo : save(updatedStock, tx)
+        activate Repo
+        Repo --> UoW : throws persistence/timeout error
+        deactivate Repo
+        UoW --> Svc : throws technical error (transaction rolled back or committed before connection dropped)
+        deactivate UoW
+        Svc --> Ctrl : propagates error
+        deactivate Ctrl
+        Routes -> Errors : handle(error, req, res, next)
+        activate Errors
+        Errors --> Routes : HTTP 5xx error response
+        deactivate Errors
+        deactivate Routes
+        Routes --> Client : HTTP 5xx / Network Error
+        deactivate Client
+        Client --> Req : throws ApiError(5xx)
+        deactivate Client
+        Req --> API : throws request error
+        deactivate Req
+        API --> Page : throws request error
+        deactivate API
+        Page --> User : marks state as Unknown/Unconfirmed; blocks duplicate submission; instructs consulting GET /stock/{productId} to verify current balance
+
+    else Stock adjustment succeeds
+        UoW -> Repo : save(updatedStock, tx)
+        activate Repo
+        Repo --> UoW : saved stock
+        deactivate Repo
+        UoW --> Svc : StockAdjustmentResultDTO
+        deactivate UoW
+        Svc --> Ctrl : StockAdjustmentResultDTO
+        deactivate Svc
+        Ctrl --> Routes : 200 OK (JSON response)
+        deactivate Ctrl
+        deactivate Routes
+        Routes --> Client : HTTP 200 OK
+        deactivate Client
+        Client --> Req : resolves response
+        deactivate Client
+        Req --> API : returns adjustment result
+        deactivate Req
+        API --> Page : StockAdjustmentResultDTO
+        deactivate API
+        Page --> User : displays updated stock
+    end
+end
+
+deactivate Page
+deactivate User
+@enduml

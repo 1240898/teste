@@ -1,0 +1,123 @@
+@startuml class_diagram
+title WEB02 - Class Diagram: Shell, Navigation and Route Orientation
+
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing false
+skinparam ranksep 32
+skinparam nodesep 17
+skinparam linetype polyline
+left to right direction
+
+package "Application and session" {
+    class App <<WEB01>> {
+        + render()
+    }
+    class BrowserRouter <<React Router>> {
+        + navigate(to, options)
+        + location
+    }
+    class AuthProvider <<AA03 / AA04>> {
+        + status
+        + refresh()
+    }
+}
+
+package "Routing and access (WEB03)" {
+    class AppRoutes <<component>> {
+        + resolve(location, auth)
+        + publishView(view)
+    }
+    class navigationPolicy <<module>> {
+        + findSectionByPath(path)
+        + getVisibleSections(auth)
+        + isSafeReturnPath(path)
+    }
+    class NavigationSection <<record>> {
+        + id
+        + path
+        + labelKey
+        + group
+        + enabled
+    }
+    class ProtectedRoute <<component>> {
+        + evaluate(section, auth)
+    }
+    class NavigationMenu <<component>> {
+        + render(items, currentSectionId)
+        + scrollSections(direction)
+    }
+    class AccessDeniedPage <<component>> {
+        + render(messageKey, startPath)
+    }
+}
+
+package "Shared presentation (WEB02)" {
+    class AppLayout <<component>> {
+        + render(items, view, content)
+    }
+    class AppHeader <<component>> {
+        + render(items, currentSectionId)
+        + measureHeight()
+    }
+    class RouteOrientation <<component>> {
+        + present(view, locale)
+        + skipToMain()
+    }
+    class ResolvedView <<record>> {
+        + key
+        + kind
+        + titleKey
+        + currentSectionId: string or null
+        + ready: boolean
+    }
+    class StartPage <<component>> {
+        + render(items, accountContent)
+    }
+    class NotFoundPage <<component>> {
+        + render(startPath)
+    }
+    class LocaleProvider <<component>> {
+        + t(key, values)
+    }
+}
+
+package "Routed content" {
+    class AccountRoute <<existing>> {
+        + render()
+    }
+    class FeatureView <<feature owner>> {
+        + render()
+    }
+    class ModuleErrorBoundary <<WEB01>> {
+        + render()
+    }
+}
+
+App *-- "1" BrowserRouter : mounts
+App *-- "1" AuthProvider : mounts
+BrowserRouter *-- "1" AppRoutes : supplies location
+AppRoutes --> AuthProvider : reads session state
+AppRoutes --> navigationPolicy : matches and filters
+navigationPolicy o-- "0..*" NavigationSection : registers
+AppRoutes --> ProtectedRoute : delegates protected access
+ProtectedRoute --> AuthProvider : revalidates session
+AppRoutes ..> ResolvedView : publishes outcome
+AppRoutes *-- "1" AppLayout : keeps mounted
+AppRoutes ..> StartPage : selects root view
+AppRoutes ..> AccessDeniedPage : selects denied view
+AppRoutes ..> NotFoundPage : selects unmatched view
+AppRoutes ..> AccountRoute : selects account utility
+AppRoutes ..> ModuleErrorBoundary : mounts authorized module
+ModuleErrorBoundary o-- "0..1" FeatureView : contains
+AppLayout *-- "1" AppHeader : mounts
+AppLayout *-- "1" RouteOrientation : owns
+AppHeader *-- "1" NavigationMenu : contains
+NavigationMenu ..> NavigationSection : renders eligible links
+NavigationMenu ..> LocaleProvider : localizes labels
+RouteOrientation ..> ResolvedView : derives heading and focus
+RouteOrientation ..> LocaleProvider : localizes title
+StartPage ..> NavigationSection : renders available destinations
+StartPage o-- "0..1" AccountRoute : includes account content
+
+@enduml

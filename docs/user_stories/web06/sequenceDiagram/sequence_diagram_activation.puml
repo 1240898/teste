@@ -1,0 +1,183 @@
+@startuml sequence_diagram_activation
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - WEB06 Activate a Kitchen Configuration (single consistent operation, confirmation and viewer reload)
+
+actor Manager as "LaPrizza Manager"
+participant List as "KitchenConfigurationListPage"
+participant Dialog as "ActivationConfirmDialog\n(WEB04 ConfirmDialog)"
+participant Api as "kitchenConfigurationApi"
+participant Req as "ModuleRequest\n(WEB01) + apiClient"
+participant Routes as "KitchenConfigurationRoutes\n(AuthMiddleware -> RoleMiddleware)"
+participant Service as "KitchenConfigurationService"
+participant UoW as "IUnitOfWork\n(PostgresUnitOfWork)"
+participant Catalogue as "IKitchenAssetCatalogue"
+participant Files as "IKitchenAssetFileStore"
+participant Validator as "KitchenLayoutValidator"
+participant Repo as "IKitchenConfigurationRepository"
+database PG as "PostgreSQL"
+
+note over Manager, PG
+    Current state: KCF-00001 "Compact kitchen" = ACTIVE, KCF-00002 "Extended line" = INACTIVE.
+    Invariant (BR 8): at most one ACTIVE row - enforced by the service AND by the
+    partial unique index kitchen_configurations_single_active ON (status) WHERE status = 'ACTIVE'.
+    Order inside the transaction (same as KitchenConfigurationService.activateConfiguration in the
+    class diagram): lock -> load target FOR UPDATE -> re-validate (catalogue AND files)
+    -> already ACTIVE? return -> status updates. A missing file is a 422 BEFORE any status change.
+end note
+
+Manager -> List : clicks "Activate" on KCF-00002
+activate List
+List -> Dialog : open(target = KCF-00002, currentActive = KCF-00001)
+Dialog --> Manager : "Activate 'Extended line'? 'Compact kitchen'\nwill become inactive and the viewer will use\nthe new layout."
+alt Manager cancels
+    Manager -> Dialog : Cancel
+    Dialog --> List : cancelled (no request)
+else Manager confirms
+    Manager -> Dialog : Confirm
+    Dialog --> List : confirmed
+    List -> List : activating = true (buttons disabled, WEB04 AC 7)
+    List -> Api : activate("KCF-00002")
+    activate Api
+    Api -> Req : request("POST", "/kitchen-configurations/KCF-00002/activation")
+    activate Req
+    Req -> Routes : POST /api/v1/kitchen-configurations/KCF-00002/activation (Bearer)
+    activate Routes
+    note right of Routes : only MANAGER (403 otherwise; WEB03 SD 3)
+    Routes -> Service : activateConfiguration("KCF-00002", actor)
+    activate Service
+    Service -> UoW : withTransaction(tx => work(tx))
+    activate UoW
+    UoW -> PG : BEGIN (READ COMMITTED)
+
+    group work(tx) - all or nothing
+        UoW -> Service : work(tx)
+        Service -> Repo : lockActivation(tx)
+        activate Repo
+        Repo -> PG : SELECT pg_advisory_xact_lock(<kitchen activation key>)
+        note right of PG
+            Serialises activations: a second, concurrent
+            activation waits here until this transaction
+            ends and then reads the committed state.
+            Released automatically at COMMIT / ROLLBACK.
+        end note
+        PG --> Repo : lock granted
+        deactivate Repo
+        Service -> Repo : findByIdForUpdate("KCF-00002", tx)
+        activate Repo
+        Repo -> PG : SELECT ... FROM kitchen_configurations WHERE id = $1 FOR UPDATE
+        PG --> Repo : row / none
+        Repo --> Service : target / null
+        deactivate Repo
+        note right of Service
+            FOR UPDATE: a concurrent DELETE or PUT of
+            KCF-00002 waits for this transaction.
+        end note
+
+        alt A) Target not found
+            Service --> UoW : throw AppError("Kitchen configuration not found", 404)
+        else B) Target found (ACTIVE or INACTIVE)
+            Service -> Catalogue : findByIds(target.layout.referencedAssetIds(), tx)
+            activate Catalogue
+            Catalogue -> PG : SELECT ... FROM kitchen_assets WHERE id = ANY($1::varchar[])
+            PG --> Catalogue : asset rows
+            Catalogue --> Service : Map<assetId, KitchenAsset>
+            deactivate Catalogue
+            loop each referenced asset found in the catalogue
+                Service -> Files : exists(asset.path)
+                activate Files
+                Files --> Service : true / false
+                deactivate Files
+            end
+            Service -> Service : assets = Map<assetId, AssetCheck { asset, fileAvailable }>
+            Service -> Validator : validate(target.layout.toJSON(), assets)
+            activate Validator
+            Validator --> Service : LayoutValidationResult
+            deactivate Validator
+
+            alt B1) Invalid: an asset file is missing (ASSET_FILE_MISSING) or the content\nno longer satisfies the rules - whether the target is ACTIVE or INACTIVE
+                Service --> UoW : throw KitchenConfigurationValidationError(issues) (422)
+                note right of Service
+                    No status has been changed yet:
+                    deactivateCurrent / markActive are
+                    never reached. An already ACTIVE target
+                    with a missing file is reported (422),
+                    not hidden behind an idempotent 200.
+                end note
+            else B2) Valid and target already ACTIVE
+                Service --> UoW : result { active: target, previous: null } (idempotent, no write)
+            else B3) Valid and target INACTIVE
+                Service -> Service : target.activate(actor, now)
+                Service -> Repo : deactivateCurrent(exceptId = "KCF-00002", tx)
+                activate Repo
+                Repo -> PG : UPDATE kitchen_configurations SET status = 'INACTIVE'\nWHERE status = 'ACTIVE' AND id <> $1 RETURNING id
+                PG --> Repo : "KCF-00001" / no row (first activation)
+                Repo --> Service : previousId / null
+                deactivate Repo
+                Service -> Repo : markActive(target, tx)
+                activate Repo
+                Repo -> PG : UPDATE kitchen_configurations\nSET status = 'ACTIVE', activated_at = now(), activated_by = $2\nWHERE id = $1 AND status = 'INACTIVE'
+                alt unique violation 23505 on the partial index (should not happen with the lock)
+                    PG --> Repo : error 23505
+                    Repo --> Service : throw AppError("Another activation was in progress. Reload and try again.", 409)
+                    Service --> UoW : rethrow
+                else rowCount = 1
+                    PG --> Repo : rowCount = 1
+                    Repo --> Service : true
+                    Service --> UoW : result { active: KCF-00002, previous: "KCF-00001" }
+                end
+                deactivate Repo
+            end
+        end
+    end
+
+    alt work returned a result
+        UoW -> PG : COMMIT
+        note right of PG
+            Both status changes become visible together:
+            GET /active sees KCF-00001 or KCF-00002, never
+            both and never none (once one was active).
+        end note
+        PG --> UoW : committed
+        UoW --> Service : result
+    else work threw
+        UoW -> PG : ROLLBACK
+        note right of PG : nothing changed - KCF-00001 is still ACTIVE
+        PG --> UoW : rolled back
+        UoW --> Service : rethrow error
+    end
+    deactivate UoW
+    Service --> Routes : 200 ActivationResultDTO / error
+    deactivate Service
+    Routes --> Req : 200 { activeConfiguration, previousActiveConfigurationId }\n/ 404 / 409 / 422
+    deactivate Routes
+    Req --> Api : DTO / ApiError
+    deactivate Req
+    Api --> List : DTO / ApiError
+    deactivate Api
+    List -> List : activating = false
+
+    alt 200
+        List -> Api : list() (re-read the saved state, BR 14 WEB01)
+        activate Api
+        Api --> List : summaries (KCF-00002 ACTIVE, KCF-00001 INACTIVE)
+        deactivate Api
+        List --> Manager : ActiveConfigurationBanner:\n"'Extended line' (KCF-00002) is now the active configuration"\n+ button "Open / reload the kitchen viewer"
+        opt Manager opens the viewer
+            Manager -> List : clicks "Open / reload the kitchen viewer"
+            List --> Manager : navigate("/kitchen/viewer")
+            ref over Manager, PG : SD 5 - the viewer (VIS01) mounts and reads GET /kitchen-configurations/active
+        end
+    else 422
+        List --> Manager : "This configuration can no longer be activated" + issues\n(e.g. "The 3D file of AST-MDL-OVEN-DOME-01 is missing");\nstatuses unchanged (previous active configuration kept)
+    else 404 / 409
+        List --> Manager : explanation + list reloaded
+    else network / timeout
+        List --> Manager : "Result unknown" + list reloaded to show the real state\n(the activation is NOT replayed automatically)
+    end
+end
+deactivate List
+
+@enduml

@@ -1,0 +1,31 @@
+@startuml LaPrizza-C4-Context
+!include <C4/C4_Context>
+
+title System Context Diagram - LaPrizza Information System
+
+SHOW_PERSON_OUTLINE()
+Person(customer, "Customer", "Browses the catalogue, manages personal data consents and submits requests concerning their own personal information.")
+Person(guest, "Guest", "Browses the public catalogue, product and allergen information and accesses authentication services.")
+Person(staff, "Restaurant Staff", "Consults the sellable catalogue, product and allergen information and the 3D kitchen visualization.")
+Person(manager, "Restaurant Manager", "Manages restaurant operations, including customers, products, stock, kitchen configurations, and AI-based materials and supplier planning.")
+Person(admin, "Administrator", "Manages user accounts, role assignments, access permissions, account activation, and account-related data protection requests.")
+
+
+System(laprizza, "LaPrizza Information System", "Manages users, products, stock, orders and kitchen scheduling")
+
+System_Ext(email, "Email Service", "Delivers account activation invitations, password recovery emails and notifications.")
+System_Ext(identityProvider, "Google Identity Provider", "Authenticates users through OpenID Connect and OAuth 2.0.")
+
+Rel(laprizza, identityProvider, "Authenticates users through", "OpenID Connect / OAuth 2.0")
+Rel(laprizza, email, "Sends emails using", "SMTP")
+
+Rel(customer, laprizza, "Uses", "HTTP")
+Rel(staff, laprizza, "Uses", "HTTP")
+Rel(manager, laprizza, "Manages the restaurant's data using", "HTTP")
+Rel(admin, laprizza, "Manages user accounts using", "HTTP")
+Rel(guest, laprizza, "Browses the public catalogue using", "HTTP")
+
+Rel(email, customer, "Sends emails to", "SMTP")
+
+SHOW_LEGEND()
+@enduml

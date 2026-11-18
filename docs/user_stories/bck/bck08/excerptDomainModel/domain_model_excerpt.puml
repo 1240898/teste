@@ -1,0 +1,78 @@
+@startuml domain_model_excerpt
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+skinparam shadowing false
+hide methods
+
+title Domain Model Excerpt - BCK08 Pizza Component Configuration
+
+package "Product Aggregate" <<Rectangle>> {
+    class Product <<entity>> <<aggregateRoot>> {
+        + isPizzaComponent : boolean
+        + isStockControlled : boolean
+    }
+    class ProductId <<vo>> {
+        + value : String
+    }
+    Product "1" *-- "1" ProductId : identified by >
+}
+
+package "Pizza Size Aggregate" <<Rectangle>> {
+    class PizzaSize <<entity>> <<aggregateRoot>>
+    class PizzaSizeId <<vo>> {
+        + value : String
+    }
+    PizzaSize "1" *-- "1" PizzaSizeId : identified by >
+}
+
+package "Pizza Component Type Aggregate" <<Rectangle>> {
+    class PizzaComponentType <<entity>> <<aggregateRoot>> {
+        + assemblyOrder : int
+        + minQuantity : int
+        + maxQuantity : Integer
+    }
+    note bottom of PizzaComponentType
+        Component types are independent of sizes.
+    end note
+}
+
+package "Component Size Configuration Aggregate" <<Rectangle>> {
+    class ComponentSizeConfiguration <<entity>> <<aggregateRoot>>
+    class Money <<vo>> {
+        + amount : BigDecimal
+        + currency : String
+    }
+    class StockUnitsConsumed <<vo>> {
+        + units : int
+    }
+    ComponentSizeConfiguration "1" *-- "1" Money : price >
+    ComponentSizeConfiguration "1" *-- "0..1" StockUnitsConsumed : consumes >
+
+    note bottom of ComponentSizeConfiguration
+        Only Products with isPizzaComponent = true.
+        At most one applicable configuration per
+        (Product, PizzaSize) pair.
+        Component price: EUR, finite amount >= 0.
+        At most 2 decimal places; zero is allowed.
+        Reject excess precision without rounding.
+        Applicable consumption is a non-negative integer
+        of abstract, product-specific stock units.
+        Changes preserve existing business consistency.
+    end note
+    note bottom of StockUnitsConsumed
+        isStockControlled = true: exactly one value,
+        integer units >= 0 (zero allowed).
+        isStockControlled = false: absent (null),
+        numeric values including zero are rejected.
+        This value is consumption, not current stock.
+    end note
+}
+
+ComponentSizeConfiguration "0..*" --> "1" Product : applies to component >
+ComponentSizeConfiguration "0..*" --> "1" PizzaSize : for size >
+Product "0..*" --> "0..1" PizzaComponentType : classified by >
+note on link
+    Exactly one type for a Pizza Component.
+end note
+
+@enduml

@@ -1,0 +1,88 @@
+@startuml SD03_deactivate_customer
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - BCK02 Deactivate Customer (PATCH /api/v1/customers/:id/deactivate)
+
+actor "LaPrizza Manager" as LaPrizzaManager
+participant CustomerRoutes
+participant AuthMiddleware
+participant RoleMiddleware
+participant "ValidationMiddleware\n(Joi)" as ValidationMiddleware
+participant CustomerController
+participant CustomerService
+participant "CustomerRepository\n(Infrastructure)" as CustomerRepository
+database "Database\n(Persistence)" as Database
+
+LaPrizzaManager -> CustomerRoutes : PATCH /api/v1/customers/:id/deactivate
+activate CustomerRoutes
+activate LaPrizzaManager
+
+' Security & Middlewares
+CustomerRoutes -> AuthMiddleware : verifyToken(req, res, next)
+activate AuthMiddleware
+alt Invalid or Missing Token
+    AuthMiddleware --> LaPrizzaManager : 401 Unauthorized\n{ error: "Unauthorized" }
+end
+AuthMiddleware --> CustomerRoutes : next()
+deactivate AuthMiddleware
+
+CustomerRoutes -> RoleMiddleware : requireRole("MANAGER")
+activate RoleMiddleware
+alt Lacks MANAGER Role
+    RoleMiddleware --> LaPrizzaManager : 403 Forbidden\n{ error: "Forbidden: Access denied" }
+end
+RoleMiddleware --> CustomerRoutes : next()
+deactivate RoleMiddleware
+
+CustomerRoutes -> ValidationMiddleware : validate(req.params, idSchema)
+activate ValidationMiddleware
+alt Invalid Customer ID Format
+    ValidationMiddleware --> LaPrizzaManager : 400 Bad Request\n{ error: "Invalid customer id" }
+end
+ValidationMiddleware --> CustomerRoutes : next()
+deactivate ValidationMiddleware
+
+' Application Logic
+CustomerRoutes -> CustomerController : deactivate(req, res)
+activate CustomerController
+
+CustomerController -> CustomerService : deactivateCustomer(id)
+activate CustomerService
+
+CustomerService -> CustomerRepository : findById(customerId)
+activate CustomerRepository
+CustomerRepository -> Database : findOne({ id })
+activate Database
+Database --> CustomerRepository : customerDoc / null
+deactivate Database
+CustomerRepository --> CustomerService : customer / null
+deactivate CustomerRepository
+
+alt Customer Not Found
+    CustomerService --> CustomerController : throw CustomerNotFoundError("Customer not found")
+    CustomerController --> LaPrizzaManager : 404 Not Found\n{ error: "Customer not found" }
+end
+
+' Soft Deactivation
+CustomerService -> CustomerService : customer.deactivate()\n(active = false)
+
+CustomerService -> CustomerRepository : save(customer)
+activate CustomerRepository
+CustomerRepository -> Database : update({ id }, { active: false })
+activate Database
+Database --> CustomerRepository : updated
+deactivate Database
+CustomerRepository --> CustomerService : customer
+deactivate CustomerRepository
+
+CustomerService --> CustomerController : void
+deactivate CustomerService
+
+CustomerController --> LaPrizzaManager : 204 No Content
+deactivate CustomerController
+deactivate CustomerRoutes
+deactivate LaPrizzaManager
+
+@enduml

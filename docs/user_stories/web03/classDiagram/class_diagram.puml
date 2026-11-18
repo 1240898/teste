@@ -1,0 +1,332 @@
+@startuml class_diagram
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam linetype ortho
+
+title Class Diagram (Design) - WEB03 Role-Based Navigation
+
+' -----------------------------------------------------------------------------
+' FRONT-END (SPA)
+' SPA shell / router owned by WEB01, layout / i18n owned by WEB02,
+' authentication state owned by AA03 / AA04. WEB03 adds the navigation policy,
+' the role-based menu, the route guard decision and the 401/403 reaction.
+' -----------------------------------------------------------------------------
+package "Front-End (SPA)" <<Rectangle>> {
+
+    package "Navigation (WEB03)" <<Rectangle>> {
+
+        class NavigationSection <<config>> {
+            + id: string
+            + path: string
+            + labelKey: string
+            + group: SectionGroup
+            + access: "public" | "guestOnly" | "protected"
+            + roles: UserRole[]
+            + children: NavigationSection[]
+            + owner: string
+            + enabled: boolean
+        }
+        note right of NavigationSection
+            One entry per SPA section (Table 1).
+            roles = ANY-OF list (union of permissions).
+            A child route may only RESTRICT the roles
+            of its parent, never widen them (BR 5).
+            owner = User Story that implements the page
+            (WEB05, WEB06, WEB07, VIS01, AA06, ...).
+        end note
+
+        enum SectionGroup <<enum>> {
+            PUBLIC
+            MY_ACCOUNT
+            RESTAURANT_MANAGEMENT
+            KITCHEN
+            PLANNING
+            ADMINISTRATION
+        }
+
+        class navigationPolicy <<module>> {
+            + SECTIONS: NavigationSection[]
+            + findSectionByPath(path: string): NavigationSection | null
+            + getVisibleSections(auth: AuthState): NavigationSection[]
+            + isSafeReturnPath(path: string): boolean
+        }
+        note bottom of navigationPolicy
+            SINGLE SOURCE of the role -> section mapping (D1).
+            Used to build BOTH the menu and the routes,
+            so a hidden option and a protected route can
+            never disagree.
+            getVisibleSections():
+              status != "authenticated" -> only PUBLIC (+ login)
+              otherwise -> public + sections where
+              auth.hasAnyRole(...section.roles)
+        end note
+
+        class accessPolicy <<module>> {
+            + evaluateAccess(section: NavigationSection, auth: AuthState): AccessDecision
+        }
+        note bottom of accessPolicy
+            Pure function (no React, no HTTP), unit-tested
+            for every role x section (Table 1 matrix):
+              public                      -> ALLOW
+              guestOnly + authenticated   -> REDIRECT_HOME
+              protected + loading         -> PENDING
+              protected + guest           -> LOGIN_REQUIRED
+              protected + denied (AA03)   -> ACCOUNT_DENIED
+              protected + no matching role-> FORBIDDEN
+              protected + matching role   -> ALLOW
+        end note
+
+        enum AccessDecision <<enum>> {
+            ALLOW
+            PENDING
+            LOGIN_REQUIRED
+            REDIRECT_HOME
+            ACCOUNT_DENIED
+            FORBIDDEN
+        }
+
+        class NavigationMenu <<component>> {
+            + render(): ReactNode
+        }
+        note bottom of NavigationMenu
+            Placed inside the WEB02 layout.
+            Renders ONLY getVisibleSections(auth),
+            grouped by SectionGroup; empty groups
+            are not rendered. Labels via i18n (WEB02).
+            Re-renders whenever AuthProvider changes.
+        end note
+
+        class RequireRole <<component>> {
+            + roles: UserRole[]
+            + children: ReactNode
+            + render(): ReactNode | null
+        }
+        note bottom of RequireRole
+            Action-level visibility (buttons, links)
+            used by WEB05/WEB06/WEB07 pages, e.g.
+            "New product" only for MANAGER.
+            Visibility only - the back end still
+            checks the operation (AC 7).
+        end note
+
+        class AppRoutes <<component>> {
+            + render(): ReactNode
+        }
+        note right of AppRoutes
+            Built from navigationPolicy.SECTIONS:
+            every "protected" section is wrapped
+            in ProtectedRoute; unknown paths ->
+            NotFoundPage (WEB02).
+        end note
+    }
+
+    package "Authentication state (AA03 / AA04)" <<Rectangle>> {
+
+        class AuthProvider <<component>> {
+            - currentUser: UserResponseDTO | null
+            - status: "loading" | "authenticated" | "denied" | "guest"
+            - deniedMessage: string | null
+            + loadCurrentUser(): Promise<void>
+            + refresh(): Promise<void>
+            + hasAnyRole(...roles: UserRole[]): boolean
+            + handleAuthFailure(status: number): Promise<void>
+            + clear(): void
+        }
+        note right of AuthProvider
+            Defined by AA03, EXTENDED by WEB03:
+            + refresh(): re-reads GET /auth/me; called on
+              every navigation to a protected section, on
+              window focus and after a BUSINESS 403 (D4).
+              Single-flight: concurrent calls share ONE request.
+              Its own answer is mapped here directly
+              (table A, 3.4) and never calls
+              handleAuthFailure() -> no recursion (BR 13).
+            + handleAuthFailure(status) - business requests only:
+              401 -> clear() + login; TERMINAL, no refresh
+              403 -> refresh() (at most 1 /auth/me per burst)
+              already guest/denied -> no-op
+            The failed business request is never retried.
+        end note
+
+        class ProtectedRoute <<component>> {
+            + section: NavigationSection
+            + render(): ReactNode
+        }
+        note right of ProtectedRoute
+            Defined by AA03, EXTENDED by WEB03:
+            receives the section (not a hard-coded
+            role list) and calls evaluateAccess().
+            The page component is mounted ONLY on ALLOW,
+            so no protected request is ever made on
+            PENDING / LOGIN_REQUIRED / FORBIDDEN.
+        end note
+
+        class AccessDeniedPage <<component>> {
+            + message: string
+            + render(): ReactNode
+        }
+        note bottom of AccessDeniedPage
+            Generic text (i18n). Never shows the section
+            data, the required roles, or the user's roles.
+            Offers a link to the starting page (WEB02).
+        end note
+
+        class LoginPage <<component>> {
+            + returnTo: string | null
+            + render(): ReactNode
+        }
+        note bottom of LoginPage
+            AA01 / AA02. After a successful login it
+            navigates to returnTo only if
+            isSafeReturnPath(returnTo), else to "/".
+        end note
+
+        class authApi <<module>> {
+            + login(email: string, password: string): Promise<AuthTokenDTO>
+            + getCurrentUser(): Promise<UserResponseDTO>
+            + parseCurrentUser(body: unknown): UserResponseDTO
+        }
+        note bottom of authApi
+            Every call (auth/me, login, Google,
+            register) is sent with
+            { skipAuthFailureHandler: true } (D10).
+        end note
+    }
+
+    package "HTTP (WEB01)" <<Rectangle>> {
+        class apiClient <<module>> {
+            + request(method: string, path: string, options?: { body?: object, skipAuthFailureHandler?: boolean }): Promise<unknown>
+            + setAuthFailureHandler(handler: (status: number) => Promise<void>): void
+        }
+        note bottom of apiClient
+            Reusable client created in WEB01; adds the
+            Bearer token (AA04). EXTENDED by WEB03:
+            if status is 401/403 AND NOT skipAuthFailureHandler
+            -> await handler(status), THEN reject with ApiError,
+            so the failed operation is never shown as done (WEB04).
+            Requests with skipAuthFailureHandler = true
+            (all authApi calls) only reject with ApiError.
+        end note
+    }
+}
+
+' -----------------------------------------------------------------------------
+' BACK-END API (authority on every request; CatalogueRoutes and UserRoutes re-aligned)
+' -----------------------------------------------------------------------------
+package "Back-End API (reused; two routers re-aligned with Table 1)" <<Rectangle>> {
+
+    class AuthRoutes {
+        + setupRoutes(): Router
+    }
+    note bottom of AuthRoutes
+        GET /api/v1/auth/me (AA03):
+        current roles + active state,
+        read from the DATABASE.
+    end note
+
+    class CatalogueRoutes {
+        + setupRoutes(): Router
+    }
+    note bottom of CatalogueRoutes
+        CHANGED (ALN-1, D11):
+        GET /catalogue and GET /catalogue/:productId
+        are PUBLIC (no authenticate) - Guest, Table 1.
+        Answer has no stock quantities / personal data.
+    end note
+
+    class UserRoutes {
+        + setupRoutes(): Router
+    }
+    note bottom of UserRoutes
+        CHANGED with AA06 (ALN-2, D12):
+        GET/PATCH/DELETE /users* ->
+        requireRole('ADMINISTRATOR')
+        (was MANAGER). POST /users/register public.
+    end note
+
+    class AuthMiddleware {
+        + verifyToken(req: Request, res: Response, next: NextFunction): Promise<void>
+    }
+
+    class RoleMiddleware {
+        + requireRole(...roles: UserRole[]): Middleware
+    }
+    note bottom of RoleMiddleware
+        Back-end counterpart of every hidden option
+        (AC 7): e.g. POST /stock/:productId/adjustments
+        -> requireRole('MANAGER'); GET /products ->
+        requireRole('MANAGER', 'EMPLOYEE').
+    end note
+
+    class UserService {
+        + resolveActor(token: string): Promise<AuthenticatedActor>
+        + getCurrentUser(actor: AuthenticatedActor): Promise<UserResponseDTO>
+        + assertCanAccess(user: User): void
+    }
+    note bottom of UserService
+        resolveActor() reloads the User on EVERY
+        protected request (AA03): role removals and
+        deactivations are enforced before any further
+        protected operation is accepted (AC 6).
+    end note
+
+    class BusinessRoutes <<module routes>> {
+        + setupRoutes(): Router
+    }
+    note right of BusinessRoutes
+        Any Sprint 1 module router, e.g.
+        ProductRoutes, StockRoutes,
+        CustomerRoutes, PizzaSizeRoutes.
+    end note
+
+    class UserResponseDTO <<dto>> {
+        + id: string
+        + name: string
+        + email: string
+        + roles: string[]
+        + active: boolean
+    }
+}
+
+' -----------------------------------------------------------------------------
+' RELATIONSHIPS & DEPENDENCIES
+' -----------------------------------------------------------------------------
+
+' Navigation
+navigationPolicy "1" *-- "1..*" NavigationSection : SECTIONS >
+NavigationSection --> SectionGroup : group >
+NavigationSection "1" *-- "0..*" NavigationSection : children >
+accessPolicy ..> NavigationSection : reads >
+accessPolicy ..> AccessDecision : returns >
+NavigationMenu ..> navigationPolicy : getVisibleSections >
+NavigationMenu ..> AuthProvider : subscribes to >
+RequireRole ..> AuthProvider : hasAnyRole >
+AppRoutes ..> navigationPolicy : builds routes from >
+AppRoutes ..> ProtectedRoute : wraps protected sections >
+
+' Authentication state
+ProtectedRoute ..> accessPolicy : evaluateAccess >
+ProtectedRoute ..> AuthProvider : reads state / refresh >
+ProtectedRoute ..> AccessDeniedPage : renders on FORBIDDEN / ACCOUNT_DENIED >
+ProtectedRoute ..> LoginPage : redirects on LOGIN_REQUIRED >
+LoginPage ..> navigationPolicy : isSafeReturnPath >
+AuthProvider ..> authApi : getCurrentUser / parseCurrentUser >
+AuthProvider ..> apiClient : registers handleAuthFailure >
+authApi ..> apiClient : uses >
+
+' SPA -> Back-End
+apiClient ..> AuthRoutes : HTTPS / JSON (GET /auth/me) >
+apiClient ..> BusinessRoutes : HTTPS / JSON >
+apiClient ..> CatalogueRoutes : HTTPS / JSON (no token needed) >
+apiClient ..> UserRoutes : HTTPS / JSON >
+UserRoutes ..> AuthMiddleware : applies >
+UserRoutes ..> RoleMiddleware : applies >
+AuthRoutes ..> AuthMiddleware : applies >
+BusinessRoutes ..> AuthMiddleware : applies >
+BusinessRoutes ..> RoleMiddleware : applies >
+AuthMiddleware --> UserService : resolveActor >
+AuthRoutes ..> UserService : getCurrentUser >
+UserService ..> UserResponseDTO : produces >
+
+@enduml

@@ -1,0 +1,389 @@
+@startuml WEB05DomainModelExcerpt
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam classAttributeIconSize 0
+hide methods
+
+' -----------------------------------------------------------------------------
+' CUSTOMER AGGREGATE.
+' -----------------------------------------------------------------------------
+package "Customer Aggregate" <<Rectangle>> {
+
+    class Customer <<entity>> <<aggregateRoot>> {
+    }
+
+    class CustomerId <<vo>> {
+        + value : string
+    }
+    note right of CustomerId
+        - CustomerId is a unique identifier for a customer.
+        - Must be a string representing the customer ID.
+        - Example: "CUST-00123".
+    end note
+
+    class CustomerName <<vo>> {
+        + name : String
+    }
+
+    class PhoneNumber <<vo>> {
+        + number : String
+    }
+
+    class Email <<vo>> {
+        + email : String
+    }
+
+    class ContactInfo <<vo>> {
+    }
+
+    class Address <<vo>> {
+        + street : String
+        + postalCode : String
+        + city : String
+    }
+
+    class DietaryRestriction <<vo>> {
+        + name : String
+        + description : String
+    }
+
+    Customer "1" *-- "1" CustomerId : identified by >
+    Customer "1" *-- "1" CustomerName : named >
+    Customer "1" *-- "1" ContactInfo : has >
+    ContactInfo "1" *-- "1" PhoneNumber : has >
+    ContactInfo "1" *-- "1" Email : has >
+    Customer "1" *-- "0..*" Address : maintains >
+    Customer "1" *-- "0..*" DietaryRestriction : records >
+}
+
+' -----------------------------------------------------------------------------
+' PRODUCT AGGREGATE.
+' -----------------------------------------------------------------------------
+package "Product Aggregate" <<Rectangle>> {
+
+    class Product <<entity>> <<aggregateRoot>> {
+        + isActive : boolean
+    }
+
+    class PizzaComponent <<entity>> {
+    }
+
+    class PredefinedPizza <<entity>> {
+    }
+
+    class SellableProduct <<entity>> {
+    }
+
+    Product <|-- PizzaComponent
+    Product <|-- SellableProduct
+    SellableProduct <|-- PredefinedPizza
+
+    class ProductId <<vo>> {
+        + value : string
+    }
+    note right of ProductId
+        - ProductId is a unique identifier for a product.
+        - Must be a string representing the product ID.
+        - Example: "PROD-00123".
+    end note
+
+    class ProductName <<vo>> {
+        + name : String
+    }
+
+    class ProductDescription <<vo>> {
+        + text : String
+    }
+
+    class Money <<vo>> {
+        + amount : BigDecimal
+        + currency : String
+    }
+
+    class ProductCompositionItem <<vo>>
+
+    class Quantity <<vo>>{
+        + amount : int
+    }
+
+    enum AcquisitionType <<enum>>{
+        PRODUCED
+        PURCHASED
+    }
+
+    Product "1" *-- "1" ProductId : identified by >
+    Product "1" *-- "1" ProductName : named >
+    Product "1" *-- "1" ProductDescription : described by >
+    SellableProduct "1" *-- "0..1" Money : basePrice >
+    Product "1" *-- "0..*" ProductCompositionItem: composed of >
+    ProductCompositionItem "0..*" --> "1" Product : references child product >
+    ProductCompositionItem "1" *-- "1" Quantity : specifies >
+    Product "1" --> "1" AcquisitionType
+
+    note right of Product
+    Business rules:
+    - Product is the common identity and lifecycle
+      for all products.
+    - Every Product must be a SellableProduct,
+      a PizzaComponent, or both.
+    - The generalization is complete and overlapping.
+    - All Product subtypes share the same ProductId.
+    - Stock control is independent of product type.
+    - Product.isActive is independent of stock
+      quantity and stock control.
+    - A Product may contain zero or more
+      ProductCompositionItems.
+    - Product composition is recursive.
+    - Cyclic compositions are not allowed.
+    - A Product with no composition items is
+      a terminal product.
+    end note
+
+    note right of ProductCompositionItem
+    Business rules:
+        - Each Product directly owns zero or more composition items.
+        - Each item references exactly one child Product and records
+          its positive quantity.
+        - Every referenced child Product must be classified as SellableProduct, PizzaComponent, or both.
+        - If a child Product is used multiple times by the same parent,
+          represent it once and combine its quantity.
+        - Nested Products are expanded recursively when deriving
+          ingredient requirements, allergens, availability and price.
+        - A component is a PizzaComponent subclass of Product and
+          has exactly one PizzaComponentType.
+    end note
+
+    note right of PredefinedPizza
+        A PredefinedPizza is always sellable and uses the Product
+        composition inherited from Product as its default recipe.
+        It has no separate identifier or second composition list.
+        The catalogue containing predefined pizzas is public and
+        readable without authentication.
+
+        Availability is evaluated per size. A size or required
+        size-specific configuration that is inactive or missing makes
+        the pizza unavailable for that size. If no valid sizes remain,
+        the pizza is unavailable overall. Reactivation requires
+        validation against current composition rules, active products
+        and at least one valid size.
+    end note
+}
+
+' -----------------------------------------------------------------------------
+' PRODUCT CATEGORY AGGREGATE.
+' -----------------------------------------------------------------------------
+package "Product Category Aggregate" <<Rectangle>> {
+
+    class ProductCategory <<entity>> <<aggregateRoot>> {
+    }
+
+    class CategoryId <<vo>> {
+        + value : string
+    }
+
+    note right of CategoryId
+        - CategoryId is a unique identifier for a product category.
+        - Must be a string representing the category ID.
+        - Example: "CAT-00123".
+    end note
+
+    class CategoryName <<vo>> {
+        + name : String
+    }
+
+    ProductCategory "1" *-- "1" CategoryId
+    ProductCategory "1" *-- "1" CategoryName
+}
+
+' -----------------------------------------------------------------------------
+' ALLERGEN AGGREGATE.
+' -----------------------------------------------------------------------------
+package "Allergen Aggregate" <<Rectangle>> {
+
+    class Allergen <<entity>> <<aggregateRoot>> {
+    }
+
+    class AllergenId <<vo>> {
+        + value : int
+    }
+
+    note right of AllergenId
+        - AllergenId is a unique identifier for an allergen.
+        - Must be an integer between 1 and 14 (inclusive),
+          corresponding to the official EU Regulation No. 1169/2011.
+    end note
+
+    enum EUAllergenType <<enum>> {
+        1 : GLUTEN
+        2 : CRUSTACEANS
+        3 : EGGS
+        4 : FISH
+        5 : PEANUTS
+        6 : SOYBEANS
+        7 : MILK
+        8 : NUTS
+        9 : CELERY
+        10 : MUSTARD
+        11 : SESAME
+        12 : SULPHITES
+        13 : LUPIN
+        14 : MOLLUSCS
+    }
+
+    AllergenId ..> EUAllergenType : bounded by >
+
+    class AllergenName <<vo>> {
+        + name : String
+    }
+
+    Allergen "1" *-- "1" AllergenId
+    Allergen "1" *-- "1" AllergenName
+
+    note right of Allergen
+        An Allergen represents a food
+        allergen that may be associated
+        with Products and DietaryRestrictions.
+    end note
+}
+
+' -----------------------------------------------------------------------------
+' PIZZA SIZE AGGREGATE.
+' -----------------------------------------------------------------------------
+package "Pizza Size Aggregate" <<Rectangle>> {
+
+    class PizzaSize <<entity>> <<aggregateRoot>> {
+        + isActive : boolean
+    }
+
+    class PizzaSizeId <<vo>> {
+        + id : string
+    }
+
+    class PizzaSizeName <<vo>> {
+        + name : string
+    }
+
+    PizzaSize "1" *-- "1" PizzaSizeId : identified by >
+    PizzaSize "1" *-- "1" PizzaSizeName : named >
+}
+
+' -----------------------------------------------------------------------------
+' PIZZA COMPONENT TYPE AGGREGATE.
+' -----------------------------------------------------------------------------
+package "Pizza Component Type Aggregate" <<Rectangle>> {
+
+    class PizzaComponentType <<entity>> <<aggregateRoot>> {
+        + assemblyOrder : int
+        + minQuantity : int
+        + maxQuantity : Integer
+    }
+
+    class ComponentTypeId <<vo>> {
+        + value : string
+    }
+
+    note right of ComponentTypeId
+        - ComponentTypeId is a unique identifier for a pizza component type.
+        - Must be a string representing the component type ID.
+        - Example: "COMP-00123".
+    end note
+
+    class ComponentTypeName <<vo>> {
+        + name : String
+    }
+
+    PizzaComponentType "1" *-- "1" ComponentTypeId
+    PizzaComponentType "1" *-- "1" ComponentTypeName
+
+    note right of PizzaComponentType
+    Business rules:
+        - minQuantity >= 0
+        - maxQuantity >= minQuantity
+        - assemblyOrder determines
+          the component type order
+          during pizza assembly.
+    end note
+}
+
+' -----------------------------------------------------------------------------
+' COMPONENT SIZE CONFIGURATION AGGREGATE.
+' -----------------------------------------------------------------------------
+package "Component Size Configuration Aggregate" <<Rectangle>> {
+
+    class ComponentSizeConfiguration <<entity>> <<aggregateRoot>> {
+    }
+
+    class "Money" as ConfigMoney <<vo>> {
+        + amount : BigDecimal
+        + currency : String
+    }
+
+    class StockUnitsConsumed <<vo>> {
+        + quantity : int
+    }
+
+    ComponentSizeConfiguration "1" *-- "1" ConfigMoney : price >
+    ComponentSizeConfiguration "1" *-- "1" StockUnitsConsumed : consumes >
+
+    note right of ComponentSizeConfiguration
+    Business rules:
+        - A Product used in a pizza composition has a size-specific configuration. The configuration defines both price and consumed stock units per size.
+        - A Product + Pizza Size pair identifies at most one configuration.
+        - Stock consumption is derived from the recursively expanded composition and configured quantities.
+    end note
+}
+
+' -----------------------------------------------------------------------------
+' INVENTORY (STOCK) AGGREGATE.
+' -----------------------------------------------------------------------------
+package "Stock Aggregate" <<Rectangle>> {
+
+    class StockInformation <<entity>> <<aggregateRoot>> {
+    }
+
+    class StockId <<vo>> {
+        + value : string
+    }
+
+    note right of StockId
+        - StockId is a unique identifier for a stock item.
+        - Must be a string representing the stock ID.
+        - Example: "STOCK-00123".
+    end note
+
+    class AbstractStockQuantity <<vo>> {
+        + availableUnits : int
+    }
+
+    StockInformation "1" *-- "1" StockId
+    StockInformation "1" *-- "1" AbstractStockQuantity : maintains >
+
+    note right of StockInformation
+    Business rules:
+        - Each StockInformation represents one period
+          in which stock control is enabled for a Product.
+        - availableUnits is a non-negative integer; an
+          adjustment that would make it negative is rejected.
+        - A zero quantity makes the Product out of stock, but
+          does not deactivate it or remove stock control.
+        - StockInformation preserves period snapshots; a
+          movement-by-movement history is not required here.
+    end note
+}
+
+' -----------------------------------------------------------------------------
+' CROSS-AGGREGATE LINKS.
+' -----------------------------------------------------------------------------
+
+DietaryRestriction --> Allergen : relates to >
+
+Product "0..*" --> "1" ProductCategory : categorized by >
+Product "0..*" --> "0..*" Allergen : contains >
+PizzaComponent "0..*" --> "1" PizzaComponentType : classified by >
+
+ComponentSizeConfiguration "0..*" --> "1" PizzaComponent : applies to component >
+ComponentSizeConfiguration "0..*" --> "1" PizzaSize : for size >
+
+StockInformation "0..*" --> "1" Product : tracks stock periods for >
+
+@enduml

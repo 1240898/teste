@@ -1,0 +1,79 @@
+@startuml sequence_diagram_spa_startup
+autonumber
+title WEB01 - UC1: load the SPA and open a route
+
+actor "Website user" as User
+participant Browser
+participant "Static host" as Host
+participant App
+participant appConfig as Config
+participant "BrowserRouter / Routes" as Router
+participant AppShell as Shell
+participant AuthProvider as Auth
+participant healthApi as Health
+participant authApi as AuthApi
+participant apiClient as Client
+participant "Back-End API" as API
+
+User -> Browser : Open or reload a page URL
+Browser -> Host : GET /register (example of a direct link)
+Host --> Browser : index.html (fallback for SPA paths)
+Browser -> Host : GET linked JS/CSS assets
+Host --> Browser : Compiled assets
+Browser -> App : main.jsx mounts App
+App -> Config : getAppConfig()
+alt Invalid public configuration
+  Config --> App : Configuration error
+  App --> User : Show configuration error; no API request
+else Valid public configuration
+  Config --> App : apiBaseUrl, apiTimeoutMs
+  App -> Auth : Mount once in the application tree
+  App -> Router : Mount BrowserRouter and Routes
+  Router -> Shell : Render common layout and matching route
+  alt Known route
+    Shell --> User : Show route; protected content waits for confirmed roles
+  else Unknown route
+    Shell --> User : Show page not found inside the same layout
+  end
+
+  par Check API availability
+    Shell -> Health : getHealth(signal)
+    Health -> Client : get("/health", { signal })
+    Client -> API : GET /api/v1/health
+    opt API responds
+      API --> Client : Health response or HTTP failure
+    end
+    alt Valid JSON with status "ok"
+      Client --> Health : HealthDTO
+      Health --> Shell : Backend: OK
+    else Other status, network error or timeout
+      Client --> Health : HealthDTO with other status or ApiError
+      Health --> Shell : Show unavailable status and offer retry
+    end
+  else Restore the shared session (AA04)
+    Auth -> AuthApi : resumeSession()
+    AuthApi -> Client : post("/auth/resume", credentials: include)
+    Client -> API : POST /api/v1/auth/resume with browser cookie
+    alt Session restored
+      API --> Client : AuthTokenDTO
+      Client --> AuthApi : Parsed DTO
+      AuthApi --> Auth : JWT and CSRF in memory
+      ref over Auth, API : Resolve current roles with GET /auth/me (AA03)
+    else No valid session or restore failed
+      opt API responds
+        API --> Client : HTTP error (401 when no valid session)
+      end
+      Client --> AuthApi : ApiError
+      AuthApi --> Auth : Remain guest or denied; keep protected content hidden
+    end
+  else If the matched route is the Google callback
+    ref over Router, API : AA02 callback: consume code/state once and remove query;\naccept the session and replace URL on success, or show feedback in the shell
+  end
+
+  opt User follows an internal link or uses browser back/forward
+    User -> Router : Navigate within the SPA
+    Router -> Shell : Match URL and replace route content
+    note right of Router : No full page reload
+  end
+end
+@enduml

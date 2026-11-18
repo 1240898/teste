@@ -1,0 +1,82 @@
+@startuml sequence_diagram_read_retry
+autonumber
+skinparam shadowing false
+skinparam responseMessageBelowArrow true
+title WEB04 - Recover a Failed Feature Read
+
+actor "System User" as User
+participant "Feature Page" as Page
+participant "LoadingState / FeedbackMessage" as Feedback
+participant "Feature API Wrapper" as FeatureApi
+participant "apiClient" as ApiClient
+participant "Feature API" as Api
+
+User -> Page : open list or select refresh
+activate Page
+Page -> Page : set resource state = loading
+Page -> Feedback : announce loading with role=status
+activate Feedback
+Feedback --> User : loading
+deactivate Feedback
+Page -> FeatureApi : get list
+activate FeatureApi
+FeatureApi -> ApiClient : GET feature collection
+activate ApiClient
+ApiClient -> Api : HTTPS GET
+activate Api
+
+alt Read succeeds
+  Api --> ApiClient : 200 + collection
+  deactivate Api
+  ApiClient --> FeatureApi : collection
+  deactivate ApiClient
+  FeatureApi --> Page : collection
+  deactivate FeatureApi
+  Page -> Page : settle loading; show results or EmptyState
+else Connection fails
+  Api -x ApiClient : response unavailable / timeout
+  deactivate Api
+  ApiClient --> FeatureApi : network/timeout ApiError
+  deactivate ApiClient
+  FeatureApi --> Page : read failure
+  deactivate FeatureApi
+  Page -> Page : settle loading; retain safe resource context
+  Page -> Feedback : show localized read failure with role=alert
+  activate Feedback
+  Feedback --> User : list could not be loaded; Retry is available
+  deactivate Feedback
+  User -> Page : select Retry
+  Page -> Page : start a new loading state; disable duplicate retry
+  Page -> Feedback : announce loading with role=status
+  activate Feedback
+  Feedback --> User : retrying read
+  deactivate Feedback
+  Page -> FeatureApi : get list again
+  activate FeatureApi
+  FeatureApi -> ApiClient : new GET feature collection
+  activate ApiClient
+  ApiClient -> Api : HTTPS GET
+  activate Api
+  Api --> ApiClient : response
+  deactivate Api
+  ApiClient --> FeatureApi : collection or read error
+  deactivate ApiClient
+  FeatureApi --> Page : result
+  deactivate FeatureApi
+  Page -> Page : settle retry loading state
+  alt Retry succeeds
+    Page -> Page : show results or EmptyState
+  else Retry fails
+    Page -> Feedback : show localized read failure; keep Retry available
+    activate Feedback
+    Feedback --> User : list could not be loaded
+    deactivate Feedback
+  end
+end
+
+note over User,Page
+  A failed GET is safe to repeat. Each GET has its own loading lifecycle.
+  No mutation confirmation or operation-status lookup is required.
+end note
+deactivate Page
+@enduml

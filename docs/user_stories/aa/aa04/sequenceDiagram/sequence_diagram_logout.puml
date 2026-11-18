@@ -1,0 +1,117 @@
+@startuml sequence_diagram_logout
+skinparam shadowing true
+autonumber
+title AA04 - Logout and Page Restoration
+actor "System User" as User
+participant "LogoutButton" as Button
+participant "ProtectedRoute" as Route
+participant "AuthProvider" as Provider
+participant "AuthContext" as Context
+participant "apiClient" as Client
+participant "authApi" as API
+participant "AuthController" as Controller
+participant "UserService" as Users
+participant "SessionCredentialService" as Credentials
+participant "PostgresApplicationSessionRepository" as Sessions
+database PostgreSQL as DB
+User -> Button: click logout
+activate Button
+Button -> Provider: logout()
+activate Provider
+Provider -> Provider: keep csrfToken in memory; clear auth state; increment generation
+Provider -> Provider: capture logoutGeneration; status=logoutPending
+Provider -> API: logout(csrfToken)
+activate API
+API -> Controller: POST /api/v1/auth/logout\nCookie: HttpOnly lap_session\nX-CSRF-Token: csrfToken
+activate Controller
+Controller -> Users: logout(cookieCredential, csrfToken)
+activate Users
+Users -> Credentials: parse(cookieCredential)
+activate Credentials
+Credentials --> Users: sid, hash / error
+deactivate Credentials
+alt missing/malformed cookie or invalid CSRF
+ Users -> Users: reject (401)
+else valid cookie and CSRF token
+ Users -> Sessions: revoke(sid, hash, csrfToken)
+ activate Sessions
+ Sessions -> DB: lock row; set revoked_at; COMMIT
+ activate DB
+ DB --> Sessions: revoked / already revoked / none / error
+ deactivate DB
+ Sessions --> Users: true / false / error
+ deactivate Sessions
+end
+Users --> Controller: void / 401 / 500
+deactivate Users
+alt missing or malformed cookie / invalid CSRF
+ Controller -> Controller: reject (401)
+end
+Controller --> API: 204 + clear cookie / 401 / 500 (no-store)
+deactivate Controller
+opt new login succeeds before old logout completes
+ User -> Provider: establishSession(newDto, requestDurationMs)
+ Provider -> Provider: new generation; discard old retry; status=authenticated
+end
+API --> Provider: result
+deactivate API
+alt generation differs from logoutGeneration
+ Provider -> Provider: ignore old result
+else 204
+ Provider -> Provider: clear pending CSRF state; status=anonymous
+else 401 / 403 / 500 / network failure
+ Provider -> Provider: keep csrfToken for retry; status=logoutPending
+end
+Provider --> Button: result
+deactivate Provider
+Button --> User: logout feedback / retry option
+deactivate Button
+opt retry while the old logout is still pending
+ User -> Button: retry
+ activate Button
+ Button -> Provider: logout()
+ activate Provider
+  Provider -> API: logout(pending csrfToken)
+ activate API
+ API --> Provider: result from the same idempotent endpoint
+ deactivate API
+ Provider --> Button: result
+ deactivate Provider
+ Button --> User: feedback
+ deactivate Button
+end
+opt return to a protected page after logout or inactivity
+ User -> Route: restorePage(protected data endpoint)
+ activate Route
+ Route -> Route: hide protected DOM
+ Route -> Context: read status, generation and monotonic idle budget
+ activate Context
+ Context --> Route: session state
+ deactivate Context
+ alt anonymous, logoutPending or idle budget elapsed
+  opt idle budget elapsed
+   Route -> Provider: handleIdleExpiry()
+   activate Provider
+   Provider --> Route: status=anonymous; protected data cleared
+   deactivate Provider
+  end
+  Route -> Route: show public/login view
+ else authenticated candidate
+  Route -> Client: request(page's protected data endpoint, options)
+  activate Client
+  Client --> Route: server-validated result / error
+  deactivate Client
+  Route -> Context: recheck generation, status and idle budget
+  activate Context
+  Context --> Route: current state
+  deactivate Context
+  alt authorized result still belongs to current session
+   Route -> Route: render fresh data
+  else stale, denied or unavailable
+   Route -> Route: keep protected content hidden
+  end
+ end
+ Route --> User: safe restored page
+ deactivate Route
+end
+@enduml

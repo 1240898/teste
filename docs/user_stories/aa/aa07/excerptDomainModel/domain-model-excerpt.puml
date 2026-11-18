@@ -1,0 +1,73 @@
+@startuml
+hide methods
+skinparam classAttributeIconSize 0
+
+package "User Aggregate" {
+    class User <<entity>> <<aggregateRoot>> {
+        + active : boolean
+        + everActivated : boolean
+    }
+    note right of User
+        everActivated is an AA06 extension.
+        First activation sets both flags to true.
+        Deactivation clears only active.
+    end note
+
+    class UserId <<vo>> {
+        + value : string
+    }
+
+    class Email <<vo>> {
+        + emailAddress : String
+    }
+
+    class Password <<vo>> {
+        + passwordHash : String
+    }
+
+    enum UserRole <<enum>> {
+        ADMINISTRATOR
+        MANAGER
+        EMPLOYEE
+        CUSTOMER
+    }
+
+    class ExternalIdentity <<vo>> {
+        + provider : IdentityProvider
+        + subject : String
+        + linkedAt : DateTime
+    }
+
+    enum IdentityProvider <<enum>> {
+        GOOGLE
+    }
+
+    class ActivationInvitation <<entity>> {
+        + intendedEmail : Email
+        + expiresAt : DateTime
+        + method : ActivationMethod
+    }
+
+    enum ActivationMethod <<AA06 integration>> {
+        LOCAL
+        EXTERNAL
+    }
+
+    enum InvitationStatus <<enum>> {
+        PENDING
+        USED
+        EXPIRED
+        INVALIDATED
+    }
+
+    User "1" *-- "1" UserId : identified by >
+    User "1" *-- "1" Email : has >
+    User "1" *-- "0..1" Password : has local credential >
+    User "1" --> "0..*" UserRole : assigned >
+    User "1" *-- "0..*" ExternalIdentity : authenticated through >
+    ExternalIdentity "0..*" --> "1" IdentityProvider : issued by >
+    User "1" *-- "0..1" ActivationInvitation : current activation invitation >
+    ActivationInvitation "1" --> "1" InvitationStatus : has >
+}
+
+@enduml

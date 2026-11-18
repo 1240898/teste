@@ -1,0 +1,116 @@
+@startuml sequence_diagram_remove
+autonumber
+skinparam maxMessageSize 90
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+actor Manager
+participant "ComponentTypeRoutes" as Routes
+participant "ComponentTypeController" as Controller
+participant "ComponentTypeService" as Service
+participant "IComponentTypeRepository" as Repo
+participant "IUnitOfWork" as UoW
+participant "IComponentTypeImpactGuard" as Impact
+database "PostgreSQL" as DB
+title BCK07 - Safe removal
+Manager -> Routes : DELETE /api/v1/pizza-component-types/{id}
+activate Routes
+participant "AuthMiddleware" as Auth
+participant "RoleMiddleware" as Roles
+participant "ValidationMiddleware" as Validator
+Routes -> Auth : verifyToken(req, res, next)
+activate Auth
+break Missing, invalid or expired token
+ Auth --> Manager : 401 Unauthorized
+end
+Auth --> Routes : identity established
+deactivate Auth
+Routes -> Roles : requireRole(MANAGER)
+activate Roles
+break Caller lacks Manager role
+ Roles --> Manager : 403 Forbidden
+end
+Roles --> Routes : authorized
+deactivate Roles
+Routes -> Validator : validate(req)
+activate Validator
+break Malformed identifier or fields / invalid count representation
+ Validator --> Manager : 400 Bad Request
+end
+Validator --> Routes : request valid
+deactivate Validator
+Routes -> Controller : remove(req, res, next)
+activate Controller
+Controller -> Service : remove(id)
+activate Service
+Service -> UoW : withTransaction(work)
+activate UoW
+UoW -> DB : BEGIN
+activate DB
+DB --> UoW : transaction started
+deactivate DB
+UoW -> Service : work(tx)
+activate Service
+Service -> Repo : findByIdForUpdate(id, tx)
+activate Repo
+Repo --> Service : current or null
+deactivate Repo
+break Type absent
+ Service --> UoW : NotFound
+ UoW -> DB : ROLLBACK
+ activate DB
+ DB --> UoW : rolled back
+ deactivate DB
+ UoW --> Controller : error propagated through Service
+ Controller --> Manager : 404 Not Found
+end
+Service -> Impact : assertSafeRemoval(current, tx)
+activate Impact
+break Safe removal cannot be established
+ Impact --> Service : cannot establish safe removal
+ Service --> UoW : abort
+ UoW -> DB : ROLLBACK
+ activate DB
+ DB --> UoW : rolled back
+ deactivate DB
+ UoW --> Controller : error propagated through Service
+ Controller --> Manager : removal rejected
+end
+Impact --> Service : consistency check passed
+deactivate Impact
+Service -> Repo : delete(id, tx)
+activate Repo
+Repo -> DB : DELETE type (foreign keys RESTRICT)
+activate DB
+break Concurrent reference or database failure
+ DB --> Repo : constraint violation / failure
+ Repo --> UoW : error propagated through Service
+ UoW -> DB : ROLLBACK
+ activate DB
+ DB --> UoW : rolled back
+ deactivate DB
+ UoW --> Controller : error propagated through Service
+ Controller --> Manager : 409 for reference conflict; 500 otherwise
+end
+DB --> Repo : deleted
+deactivate DB
+Repo --> Service : void
+deactivate Repo
+Service --> UoW : void
+deactivate Service
+UoW -> DB : COMMIT
+activate DB
+DB --> UoW : committed
+deactivate DB
+UoW --> Service : committed
+deactivate UoW
+Service --> Controller : void
+deactivate Service
+Controller --> Manager : 204 No Content
+deactivate Controller
+note over UoW,DB
+ Guard and write must share one consistency boundary.
+ FK constraints protect direct references against races;
+ No cascading deletion or automatic deactivation is specified.
+end note
+deactivate Routes
+@enduml

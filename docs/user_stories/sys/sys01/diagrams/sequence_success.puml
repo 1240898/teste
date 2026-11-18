@@ -1,0 +1,89 @@
+@startuml
+title SYS01 - Successful deployment with isolated PostgreSQL validation
+
+actor Operator
+participant "Deployment workflow\n(deploy.yml)" as Workflow
+participant "Backend validation job" as BackendTests
+participant "Frontend validation job" as FrontendTests
+database "Runner PostgreSQL 18\n(ephemeral / isolated)" as RunnerDB
+participant "SYS08 backup evidence" as Backup
+participant "Previous known-good API image" as PreviousAPI
+participant "DEI VM deploy agent" as Deploy
+participant "VM release manifest" as Metadata
+participant "Versioned runtime configuration" as Config
+database "Shared DEI PostgreSQL 18" as DEIDB
+participant "Candidate Back-End API" as API
+participant "Nginx" as Nginx
+participant "GitHub artifacts" as Artifacts
+
+Operator -> Workflow: Schedule or dispatch deploy
+Workflow -> Workflow: Queue in `dei-release`; acquire slot
+Workflow -> Workflow: Resolve and validate candidate commit SHA
+Workflow -> BackendTests: Run backend checks with RUN_DATABASE_TESTS=1
+BackendTests -> RunnerDB: Apply migrations and execute PostgreSQL suites
+RunnerDB --> BackendTests: Database tests pass
+BackendTests --> Workflow: Backend gate passes
+Workflow -> FrontendTests: Run lint, Jest, health integration, build and bundle scan
+FrontendTests --> Workflow: Frontend gate passes
+note over BackendTests,RunnerDB
+  Candidate tests use only the ephemeral runner database.
+  The shared DEI PostgreSQL service is not contacted by CI tests.
+end note
+
+Workflow -> Deploy: Verify SSH host key; stage candidate images and manifest
+Deploy -> Metadata: Preserve current release and schema version
+Metadata --> Deploy: Current known-good SHA/config/schema version
+
+alt Candidate contains a pending database migration
+  Deploy -> Backup: Require confirmed, restorable SYS08 backup
+  alt Backup not confirmed
+    Backup --> Deploy: No confirmation
+    break Stop deploy before shared migration or candidate activation
+      Deploy --> Workflow: Report backup gate failure
+      Workflow -> Artifacts: Archive sanitized gate failure and test results
+    end
+  else Backup confirmed
+    Backup --> Deploy: Backup confirmation and identifier
+    Deploy -> RunnerDB: Create separate scratch DB at current schema version
+    Deploy -> RunnerDB: Apply candidate migration to scratch DB
+    RunnerDB --> Deploy: Migrated scratch schema ready
+    Deploy -> PreviousAPI: Transfer retained image over verified SSH; verify image ID
+    Deploy -> PreviousAPI: Run backward-compatibility suite against scratch DB
+    alt Previous API compatibility fails
+      PreviousAPI --> Deploy: Compatibility failure
+      break Stop before shared DEI migration/activation
+        Deploy --> Workflow: Report compatibility gate failure
+        Workflow -> Artifacts: Archive sanitized failure evidence
+      end
+    else Previous API compatibility passes
+      PreviousAPI --> Deploy: Reads and writes pass on migrated schema
+      Deploy -> DEIDB: Apply versioned migration to shared DEI database
+      DEIDB --> Deploy: Migration succeeds
+    end
+  end
+else No migration pending
+  Deploy -> Deploy: Keep current schema version
+end
+
+Deploy -> Config: Select installed configuration revision for candidate
+Config --> Deploy: Provide matching runtime configuration
+Deploy -> API: Activate candidate API image
+API -> DEIDB: Startup connectivity check (SELECT 1)
+DEIDB --> API: Connection succeeds; API starts
+Deploy -> Nginx: docker compose up -d; replace web/API containers
+note over Deploy,Nginx: Single-host replacement may briefly interrupt requests.
+Nginx -> API: GET /api/v1/health and routed API smoke checks
+API --> Nginx: HTTP 200
+Nginx --> Deploy: HTTPS prerequisite, SPA fallback and proxy checks pass
+Deploy -> Metadata: Record candidate SHA, image IDs, config and schema version
+Deploy --> Workflow: Release active; prior release retained
+Workflow -> Artifacts: Archive sanitized logs, tests and release manifest
+Workflow --> Operator: Deployment successful; release queue slot released
+
+note over Workflow,DEIDB
+  `main.yml` and `deploy.yml` are separate workflows.
+  `deploy.yml` repeats validation steps and requires RUN_DATABASE_TESTS=1.
+  Runner PostgreSQL is isolated; only deployment migration/runtime traffic
+  reaches the shared DEI database.
+end note
+@enduml

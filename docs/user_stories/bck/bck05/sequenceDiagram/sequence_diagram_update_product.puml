@@ -1,0 +1,173 @@
+@startuml sequence_diagram_update_product
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - BCK05 Update Product incl. Stock-Control Changes (PUT /api/v1/products/:id)
+
+actor Manager
+participant Routes as "ProductRoutes"
+participant Controller as "ProductController"
+participant Service as "ProductService"
+participant UoW as "IUnitOfWork"
+participant Repo as "IProductRepository"
+participant RefReader as "IProductReferenceReader"
+participant Impact as "IProductImpactChecker\n(BCK08/BCK10)"
+participant Mapper as "ProductMapper"
+participant Product as "Product\n<<aggregateRoot>>"
+participant StockPort as "IStockProvisioning\n(BCK09)"
+database DB as "PostgreSQL"
+
+Manager -> Routes : PUT /api/v1/products/:id\n{ full editable state, incl. isStockControlled, initialUnits? }
+activate Routes
+activate Manager
+
+note right of Routes
+  AuthMiddleware -> RoleMiddleware("MANAGER") ->
+  ValidationMiddleware(updateProductSchema),
+  exactly as in SD 1 (401 / 403 / 400).
+end note
+Routes -> Controller : updateProduct(req, res, next)
+activate Controller
+Controller -> Service : updateProduct(id, updateProductDTO)
+activate Service
+
+Service -> Mapper : ProductId.create(id), toProps(dto)
+activate Mapper
+Mapper --> Service : productId, props (value objects)
+deactivate Mapper
+Service -> Product : validateProps(props)
+activate Product
+alt invalid id / field value / invariant (checked BEFORE any DB access)
+    Product --> Service : throw AppError(400, ...)
+    Service --> Controller : error
+    Controller --> Manager : 400 Bad Request
+end
+Product --> Service : valid
+deactivate Product
+
+Service -> UoW : withTransaction(work)
+activate UoW
+UoW -> DB : BEGIN
+UoW -> Service : work(tx)
+
+Service -> Repo : findByIdForUpdate(productId, tx)
+activate Repo
+Repo -> DB : SELECT ... FROM products WHERE id = $1 FOR UPDATE
+note right of DB
+  Locks the Product row FIRST
+  (same lock order as BCK09
+  stock adjustments).
+end note
+Repo --> Service : product | null
+deactivate Repo
+opt product not found
+    Service --> UoW : throw AppError(404, "Product not found")
+end
+
+Service -> RefReader : verify category / component type / allergens (tx)
+activate RefReader
+RefReader --> Service : references found
+deactivate RefReader
+opt missing reference
+    Service --> UoW : throw AppError(404, ...)
+end
+
+Service -> Impact : validate role/type/pricing transitions(product, props, tx)
+activate Impact
+alt removing Pizza Component with BCK08/BCK10 references
+    Impact --> Service : conflict (409)
+    Service --> UoW : throw AppError(409, "Component is referenced")
+else changing referenced component type or incompatible pricing mode
+    Impact --> Service : conflict (409)
+    Service --> UoW : throw AppError(409, "Existing configuration would be invalid")
+else safe transition / administrative update
+    Impact --> Service : allowed
+end
+deactivate Impact
+
+Service -> Service : wasStockControlled = product.hasStockControl()
+Service -> Product : revise(props)
+activate Product
+Product --> Service : revised (props already validated)
+deactivate Product
+Service -> Service : transition = StockControlTransition\n.between(wasStockControlled, product.hasStockControl())
+
+alt transition = ENABLED (false -> true)
+    Service -> Repo : save(product, tx)
+    activate Repo
+    Repo -> DB : UPDATE products SET ..., is_stock_controlled = true
+    Repo --> Service : saved
+    deactivate Repo
+    Service -> StockPort : initializeForProduct(productId, tx, initialUnits?)
+    activate StockPort
+    StockPort -> DB : INSERT INTO stock_information\n(product_id, available_units = initialUnits ?? 0)
+    note right of StockPort
+      initialUnits is optional; BCK09 defaults it to 0.
+      It is used only on the false -> true transition.
+    end note
+    StockPort --> Service : initialized
+    deactivate StockPort
+
+else transition = DISABLED (true -> false)
+    Service -> StockPort : disableForProduct(productId, tx)
+    activate StockPort
+    StockPort -> DB : UPDATE stock_information\nSET tracking_status = 'HISTORICAL'
+    note right of StockPort
+      BCK09 preserves the final availableUnits as a historical snapshot.
+      No zero-quantity precondition; no DELETE or movement ledger.
+    end note
+    StockPort --> Service : tracking disabled
+    deactivate StockPort
+    Service -> Repo : save(product, tx)
+    activate Repo
+    Repo -> DB : UPDATE products SET ..., is_stock_controlled = false
+    Repo --> Service : saved
+    deactivate Repo
+
+else transition = NONE (unchanged)
+    Service -> Repo : save(product, tx)
+    activate Repo
+    Repo -> DB : UPDATE products SET ...\nreplace product_allergens rows
+    Repo --> Service : saved
+    deactivate Repo
+    note right of Service
+      No call to BCK09: stock record and
+      quantity are left untouched, even if initialUnits
+      was supplied with an ordinary Product update.
+    end note
+end
+
+alt work completed
+    Service --> UoW : saved
+    UoW -> DB : COMMIT
+    UoW --> Service : saved
+    Service --> Controller : productResponseDTO
+    Controller --> Manager : 200 OK { ...updated product }
+else any error thrown inside work(tx)
+    UoW -> DB : ROLLBACK
+    note right of UoW
+      Product flag and current/historical stock records are
+      restored together; a failed step never
+      leaves isStockControlled and
+      stock_information out of sync.
+    end note
+    UoW --> Service : rethrow
+    Service --> Controller : error
+    Controller --> Manager : 400 / 404 / 409 (errorHandler)
+end
+deactivate UoW
+deactivate Service
+deactivate Controller
+deactivate Routes
+deactivate Manager
+
+note over Manager, DB
+  isActive is NOT changed by this flow, and BCK05 never changes stock quantities.
+  A stock decrease to 0 performed through BCK09 does not call BCK05: the product
+  stays active and stock-controlled, just without available stock.
+  Client permits disabling tracking with any non-negative quantity; history is retained.
+  Re-enabling starts a new current snapshot with optional initialUnits (default 0).
+end note
+
+@enduml

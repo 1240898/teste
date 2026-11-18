@@ -1,0 +1,104 @@
+@startuml sequence_diagram_create
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+title Sequence Diagram - BCK10 Define a Predefined Pizza Composition
+
+actor Manager
+participant Routes as "PredefinedPizzaRoutes / Express"
+participant Auth as "AuthMiddleware (BCK01)"
+participant Roles as "RoleMiddleware (BCK01)"
+participant Validator as "ValidationMiddleware"
+participant Controller as "PredefinedPizzaController"
+participant Service as "PredefinedPizzaManagementService"
+participant UoW as "IUnitOfWork"
+participant ProductRepository as "ProductRepository (BCK05)"
+participant Product as "Product / PredefinedPizza (BCK05)"
+participant References as "PostgresConfigurationReferenceReader"
+participant Mapper as "PredefinedPizzaResponseMapper"
+database DB as "PostgreSQL"
+participant Errors as "Global Error Handler"
+
+Manager -> Routes : POST /api/v1/predefined-pizzas\n{ productId, componentIds }
+Routes -> Auth : verifyToken(req)
+Auth --> Routes : next() with authenticated req.user
+Routes -> Roles : requireRole(MANAGER)
+Roles --> Routes : next() when authorized
+Routes -> Validator : validate request body
+Validator --> Routes : next() with validated req.body
+Routes -> Controller : create(req, res)
+Controller -> Controller : new CreatePredefinedPizzaDTO(req.body)
+Controller -> Service : create(dto)
+Service -> Service : validate no self-reference
+alt componentIds contains productId
+  Service --> Controller : rejected Promise (AppError 409)
+  Controller --> Routes : rejected route-handler Promise
+  Routes -> Errors : Express forwards rejected request
+  Errors --> Manager : 409 Conflict
+else componentIds excludes productId
+Service -> UoW : withTransaction(work)
+UoW -> DB : BEGIN
+UoW -> Service : invoke work(tx)
+Service -> ProductRepository : findByIdForUpdate(productId, tx)
+ProductRepository -> DB : SELECT Product and composition FOR UPDATE
+DB --> ProductRepository : Product / no row
+ProductRepository --> Service : Product / null
+
+alt Product does not exist or is not an eligible Sellable Product
+  Service --> UoW : throw AppError (404 / 409)
+  UoW -> DB : ROLLBACK
+  UoW --> Service : rethrow AppError
+  Service --> Controller : rejected Promise (AppError)
+  Controller --> Routes : rejected route-handler Promise
+  Routes -> Errors : Express forwards rejected request
+  Errors --> Manager : mapped HTTP error response
+else Product already has a composition
+  Service --> UoW : throw AppError (409)
+  UoW -> DB : ROLLBACK
+  UoW --> Service : rethrow AppError
+  Service --> Controller : rejected Promise (AppError)
+  Controller --> Routes : rejected route-handler Promise
+  Routes -> Errors : Express forwards rejected request
+  Errors --> Manager : 409 Conflict
+else eligible Product has no composition
+  Service -> References : readFacts(productId, componentIds, tx)
+  References -> DB : Read representative/component roles, type rules and eligible sizes
+  DB --> References : reference rows
+  References --> Service : ConfigurationFacts
+  Service -> Service : validate component eligibility, type bounds and size coverage
+  alt Invalid component or configuration
+    Service --> UoW : throw AppError (404 / 409)
+    UoW -> DB : ROLLBACK
+    UoW --> Service : rethrow AppError
+    Service --> Controller : rejected Promise (AppError)
+    Controller --> Routes : rejected route-handler Promise
+    Routes -> Errors : Express forwards rejected request
+    Errors --> Manager : mapped HTTP error response
+  else Valid configuration
+    Service -> Service : ProductCompositionItem.create(componentProductId, 1)
+    Service -> Product : replaceComposition(items)
+    Product --> Service : composition updated
+    Service -> ProductRepository : save(Product with composition, tx)
+    ProductRepository -> DB : UPDATE Product and replace composition items
+    DB --> ProductRepository : persisted Product row and composition
+    ProductRepository --> Service : saved PredefinedPizza Product
+    Service -> Mapper : toDTO(Product)
+    Mapper --> Service : { id, componentIds }
+    Service --> UoW : return response DTO
+    UoW -> DB : COMMIT
+    UoW --> Service : committed response DTO
+    Service --> Controller : response DTO
+    Controller --> Manager : 201 Created + Location + DTO
+  end
+end
+end
+
+note over Manager,DB
+  BCK05 creates and owns the Sellable Product first. BCK10 sets its default
+  composition on that same Product using its ProductId; it creates no second
+  aggregate or identifier. Each selected component occurs once (quantity 1).
+  BCK10 rejects a component list containing the representative ProductId before
+  opening the transaction. The configuration must cover at least one active size.
+  BCK08 owns size-specific consumption. This flow does not inspect stock.
+end note
+@enduml

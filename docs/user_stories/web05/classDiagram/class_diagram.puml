@@ -1,0 +1,627 @@
+
+@startuml WEB05_Class_Diagram
+
+!pragma layout smetana
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing false
+skinparam linetype ortho
+skinparam ranksep 30
+skinparam nodesep 18
+
+title Class Diagram (Design) - WEB05 Business Management Pages (Front-End SPA)
+
+' -----------------------------------------------------------------------------
+' BUSINESS MANAGEMENT PAGES
+' -----------------------------------------------------------------------------
+
+package "Front-End (SPA)" <<Rectangle>> {
+
+    package "Business Management Pages (WEB05)" <<Rectangle>> {
+
+        package "Customer Management" {
+            class CustomerManagementPage <<component>> {
+                - filters : CustomerSearchFilters
+                - customers : CustomerDTO[]
+                - state : "loading" | "ready" | "empty" | "error"
+                + searchCustomers() : void
+                + viewCustomer(id) : void
+                + createCustomer() : void
+                + updateCustomer(id) : void
+                + changeCustomerStatus(id) : void
+            }
+
+            class CustomerSearchFilters <<record>> {
+                + name : string
+                + email : string
+                + phone : string
+            }
+        }
+
+        package "Product Category Management" {
+            class ProductCategoryManagementPage <<component>> {
+                - categories : ProductCategoryDTO[]
+                - state : "loading" | "ready" | "empty" | "error"
+                + listCategories() : void
+                + createCategory() : void
+                + updateCategory(id) : void
+                + removeCategory(id) : void
+            }
+        }
+
+        package "Allergen Management" {
+            class AllergenManagementPage <<component>> {
+                - allergens : AllergenDTO[]
+                - state : "loading" | "ready" | "empty" | "error"
+                + listAllergens() : void
+                + viewAllergen(id) : void
+                + updateAllergen(id) : void
+            }
+        }
+
+        package "Product Management" {
+            class ProductManagementPage <<component>> {
+                - filters : ProductSearchFilters
+                - products : ProductDTO[]
+                - state : "loading" | "ready" | "empty" | "error"
+                + searchProducts() : void
+                + viewProduct(id) : void
+                + createProduct() : void
+                + updateProduct(id) : void
+                + changeProductStatus(id) : void
+            }
+
+            class ProductSearchFilters <<record>> {
+                + name : string
+                + categoryId : string
+                + active : boolean
+            }
+        }
+
+        package "Pizza Size Management" {
+            class PizzaSizeManagementPage <<component>> {
+                - sizes : PizzaSizeDTO[]
+                - state : "loading" | "ready" | "empty" | "error"
+                + listSizes() : void
+                + createSize() : void
+                + updateSize(id) : void
+                + changeSizeStatus(id) : void
+            }
+        }
+
+        package "Pizza Component Type Management" {
+            class PizzaComponentTypeManagementPage <<component>> {
+                - componentTypes : PizzaComponentTypeDTO[]
+                - state : "loading" | "ready" | "empty" | "error"
+                + listComponentTypes() : void
+                + createComponentType() : void
+                + updateComponentType(id) : void
+                + removeComponentType(id) : void
+            }
+        }
+
+        package "Component Size Configuration Management" {
+            class ComponentSizeConfigurationManagementPage <<component>> {
+                - configurations : ComponentSizeConfigurationDTO[]
+                - productId : string
+                - state : "loading" | "ready" | "empty" | "error"
+                + consultConfigurations(productId) : void
+                + createConfiguration(productId, sizeId) : void
+                + updateConfiguration(productId, sizeId) : void
+            }
+        }
+
+        package "Stock Management" {
+            class StockManagementPage <<component>> {
+                - filters : StockSearchFilters
+                - stockItems : StockInformationDTO[]
+                - state : "loading" | "ready" | "empty" | "error"
+                + searchStock() : void
+                + viewStock(productId) : void
+                + startTracking(productId) : void
+                + adjustStock(productId, quantity) : void
+                + stopTracking(productId) : void
+            }
+
+            class StockSearchFilters <<record>> {
+                + productId : string
+                + productName : string
+            }
+        }
+
+        package "Predefined Pizza Management" {
+            class PredefinedPizzaManagementPage <<component>> {
+                - pizzas : PredefinedPizzaDTO[]
+                - state : "loading" | "ready" | "empty" | "error"
+                + listPizzas() : void
+                + viewPizza(id) : void
+                + createPizza() : void
+                + replaceConfiguration(id) : void
+            }
+        }
+
+        package "Sellable Catalogue" {
+            class CatalogueViewerPage <<component>> {
+                - filters : CatalogueSearchFilters
+                - catalogue : CatalogueDTO[]
+                - state : "loading" | "ready" | "empty" | "error"
+                + searchCatalogue() : void
+                + viewProduct(id) : void
+            }
+
+            class CatalogueSearchFilters <<record>> {
+                + name : string
+                + categoryId : string
+            }
+        }
+    }
+
+    ' -------------------------------------------------------------------------
+    ' FEATURE DATA CONTRACTS
+    ' -------------------------------------------------------------------------
+
+    package "Feature Data Contracts (WEB05)" <<Rectangle>> {
+
+        package "Customer DTOs" {
+            class CustomerDTO <<record>> {
+                + id : string
+                + name : string
+                + phone : string
+                + email : string
+                + addresses : AddressDTO[]
+                + dietaryRestrictions : DietaryRestrictionDTO[]
+            }
+
+            class AddressDTO <<record>> {
+                + street : string
+                + postalCode : string
+                + city : string
+            }
+
+            class DietaryRestrictionDTO <<record>> {
+                + name : string
+                + description : string
+                + allergenId : integer
+            }
+
+            class CustomerAllergenOptionDTO <<record>> {
+                + id : integer
+                + name : string
+            }
+        }
+
+        package "Product Category DTOs" {
+            class ProductCategoryDTO <<record>> {
+                + id : string
+                + name : string
+            }
+        }
+
+        package "Allergen DTOs" {
+            class AllergenDTO <<record>> {
+                + id : integer
+                + name : string
+            }
+        }
+
+        package "Product DTOs" {
+            class ProductDTO <<record>> {
+                + id : string
+                + name : string
+                + description : string
+                + categoryId : string
+                + isActive : boolean
+                + acquisitionType : string
+                + basePrice : MoneyDTO
+                + composition : ProductCompositionItemDTO[]
+                + allergens : ProductAllergenInfo[]
+            }
+
+            class ProductCompositionItemDTO <<record>> {
+                + productId : string
+                + quantity : integer
+            }
+
+            class MoneyDTO <<record>> {
+                + amount : number
+                + currency : string
+            }
+
+            class ProductAllergenInfo <<record>> {
+                + allergenId : integer
+                + name : string
+            }
+        }
+
+        package "Pizza Size DTOs" {
+            class PizzaSizeDTO <<record>> {
+                + id : string
+                + name : string
+                + isActive : boolean
+            }
+        }
+
+        package "Component Type DTOs" {
+            class PizzaComponentTypeDTO <<record>> {
+                + id : string
+                + name : string
+                + assemblyOrder : integer
+                + minQuantity : integer
+                + maxQuantity : integer | null
+            }
+        }
+
+        package "Component Size Configuration DTOs" {
+            class ComponentSizeConfigurationDTO <<record>> {
+                + productId : string
+                + sizeId : string
+                + price : MoneyDTO
+                + stockUnitsConsumed : integer
+            }
+
+            class ConfigProductReferenceDTO <<record>> {
+                + id : string
+                + name : string
+            }
+
+            class ConfigSizeReferenceDTO <<record>> {
+                + id : string
+                + name : string
+            }
+
+            note right of ComponentSizeConfigurationDTO
+                A configuration is identified by the
+                Product + PizzaSize pair.
+                It does not have an independent ID.
+            end note
+        }
+
+        package "Stock DTOs" {
+            class StockInformationDTO <<record>> {
+                + id : string
+                + productId : string
+                + availableUnits : integer
+            }
+
+            class StockProductReferenceDTO <<record>> {
+                + id : string
+                + name : string
+            }
+        }
+
+        package "Predefined Pizza DTOs" {
+            class PredefinedPizzaDTO <<record>> {
+                + id : string
+                + name : string
+                + description : string
+                + isActive : boolean
+                + composition : ProductCompositionItemDTO[]
+                + sizeAvailability : PredefinedPizzaSizeAvailabilityDTO[]
+                + allergens : ProductAllergenInfo[]
+            }
+
+            class PredefinedPizzaSizeAvailabilityDTO <<record>> {
+                + sizeId : string
+                + available : boolean
+                + price : MoneyDTO | null
+            }
+        }
+
+        package "Catalogue DTOs" {
+            class CatalogueDTO <<record>> {
+                + id : string
+                + name : string
+                + description : string
+                + categoryName : string
+                + allergens : ProductAllergenInfo[]
+            }
+
+            class CataloguePizzaDetailsDTO <<record>> {
+                + sizes : PredefinedPizzaSizeAvailabilityDTO[]
+            }
+        }
+    }
+
+    ' -------------------------------------------------------------------------
+    ' FEATURE REST ADAPTERS
+    ' -------------------------------------------------------------------------
+
+    package "Feature REST Adapters (WEB05)" <<Rectangle>> {
+
+        class customerApi <<module>> {
+            + createCustomerApi(request) : CustomerApi
+            + search(filters, signal) : CustomerDTO[]
+            + getById(id, signal) : CustomerDTO
+            + create(dto) : CustomerDTO
+            + update(id, dto) : CustomerDTO
+            + activate(id) : CustomerDTO
+            + deactivate(id) : CustomerDTO
+            + listAllergenOptions(signal) : CustomerAllergenOptionDTO[]
+        }
+
+        class productCategoryApi <<module>> {
+            + createProductCategoryApi(request) : ProductCategoryApi
+            + list(signal) : ProductCategoryDTO[]
+            + getById(id, signal) : ProductCategoryDTO
+            + create(dto) : ProductCategoryDTO
+            + update(id, dto) : ProductCategoryDTO
+            + remove(id) : null
+        }
+
+        class allergenApi <<module>> {
+            + createAllergenApi(request) : AllergenApi
+            + list(signal) : AllergenDTO[]
+            + getById(id, signal) : AllergenDTO
+            + create(dto) : AllergenDTO
+            + update(id, dto) : AllergenDTO
+            + remove(id) : null
+        }
+
+        class productApi <<module>> {
+            + createProductApi(request) : ProductApi
+            + search(filters, signal) : ProductDTO[]
+            + getById(id, signal) : ProductDTO
+            + create(dto) : ProductDTO
+            + update(id, dto) : ProductDTO
+            + activate(id) : ProductDTO
+            + deactivate(id) : ProductDTO
+        }
+
+        class pizzaSizeApi <<module>> {
+            + createPizzaSizeApi(request) : PizzaSizeApi
+            + search(signal) : PizzaSizeDTO[]
+            + getById(id, signal) : PizzaSizeDTO
+            + create(dto) : PizzaSizeDTO
+            + update(id, dto) : PizzaSizeDTO
+            + remove(id) : null
+        }
+
+        class pizzaComponentTypeApi <<module>> {
+            + createPizzaComponentTypeApi(request) : PizzaComponentTypeApi
+            + search(signal) : PizzaComponentTypeDTO[]
+            + getById(id, signal) : PizzaComponentTypeDTO
+            + create(dto) : PizzaComponentTypeDTO
+            + update(id, dto) : PizzaComponentTypeDTO
+            + remove(id) : null
+        }
+
+        class componentSizeConfigurationApi <<module>> {
+            + createComponentSizeConfigurationApi(request) : ComponentSizeConfigurationApi
+            + consult(productId, signal) : ComponentSizeConfigurationDTO[]
+            + create(productId, sizeId, dto) : ComponentSizeConfigurationDTO
+            + update(productId, sizeId, dto) : ComponentSizeConfigurationDTO
+        }
+
+        class stockApi <<module>> {
+            + createStockApi(request) : StockApi
+            + search(filters, signal) : StockInformationDTO[]
+            + getForProduct(productId, signal) : StockInformationDTO
+            + startTracking(productId) : StockInformationDTO
+            + adjust(productId, quantity) : StockInformationDTO
+            + stopTracking(productId) : null
+        }
+
+        class predefinedPizzaApi <<module>> {
+            + createPredefinedPizzaApi(request) : PredefinedPizzaApi
+            + list(signal) : PredefinedPizzaDTO[]
+            + getById(id, signal) : PredefinedPizzaDTO
+            + create(dto) : PredefinedPizzaDTO
+            + replaceConfiguration(id, dto) : PredefinedPizzaDTO
+        }
+
+        class catalogueApi <<module>> {
+            + createCatalogueApi(request) : CatalogueApi
+            + search(filters, signal) : CatalogueDTO[]
+            + getById(id, signal) : CatalogueDTO
+        }
+    }
+
+    ' -------------------------------------------------------------------------
+    ' SHARED / EXISTING COMPONENTS
+    ' -------------------------------------------------------------------------
+
+    package "Shared (existing / extended)" <<Rectangle>> {
+
+        class ModuleRequest <<existing WEB01>> {
+            + request(method, path, options) : Promise<JSON | null>
+        }
+
+        class ApiError <<existing WEB01 / WEB04>> {
+            + status : number
+            + kind : string
+            + message : string
+            + details : unknown
+        }
+
+        class RequireRole <<existing WEB03>> {
+            + roles : UserRole[]
+            + render() : ReactNode | null
+        }
+
+        class FeedbackMessage <<existing WEB04>> {
+            + render(messageKey, values) : ReactNode
+        }
+
+        class ConfirmDialog <<existing WEB04>> {
+            + render(title, message, onConfirm) : ReactNode
+        }
+
+        class LoadingIndicator <<existing WEB04>> {
+            + render() : ReactNode
+        }
+
+        class LocaleProvider <<existing WEB02>> {
+            + t(key, values) : string
+        }
+    }
+}
+
+' -----------------------------------------------------------------------------
+' PAGE -> ADAPTER RELATIONSHIPS
+' -----------------------------------------------------------------------------
+
+CustomerManagementPage ..> customerApi : uses
+ProductCategoryManagementPage ..> productCategoryApi : uses
+AllergenManagementPage ..> allergenApi : uses
+ProductManagementPage ..> productApi : uses
+PizzaSizeManagementPage ..> pizzaSizeApi : uses
+PizzaComponentTypeManagementPage ..> pizzaComponentTypeApi : uses
+ComponentSizeConfigurationManagementPage ..> componentSizeConfigurationApi : uses
+StockManagementPage ..> stockApi : uses
+PredefinedPizzaManagementPage ..> predefinedPizzaApi : uses
+CatalogueViewerPage ..> catalogueApi : uses
+
+' -----------------------------------------------------------------------------
+' PAGE -> DATA CONTRACT RELATIONSHIPS
+' -----------------------------------------------------------------------------
+
+CustomerManagementPage ..> CustomerDTO
+CustomerManagementPage ..> CustomerSearchFilters
+
+ProductCategoryManagementPage ..> ProductCategoryDTO
+AllergenManagementPage ..> AllergenDTO
+
+ProductManagementPage ..> ProductDTO
+ProductManagementPage ..> ProductSearchFilters
+
+PizzaSizeManagementPage ..> PizzaSizeDTO
+PizzaComponentTypeManagementPage ..> PizzaComponentTypeDTO
+
+ComponentSizeConfigurationManagementPage ..> ComponentSizeConfigurationDTO
+ComponentSizeConfigurationManagementPage ..> ConfigProductReferenceDTO
+ComponentSizeConfigurationManagementPage ..> ConfigSizeReferenceDTO
+
+StockManagementPage ..> StockInformationDTO
+StockManagementPage ..> StockSearchFilters
+
+PredefinedPizzaManagementPage ..> PredefinedPizzaDTO
+CatalogueViewerPage ..> CatalogueDTO
+CatalogueViewerPage ..> CatalogueSearchFilters
+
+' -----------------------------------------------------------------------------
+' ADAPTER -> SHARED REST CONTRACT
+' -----------------------------------------------------------------------------
+
+customerApi ..> ModuleRequest : uses injected request
+productCategoryApi ..> ModuleRequest
+allergenApi ..> ModuleRequest
+productApi ..> ModuleRequest
+pizzaSizeApi ..> ModuleRequest
+pizzaComponentTypeApi ..> ModuleRequest
+componentSizeConfigurationApi ..> ModuleRequest
+stockApi ..> ModuleRequest
+predefinedPizzaApi ..> ModuleRequest
+catalogueApi ..> ModuleRequest
+
+ModuleRequest ..> ApiError : rejects with
+
+' -----------------------------------------------------------------------------
+' DTO COMPOSITION AND REFERENCES
+' -----------------------------------------------------------------------------
+
+CustomerDTO *-- "0..*" AddressDTO
+CustomerDTO *-- "0..*" DietaryRestrictionDTO
+
+ProductDTO *-- "0..1" MoneyDTO : base price
+ProductDTO *-- "0..*" ProductCompositionItemDTO : composition
+ProductDTO *-- "0..*" ProductAllergenInfo : allergen information
+ProductCompositionItemDTO --> ProductDTO : child product reference
+
+ComponentSizeConfigurationDTO *-- "1" MoneyDTO : price
+
+PredefinedPizzaDTO *-- "0..*" ProductCompositionItemDTO : composition
+PredefinedPizzaDTO *-- "0..*" PredefinedPizzaSizeAvailabilityDTO
+PredefinedPizzaDTO *-- "0..*" ProductAllergenInfo
+
+PredefinedPizzaSizeAvailabilityDTO o-- "0..1" MoneyDTO : price
+
+CatalogueDTO *-- "0..*" ProductAllergenInfo
+CatalogueDTO o-- "0..1" CataloguePizzaDetailsDTO : pizza details
+CataloguePizzaDetailsDTO *-- "0..*" PredefinedPizzaSizeAvailabilityDTO
+
+' -----------------------------------------------------------------------------
+' SHARED UI AND AUTHORIZATION DEPENDENCIES
+' -----------------------------------------------------------------------------
+
+CustomerManagementPage ..> RequireRole : controls action visibility
+ProductCategoryManagementPage ..> RequireRole : controls action visibility
+AllergenManagementPage ..> RequireRole : controls action visibility
+ProductManagementPage ..> RequireRole : controls action visibility
+PizzaSizeManagementPage ..> RequireRole : controls action visibility
+PizzaComponentTypeManagementPage ..> RequireRole : controls action visibility
+ComponentSizeConfigurationManagementPage ..> RequireRole : controls action visibility
+StockManagementPage ..> RequireRole : controls action visibility
+PredefinedPizzaManagementPage ..> RequireRole : controls action visibility
+
+CustomerManagementPage ..> FeedbackMessage
+ProductCategoryManagementPage ..> FeedbackMessage
+AllergenManagementPage ..> FeedbackMessage
+ProductManagementPage ..> FeedbackMessage
+PizzaSizeManagementPage ..> FeedbackMessage
+PizzaComponentTypeManagementPage ..> FeedbackMessage
+ComponentSizeConfigurationManagementPage ..> FeedbackMessage
+StockManagementPage ..> FeedbackMessage
+PredefinedPizzaManagementPage ..> FeedbackMessage
+CatalogueViewerPage ..> FeedbackMessage
+
+CustomerManagementPage ..> LoadingIndicator
+ProductManagementPage ..> LoadingIndicator
+StockManagementPage ..> LoadingIndicator
+CatalogueViewerPage ..> LoadingIndicator
+
+CustomerManagementPage ..> ConfirmDialog
+ProductCategoryManagementPage ..> ConfirmDialog
+ProductManagementPage ..> ConfirmDialog
+StockManagementPage ..> ConfirmDialog
+PredefinedPizzaManagementPage ..> ConfirmDialog
+
+CustomerManagementPage ..> LocaleProvider
+ProductManagementPage ..> LocaleProvider
+CatalogueViewerPage ..> LocaleProvider
+
+' -----------------------------------------------------------------------------
+' DESIGN NOTES
+' -----------------------------------------------------------------------------
+
+note bottom of ModuleRequest
+    Existing WEB01 contract injected into each feature adapter.
+    Feature adapters use this contract instead of importing
+    the shared apiClient directly.
+end note
+
+note bottom of RequireRole
+    WEB03 controls visibility of role-restricted actions.
+    The back end remains responsible for enforcing
+    authorization on every protected operation.
+end note
+
+note bottom of CustomerDTO
+    Customer contact information and dietary restrictions
+    must only be displayed to roles authorized for those
+    responsibilities, respecting confidentiality rules.
+end note
+
+note bottom of ProductDTO
+    Product composition is represented through product
+    references and quantities. Nested composition,
+    allergen information and availability are derived
+    according to the backend business rules.
+end note
+
+note bottom of ComponentSizeConfigurationDTO
+    The configuration is identified by the combination
+    of productId and sizeId, not by an independent ID.
+end note
+
+note bottom of CatalogueViewerPage
+    Catalogue reading is public. Catalogue responses
+    must not expose stock quantities or personal data.
+end note
+
+note bottom of ApiError
+    API errors are presented through WEB04 feedback
+    conventions. Validation details are shown when
+    provided by the backend response.
+end note
+
+@enduml

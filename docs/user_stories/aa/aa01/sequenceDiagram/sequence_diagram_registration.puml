@@ -1,0 +1,60 @@
+@startuml sequence_diagram_registration
+title SD 5 - Local registration
+hide footbox
+skinparam shadowing false
+
+actor Guest
+box "SPA" #F3F7FD
+  participant App
+  participant LocalRegistrationPage as Page
+  participant authApi as Client
+end box
+box "Backend" #F5F8F5
+  participant "UserRoutes / UserController" as API
+  participant UserService as Service
+  participant UserRepository as Repo
+end box
+participant "AA06 invitation request" as AA06
+
+Guest -> App : Create account
+App -> Page : navigate to /register
+Guest -> Page : submit account details
+Page -> Client : register(fields)
+Client -> API : POST /api/v1/users/register
+alt Invalid input or request limit exceeded
+  API --> Client : 400 or 429
+else Valid request
+  API -> Service : register(RegisterUserDTO)
+  Service -> Repo : findByEmail(canonical email)
+  alt Email already registered
+    Service --> API : 409 Conflict
+    API --> Client : 409
+  else New email
+    Service -> Service : hash password and create inactive CUSTOMER
+    Service -> Repo : save(user)
+    alt Account could not be saved
+      Repo --> Service : persistence error
+      Service --> API : 409 on duplicate email or sanitized 500
+      API --> Client : error response
+    else Account saved
+      Repo --> Service : persisted inactive User
+      opt AA06 is connected
+        Service -> AA06 : requestActivationInvitation(userId)
+        AA06 --> Service : request completes or fails
+        note right of Service
+          A failed request is logged.
+          The account remains inactive.
+        end note
+      end
+      Service --> API : safe user projection
+      API --> Client : 201 Created (active = false)
+    end
+  end
+end
+Client --> Page : show confirmation or error
+
+note over Service,AA06
+  AA06 issues and sends the invitation.
+  AA07 validates the invitation and activates the account.
+end note
+@enduml

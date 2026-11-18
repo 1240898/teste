@@ -1,0 +1,102 @@
+@startuml sequence_diagram_renew
+skinparam shadowing true
+autonumber
+title AA04 - Automatic Renewal
+actor "System User" as User
+participant "AuthProvider" as Provider
+participant "authApi" as API
+participant "AuthController" as Controller
+participant "UserService" as Users
+participant "SessionCredentialService" as Credentials
+participant "PostgresApplicationSessionRepository" as Sessions
+participant "UserRepository" as Accounts
+database PostgreSQL as DB
+participant "JwtTokenService" as JWT
+User -> Provider: recordActivity()
+activate Provider
+alt no new activity, report not due or logoutPending
+ Provider --> User: no renewal
+else report due
+ Provider -> API: renew(csrfToken)
+ activate API
+ API -> Controller: POST /api/v1/auth/renew\nCookie: HttpOnly lap_session\nX-CSRF-Token: csrfToken
+ activate Controller
+ Controller -> Users: renew(cookieCredential, csrfToken)
+ activate Users
+ Users -> Credentials: parse(credential)
+ activate Credentials
+ Credentials --> Users: sid, hash / error
+ deactivate Credentials
+ alt missing or malformed credential
+  Users -> Users: reject (401)
+ else parsed
+  Users -> Sessions: findByCredential(sid, hash)
+  activate Sessions
+  Sessions -> DB: SELECT matching session
+  activate DB
+  DB --> Sessions: record / null / error
+  deactivate DB
+  Sessions --> Users: result
+  deactivate Sessions
+  alt missing credential or database error
+   Users -> Users: reject (401 / 500)
+  else record found
+   Users -> Accounts: findById(UserId.create(session.userId))
+   activate Accounts
+   Accounts -> DB: SELECT current User
+   activate DB
+   DB --> Accounts: row / null / error
+   deactivate DB
+   Accounts --> Users: User / null / error
+   deactivate Accounts
+   alt missing/inactive User, no role or lookup failure
+    Users -> Users: reject (401 / 403 / 500)
+   else eligible User
+    Users -> Sessions: renewIfActive(sid, hash, idleTimeoutSeconds)
+    activate Sessions
+    group database.withTransaction
+     Sessions -> DB: BEGIN; SELECT matching row FOR UPDATE
+     activate DB
+     DB --> Sessions: locked row / null
+     Sessions -> DB: sample clock_timestamp() after lock; check stored deadline
+     alt ended, expired or missing
+      Sessions -> DB: COMMIT without extension
+     else active
+      Sessions -> DB: UPDATE last_activity_at, idle_expires_at; COMMIT
+     end
+     DB --> Sessions: record / null / error
+     deactivate DB
+    end
+    Sessions --> Users: result
+    deactivate Sessions
+    alt renewal rejected or persistence failure
+     Users -> Users: reject (401 / 500)
+    else renewed
+     Users -> JWT: generateToken({sub, sid})
+     activate JWT
+     JWT --> Users: new JWT or signing error
+     deactivate JWT
+    end
+   end
+  end
+ end
+  Users --> Controller: AuthTokenDTO / 401 / 403 / 500
+ deactivate Users
+ Controller --> API: JSON without credential; Set-Cookie refresh / error (no-store)
+ deactivate Controller
+ API --> Provider: AuthTokenDTO {accessToken, csrfToken, idleExpiresAt} / error
+ deactivate API
+ alt stale generation
+  Provider -> Provider: discard result
+ else 200
+  Provider -> Provider: replace JWT; status=authenticated; keep sid and generation
+  Provider -> Provider: reset monotonic idle budget using request duration
+ else 401
+  Provider -> Provider: clearSession(); clearProtectedState(); status=anonymous
+ else 403 / 500 / network failure
+  Provider -> Provider: hide protected data; show error; retain valid retry credentials
+ end
+ Provider --> User: continue or show timeout/denied/unavailable feedback
+end
+deactivate Provider
+@enduml

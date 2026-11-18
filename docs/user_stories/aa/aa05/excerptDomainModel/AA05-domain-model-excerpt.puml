@@ -1,0 +1,120 @@
+@startuml LaPrizzaDomainModel
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam classAttributeIconSize 0
+hide methods
+
+' -----------------------------------------------------------------------------
+' USER AGGREGATE.
+' -----------------------------------------------------------------------------
+package "User Aggregate" <<Rectangle>> {
+
+    class User <<entity>> <<aggregateRoot>> {
+        + active : boolean
+    }
+
+    class UserId <<vo>> {
+        + value : string
+    }
+    note right of UserId
+        - UserId is a unique identifier for a user.
+        - Must be a string representing the user ID.
+        - Example: "USR-00123".
+    end note
+
+    class Email <<vo>> {
+        + emailAddress : String
+    }
+
+    class Password <<vo>> {
+        + passwordHash : String
+    }
+
+    class UserName <<vo>> {
+        + name : String
+    }
+
+    class MarketingConsent <<vo>> {
+        + consentGiven : boolean
+        + timestamp : DateTime
+    }
+
+    enum UserRole <<enum>> {
+        MANAGER
+        EMPLOYEE
+        CUSTOMER
+        
+    }
+
+    User "1" *-- "1" MarketingConsent : manages >
+    User "1" *-- "1" UserId : identified by >
+    User "1" *-- "1" Email : has >
+    User "1" *-- "1" Password : has >
+    User "1" *-- "1" UserName : has >
+    User "1" --> "1..*" UserRole : assigned >
+}
+
+' -----------------------------------------------------------------------------
+' CUSTOMER AGGREGATE.
+' -----------------------------------------------------------------------------
+package "Customer Aggregate" <<Rectangle>> {
+
+    class Customer <<entity>> <<aggregateRoot>> {
+    }
+
+    class CustomerId <<vo>> {
+        + value : string
+    
+    }
+    note right of CustomerId
+        - CustomerId is a unique identifier for a customer.
+        - Must be a string representing the customer ID.
+        - Example: "CUST-00123".
+    end note
+
+    class CustomerName <<vo>> {
+        + name : String
+    }
+
+    class PhoneNumber <<vo>> {
+        + number : String
+    }
+
+    class Email <<vo>> {
+        + email : String
+    }
+
+    class ContactInfo <<vo>> {
+
+    }
+
+    class Address <<vo>> {
+        + street : String
+        + postalCode : String
+        + city : String
+    }
+
+    class DietaryRestriction <<vo>> {
+        + name : String
+        + description : String
+    }
+
+    Customer "1" *-- "1" CustomerId : identified by >
+    Customer "1" *-- "1" CustomerName : named >
+    Customer "1" *-- "1" ContactInfo : has >
+    ContactInfo "1" *-- "1" PhoneNumber : has >
+    ContactInfo "1" *-- "1" Email : has >
+    Customer "1" *-- "0..*" Address : maintains >
+    Customer "1" *-- "0..*" DietaryRestriction : records >
+    }
+
+
+' -----------------------------------------------------------------------------
+' CROSS-AGGREGATE LINKS.
+' -----------------------------------------------------------------------------
+
+Customer "0..1" --> "0..1" User : may be associated with >
+
+
+@enduml
+

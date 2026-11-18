@@ -1,0 +1,107 @@
+@startuml class_diagram_rest_session
+!pragma layout smetana
+skinparam classAttributeIconSize 0
+hide empty members
+title WEB01 - Shared REST, configuration and session contracts
+
+class App <<component>>
+class AppShell <<component>>
+class ConfirmedModule <<component>>
+class "Account routes" as AccountRoutes <<component group>>
+
+package "Session (AA02 / AA03 / AA04)" {
+  class AuthProvider <<component>> {
+    - session: SessionState
+    + acceptAuthToken(dto): Promise<SessionState>
+    + refresh(expectedToken?: string): Promise<SessionState>
+    + hasAnyRole(...roles: UserRole[]): boolean
+  }
+  class SessionState <<record, excerpt>> {
+    + status: SessionStatus
+    + user: CurrentUser | null
+    + token: string | null
+    + csrfToken: string | null
+  }
+  class CurrentUser <<record, excerpt>> {
+    + id: string
+    + roles: UserRole[]
+  }
+  enum UserRole {
+    ADMINISTRATOR
+    MANAGER
+    EMPLOYEE
+    CUSTOMER
+  }
+  class authApi <<adapter>> {
+    + resumeSession(): Promise<AuthTokenDTO>
+    + getCurrentUser(token: string): Promise<CurrentUser>
+    + completeGoogleLogin(code: string, state: string): Promise<AuthTokenDTO>
+    + renewSession(csrfToken: string): Promise<AuthTokenDTO>
+    + logoutSession(csrfToken: string): Promise<null>
+  }
+}
+
+package "REST and configuration" {
+  class healthApi <<adapter>> {
+    + getHealth(signal?: AbortSignal): Promise<HealthDTO>
+  }
+  class localAuthApi <<adapter>>
+  class apiClient <<module>> {
+    + request(method, path, options?: RequestOptions): Promise<JSON | null>
+  }
+  class RequestOptions <<record>> {
+    + body?: JSON
+    + query?: QueryParams
+    + signal?: AbortSignal
+    + accessToken?: string
+    + csrfToken?: string
+    + credentials?: RequestCredentials = omit
+  }
+  class ApiError <<Error>> {
+    + status: number
+    + message: string
+    + kind: http | network | timeout | aborted | invalid-response
+  }
+  class appConfig <<module>> {
+    - config: AppConfigValues
+    + readAppConfig(env): AppConfigValues
+    + getAppConfig(): AppConfigValues
+  }
+  class AppConfigValues <<readonly record>> {
+    + apiBaseUrl: string
+    + apiTimeoutMs: number
+  }
+}
+
+class "Back-End API" as Backend <<external>>
+
+App ..> appConfig : validates before mounting
+AppShell ..> healthApi
+ConfirmedModule ..> apiClient : adds current access JWT
+ConfirmedModule ..> AuthProvider : refreshes roles
+AccountRoutes ..> localAuthApi : via account views
+AccountRoutes ..> authApi : Google callback
+AccountRoutes ..> AuthProvider : passes accepted session
+AuthProvider --> "1" SessionState : state in memory
+SessionState --> "0..1" CurrentUser : confirmed identity
+CurrentUser ..> UserRole
+AuthProvider ..> authApi : session and roles
+authApi ..> apiClient
+localAuthApi ..> apiClient
+healthApi ..> apiClient
+apiClient ..> appConfig
+apiClient ..> RequestOptions : accepts
+apiClient ..> ApiError : throws
+apiClient ..> Backend : HTTP / JSON (HTTPS in production)
+appConfig --> "0..1" AppConfigValues : cached after validation
+
+note bottom of SessionState
+Status: loading, guest, authenticated,
+denied or logoutPending.
+The HttpOnly cookie is managed by the browser.
+end note
+note bottom of RequestOptions
+The client also exposes GET, POST, PUT, PATCH and DELETE helpers.
+Cookie requests opt in; renew and logout add the CSRF header.
+end note
+@enduml

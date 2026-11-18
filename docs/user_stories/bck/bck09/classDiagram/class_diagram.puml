@@ -1,0 +1,318 @@
+@startuml class_diagram
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam linetype ortho
+left to right direction
+
+title Class Diagram - BCK09 Stock Information Management
+
+' -----------------------------------------------------------------------------
+' PRESENTATION LAYER (API)
+' -----------------------------------------------------------------------------
+package "Presentation Layer (API)" <<Rectangle>> {
+    class StockRoutes {
+        + register(router: Router): void
+    }
+
+    class StockController {
+        - useCases: IStockUseCases
+        + startTracking(req, res, next): Promise<void>
+        + getForProduct(req, res, next): Promise<void>
+        + search(req, res, next): Promise<void>
+        + adjust(req, res, next): Promise<void>
+        + stopTracking(req, res, next): Promise<void>
+    }
+
+    class AuthMiddleware <<shared>>
+    class RoleMiddleware <<shared>>
+    class ValidationMiddleware <<shared>>
+}
+
+' -----------------------------------------------------------------------------
+' APPLICATION LAYER
+' -----------------------------------------------------------------------------
+package "Application Layer" <<Rectangle>> {
+    interface IStockUseCases <<interface>> {
+        + startTracking(request: StartStockTrackingDTO): Promise<StockResponseDTO>
+        + getForProduct(productId: ProductId): Promise<StockResponseDTO>
+        + search(query: StockSearchDTO): Promise<StockSearchResultDTO>
+        + adjustStock(productId: ProductId, request: StockAdjustmentDTO): Promise<StockAdjustmentResultDTO>
+        + stopTracking(productId: ProductId): Promise<void>
+    }
+
+    interface IStockOrderConsumption <<interface>> {
+        + consumeForOrder(productId: string, units: int, tx): Promise<boolean>
+    }
+
+    class StockManagementService {
+        - stockRepository: IStockRepository
+        - stockQueryRepository: IStockQueryRepository
+        - productReader: IProductReader
+        - unitOfWork: IUnitOfWork
+        + startTracking(request: StartStockTrackingDTO): Promise<StockResponseDTO>
+        + getForProduct(productId: ProductId): Promise<StockResponseDTO>
+        + search(query: StockSearchDTO): Promise<StockSearchResultDTO>
+        + adjustStock(productId: ProductId, request: StockAdjustmentDTO): Promise<StockAdjustmentResultDTO>
+        + stopTracking(productId: ProductId): Promise<void>
+        + consumeForOrder(productId: string, units: int, tx): Promise<boolean>
+    }
+
+    interface IStockQueryRepository <<interface>> {
+        + findCurrentSummaryByProductId(productId: ProductId): Promise<StockSummary | null>
+        + searchPeriods(query: StockSearchCriteria): Promise<StockSearchPage>
+    }
+
+    interface IProductReader <<interface>> {
+        + getByIdForUpdate(productId: ProductId, tx): Promise<ProductStockStatus | null>
+    }
+
+    interface IUnitOfWork <<interface>> {
+        + withTransaction(work): Promise<T>
+    }
+
+    class ProductStockStatus <<readModel>> {
+        + productId: ProductId
+        + productName: string
+        + isActive: boolean
+    }
+
+    class StockSearchCriteria <<query>> {
+        + productId: ProductId?
+        + productName: string?
+        + isActive: boolean?
+        + historical: boolean
+        + page: int
+        + pageSize: int
+    }
+
+    class StockResponseMapper {
+        + toStockResponse(summary: StockSummary): StockResponseDTO
+        + toSearchResult(page: StockSearchPage, query: StockSearchDTO): StockSearchResultDTO
+        + toAdjustmentResult(stock: StockInformation, direction: StockAdjustmentDirection, units: int, productName: string): StockAdjustmentResultDTO
+    }
+
+    class StockSearchPage <<readModel>> {
+        + items: StockSummary[]
+        + totalItems: int
+    }
+
+    class StockSummary <<readModel>> {
+        + stockId: StockId
+        + productId: ProductId
+        + productName: string
+        + availableUnits: int
+        + startedAt: Date
+        + endedAt: Date?
+    }
+
+    package "DTOs" <<Rectangle>> {
+        enum StockAdjustmentDirection {
+            INCREASE
+            DECREASE
+        }
+
+        class StartStockTrackingDTO <<dto>> {
+            + productId: string
+            + initialUnits: int?
+        }
+
+        class StockAdjustmentDTO <<dto>> {
+            + direction: StockAdjustmentDirection
+            + units: int
+        }
+
+        class StockSearchDTO <<dto>> {
+            + productId: string?
+            + productName: string?
+            + isActive: boolean?
+            + historical: boolean?
+            + page: int
+            + pageSize: int
+        }
+
+        class StockResponseDTO <<dto>> {
+            + stockId: string
+            + productId: string
+            + productName: string
+            + availableUnits: int
+            + startedAt: string
+            + endedAt: string?
+        }
+
+        class StockAdjustmentResultDTO <<dto>> {
+            + stockId: string
+            + productId: string
+            + productName: string
+            + direction: StockAdjustmentDirection
+            + adjustedUnits: int
+            + availableUnits: int
+        }
+
+        class StockSearchResultDTO <<dto>> {
+            + items: StockResponseDTO[]
+            + page: int
+            + pageSize: int
+            + totalItems: int
+        }
+    }
+}
+
+' -----------------------------------------------------------------------------
+' DOMAIN LAYER
+' -----------------------------------------------------------------------------
+package "Domain Layer" <<Rectangle>> {
+    interface IStockRepository <<interface>> {
+        + nextId(tx): Promise<StockId>
+        + findCurrentByProductIdForUpdate(productId: ProductId, tx): Promise<StockInformation | null>
+        + save(stock: StockInformation, tx): Promise<void>
+        + insert(stock: StockInformation, tx): Promise<void>
+    }
+
+    class StockInformation <<entity>> <<aggregateRoot>> {
+        - id: StockId
+        - productId: ProductId
+        - quantity: AbstractStockQuantity
+        - startedAt: DateTime
+        - endedAt: DateTime?
+        + startTracking(id: StockId, productId: ProductId, initialUnits: int, startedAt: DateTime): StockInformation
+        + increase(units: int): void
+        + decrease(units: int): void
+        + endTracking(endedAt: DateTime): void
+        + getId(): StockId
+        + getProductId(): ProductId
+        + getAvailableUnits(): int
+        + getStartedAt(): DateTime
+        + getEndedAt(): DateTime?
+        + isCurrent(): boolean
+    }
+
+    class StockId <<vo>> {
+        - value: string
+        + create(id: string): StockId
+        + getValue(): string
+    }
+
+    class ProductId <<vo>> {
+        - value: string
+        + getValue(): string
+    }
+
+    class AbstractStockQuantity <<vo>> {
+        - availableUnits: int
+        + create(units: int): AbstractStockQuantity
+        + increase(units: int): AbstractStockQuantity
+        + decrease(units: int): AbstractStockQuantity
+        + getValue(): int
+    }
+
+    StockInformation "1" *-- "1" StockId : identified by >
+    StockInformation "1" *-- "1" ProductId : references >
+    StockInformation "1" *-- "1" AbstractStockQuantity : maintains >
+}
+
+' -----------------------------------------------------------------------------
+' INFRASTRUCTURE LAYER
+' -----------------------------------------------------------------------------
+package "Infrastructure Layer" <<Rectangle>> {
+    class PostgresStockRepository {
+        - database: Database
+        + nextId(tx): Promise<StockId>
+        + findCurrentByProductIdForUpdate(productId, tx): Promise<StockInformation | null>
+        + findCurrentSummaryByProductId(productId): Promise<StockSummary | null>
+        + searchPeriods(query: StockSearchCriteria): Promise<StockSearchPage>
+        + save(stock, tx): Promise<void>
+        + insert(stock, tx): Promise<void>
+    }
+
+    class PostgresUnitOfWork {
+        - database: Database
+        + withTransaction(work): Promise<T>
+    }
+
+    class ProductModuleProductReader <<BCK05 read adapter>> {
+        + getByIdForUpdate(productId, tx): Promise<ProductStockStatus | null>
+    }
+}
+
+note right of StockId
+  Generated when stock tracking starts from a PostgreSQL sequence
+  and formatted as STOCK-00001. A new tracking period receives a
+  new StockId; UUIDs remain persistence-only identifiers.
+end note
+
+' -----------------------------------------------------------------------------
+' DOWNSTREAM INTEGRATION
+' -----------------------------------------------------------------------------
+package "Ordering Story" {
+    class OrderConfirmationWorkflow <<external>> {
+        + confirmOrder(orderId): Promise<void>
+    }
+}
+
+' -----------------------------------------------------------------------------
+' RELATIONSHIPS & DEPENDENCIES
+' -----------------------------------------------------------------------------
+StockRoutes --> StockController : dispatches >
+StockRoutes ..> AuthMiddleware : applies >
+StockRoutes ..> RoleMiddleware : requires MANAGER >
+StockRoutes ..> ValidationMiddleware : validates >
+StockController --> IStockUseCases : invokes >
+StockController ..> StartStockTrackingDTO : builds from request >
+StockController ..> StockSearchDTO : maps query to >
+StockController ..> StockAdjustmentDTO : builds from request >
+StockController ..> StockResponseDTO : serializes >
+StockController ..> StockSearchResultDTO : serializes >
+StockController ..> StockAdjustmentResultDTO : serializes >
+
+StockManagementService ..|> IStockUseCases : implements >
+StockManagementService ..|> IStockOrderConsumption : implements >
+StockManagementService --> IStockRepository : persists aggregates via >
+StockManagementService --> IStockQueryRepository : queries selected stock periods via >
+StockManagementService --> IProductReader : verifies Product exists / reads active state >
+StockManagementService --> IUnitOfWork : owns API transaction boundary >
+StockManagementService --> StockResponseMapper : maps results via >
+StockManagementService ..> StockInformation : applies domain rules >
+StockSearchCriteria ..> StockSearchDTO : created from >
+StockSearchResultDTO "1" *-- "0..*" StockResponseDTO : contains items >
+StockSearchPage "1" *-- "0..*" StockSummary : contains rows >
+StockResponseMapper ..> StockSummary : reads >
+StockResponseMapper ..> StockInformation : reads >
+StockResponseMapper ..> StockSearchPage : maps >
+StockResponseMapper ..> StockSearchDTO : reads pagination >
+StockResponseMapper ..> StockResponseDTO : produces >
+StockResponseMapper ..> StockSearchResultDTO : produces >
+StockResponseMapper ..> StockAdjustmentResultDTO : produces >
+StockResponseMapper ..> StockAdjustmentDirection : reads >
+
+PostgresStockRepository ..|> IStockRepository : implements aggregate persistence >
+PostgresStockRepository ..|> IStockQueryRepository : implements read queries >
+PostgresUnitOfWork ..|> IUnitOfWork : implements >
+ProductModuleProductReader ..|> IProductReader : implements >
+ProductModuleProductReader ..> ProductStockStatus : returns >
+OrderConfirmationWorkflow --> IStockOrderConsumption : consumes at confirmation >
+
+note bottom of StockManagementService
+  Stock tracking is enabled by creating a StockInformation
+  period with startedAt and no endedAt. Stopping tracking
+  records endedAt; the final quantity and all prior periods
+  are preserved. Product has no isStockControlled flag.
+  Changes lock Product before StockInformation; disabling
+  preserves the final quantity, including non-zero balances.
+  A regular decrease to zero leaves tracking and Product
+  activation unchanged.
+end note
+
+note right of IStockOrderConsumption
+  At order confirmation, inactive Products are rejected.
+  If an active Product has no StockInformation with endedAt
+  empty, it is not stock-tracked and no stock is consumed.
+  Insufficient tracked stock rejects confirmation.
+end note
+
+note right of StockInformation
+  A period is current exactly when endedAt is null.
+  endTracking requires endedAt >= startedAt.
+end note
+
+@enduml

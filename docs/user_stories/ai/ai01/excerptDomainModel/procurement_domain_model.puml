@@ -1,0 +1,84 @@
+@startuml Procurement-Domain-AI01
+title Procurement domain model - AI01 Bill of Materials
+hide empty members
+hide methods
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam nodesep 36
+skinparam ranksep 58
+
+class "Planning scenario" as Scenario {
+  Scenario identity
+  Input origins and versions
+}
+
+class "Pizza demand line" as Demand {
+  BOM reference
+  Number of pizzas
+}
+
+class "Pizza BOM" as Bom {
+  Scenario-local BOM ID and size
+  Catalogue pizza when applicable
+}
+
+class "BOM component" as Component {
+  Stock units per pizza
+}
+
+class "Product (Procurement)" as Item {
+  ProductId
+  Terminal item or aggregate
+  Acquisition type for aggregates
+  Stock tracking status
+}
+
+class "Preparation recipe" as Recipe {
+  Output stock units per batch
+}
+
+class "Recipe ingredient" as Ingredient {
+  Ingredient stock units per batch
+}
+
+class "Stock snapshot" as Snapshot {
+  Stock source and version
+}
+
+class "Opening stock" as Stock {
+  Available stock units
+}
+
+class "BOM result" as Result {
+  Execution identity
+  Simulation status
+}
+
+class "Material requirement" as Requirement {
+  Required and covered units
+  Residual after stock
+  Planned production and surplus
+  Hypothetical remaining stock
+  Units to replenish
+}
+
+Scenario "1" *-- "0..*" Demand : selects
+Scenario "1" *-- "1" Snapshot : uses
+Demand "0..*" --> "1" Bom : resolves by BOM ID
+Bom "1" *-- "1..*" Component : lists
+Component "0..*" --> "1" Item : requires
+Snapshot "1" *-- "0..*" Stock : captures
+Stock "0..*" --> "1" Item : balance for
+Result "0..*" --> "1" Scenario : calculated from
+Result "1" *-- "0..*" Requirement : reports
+Requirement "0..*" --> "1" Item : concerns
+Item "1" *-- "0..1" Recipe : prepared using
+Recipe "1" *-- "1..*" Ingredient : requires per batch
+Ingredient "0..*" --> "1" Item : refers to
+
+note right of Recipe
+  Required for an internally produced aggregate
+  in a valid scenario. Only residual demand
+  triggers production and ingredient demand.
+end note
+@enduml

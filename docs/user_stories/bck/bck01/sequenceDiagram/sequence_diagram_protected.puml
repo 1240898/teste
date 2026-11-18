@@ -1,0 +1,74 @@
+@startuml sequence_diagram_protected
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - BCK01 Accessing Protected Operation (GET /api/v1/users)
+
+actor Manager as "Authenticated Manager"
+participant Routes as "UserRoutes"
+participant AuthFilter as "AuthMiddleware\n(verifyToken)"
+participant RoleFilter as "RoleMiddleware\n(requireRole)"
+participant Controller as "UserController"
+participant Service as "UserService"
+participant Repo as "IUserRepository"
+database DB as "Database\n(Persistence)"
+participant Mapper as "UserMapper"
+
+Manager -> Routes : GET /api/v1/users\nHeaders: [Authorization: Bearer <jwt>\nor x-access-token: <jwt>]
+activate Routes
+
+Routes -> AuthFilter : verifyToken(req, res, next)
+activate AuthFilter
+
+alt Token missing
+    AuthFilter --> Manager : 401 Unauthorized\n{ error: "No token provided" }
+end
+
+AuthFilter -> AuthFilter : tokenService.verifyToken(token)
+alt Token expired or invalid signature
+    AuthFilter --> Manager : 401 Unauthorized\n{ error: "Invalid or expired token" }
+end
+
+AuthFilter -> AuthFilter : req.user = decodedPayload { sub, email, roles }
+AuthFilter --> Routes : next()
+deactivate AuthFilter
+
+Routes -> RoleFilter : requireRole('MANAGER')(req, res, next)
+activate RoleFilter
+
+alt User does not have 'MANAGER' role
+    RoleFilter --> Manager : 403 Forbidden\n{ error: "Forbidden: insufficient permissions" }
+end
+
+RoleFilter --> Routes : next()
+deactivate RoleFilter
+
+Routes -> Controller : getAll(req, res)
+activate Controller
+
+Controller -> Service : listUsers()
+activate Service
+
+Service -> Repo : findAll()
+activate Repo
+Repo -> DB : find({ active: true })
+activate DB
+DB --> Repo : userDocuments[]
+deactivate DB
+Repo --> Service : users[]
+deactivate Repo
+
+Service -> Mapper : toDTOList(users)
+activate Mapper
+Mapper --> Service : userResponseDTOs[]
+deactivate Mapper
+
+Service --> Controller : userResponseDTOs[]
+deactivate Service
+
+Controller --> Manager : 200 OK\n[ { id, name, email, roles, active,\nmarketingConsent, createdAt }, ... ]
+deactivate Controller
+deactivate Routes
+
+@enduml

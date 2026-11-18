@@ -1,0 +1,47 @@
+@startuml sequence_diagram_login_failure
+title SD 2 - Failed local login
+hide footbox
+skinparam shadowing false
+
+actor "System user" as User
+box "SPA" #F3F7FD
+  participant LocalSignInForm as Form
+  participant authApi as Client
+end box
+box "Backend" #F5F8F5
+  participant AuthRoutes as Routes
+  participant AuthController as Controller
+  participant UserService as Service
+  participant UserRepository as Repo
+  participant BcryptPasswordHasher as Hasher
+end box
+
+User -> Form : submit email and password
+Form -> Client : login(credentials)
+Client -> Routes : POST /api/v1/auth/login
+alt Request limit exceeded or malformed input
+  Routes --> Client : 429 or 400
+else Well-formed request within limit
+  Routes -> Controller : login(req, res)
+  Controller -> Service : login(LoginDTO)
+  Service -> Repo : findByEmail(canonical email)
+  Repo --> Service : User or no account
+  Service -> Hasher : compare(password, stored or dummy hash)
+  Hasher --> Service : comparison result
+  alt Unknown email, no local password or wrong password
+    Service --> Controller : 401 Invalid email or password
+    Controller --> Client : generic 401 response
+  else Correct password, but account inactive or without an active role
+    Service -> Service : assertCanAccess(user) (AA03)
+    Service --> Controller : 403 access denied
+    Controller --> Client : 403 response
+  end
+end
+Client --> Form : request error
+Form --> User : display error and keep sign-in available
+
+note over Service
+  A local registration remains inactive until AA07 activates it.
+  No access token is issued on these paths.
+end note
+@enduml

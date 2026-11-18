@@ -1,0 +1,169 @@
+@startuml class_diagram
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing false
+top to bottom direction
+title WEB04 - Class Diagram: Feedback and Validation
+
+package "Feature interaction" {
+  class FeaturePage <<React component>> {
+    - values: object
+    - feedback: FeedbackState
+    + handleSubmit(): Promise<void>
+    + preserveDraft(): void
+    + reconcileUnknownOutcome(): Promise<void>
+  }
+  class ClientValidator <<module>> {
+    + validate(values: object): FieldValidationIssue[]
+  }
+  class FeedbackState <<record>> {
+    + phase: SubmissionPhase
+    + fieldIssues: FieldValidationIssue[]
+    + messageKey?: string
+    + operationKey?: string
+  }
+  enum SubmissionPhase {
+    IDLE
+    VALIDATING
+    CONFIRMING
+    SUBMITTING
+    SUCCEEDED
+    FAILED
+    OUTCOME_UNKNOWN
+  }
+  class FieldValidationIssue <<record>> {
+    + fieldId: string
+    + messageKey: string
+  }
+}
+
+package "Reusable feedback presentation (WEB04)" as FeedbackPresentation {
+  class FeedbackMessage <<React component>> {
+    + severity: FeedbackSeverity
+    + messageKey: string
+    + render(): ReactNode
+  }
+  class LoadingState <<React component>> {
+    + labelKey: string
+    + render(): ReactNode
+  }
+  class EmptyState <<React component>> {
+    + titleKey: string
+    + descriptionKey?: string
+    + render(): ReactNode
+  }
+  class FieldError <<React component>> {
+    + fieldId: string
+    + messageKey: string
+    + render(): ReactNode
+  }
+  class ConfirmationDialog <<React component>> {
+    + open: boolean
+    + consequenceKey: string
+    + onConfirm(): void
+    + onCancel(): void
+    + render(): ReactNode
+  }
+  enum FeedbackSeverity {
+    SUCCESS
+    ERROR
+    INFO
+  }
+}
+
+package "Shared services and feature API boundary" {
+  class LocaleProvider <<component>> {
+    + locale: string
+    + t(key: string, values?: object): string
+    + setLocale(locale: string): void
+  }
+  class FeatureApi <<feature HTTP adapter>> {
+    + invoke(input: object): Promise<object>
+  }
+  class errorMapper <<module>> {
+    + toFeedback(error: ApiError): FeedbackState
+  }
+  class apiClient <<module>> {
+    + request(method: string, path: string, options?: object): Promise<unknown>
+  }
+  class ApiError <<model>> {
+    + kind: string
+    + status: number
+    + message: string
+    + code?: string
+    + validationDetails?: ApiValidationDetail[]
+  }
+  class ApiValidationDetail <<WEB01 safe record>> {
+    + field?: string
+    + code: string
+  }
+  class AuthProvider <<shared component>> {
+    + sessionState: SessionState
+  }
+  class ProtectedRoute <<route guard>> {
+    + authorizeRoute(): RouteDecision
+  }
+  class AdminUserManagementPage <<page>> {
+    + selectedUserId: string
+    + sendInvitation(): Promise<void>
+  }
+  class adminUserApi <<feature adapter>> {
+    + invite(userId: string): Promise<InvitationResultDTO>
+  }
+  class InvitationResultDTO <<DTO>> {
+    + deliveryStatus: SENT | FAILED
+    + expiresAt: string
+    + retryable: boolean
+  }
+}
+
+FeaturePage --> ClientValidator : validates draft
+ClientValidator ..> FieldValidationIssue : returns field issues
+FeaturePage *-- FeedbackState : owns operation state
+FeedbackState o-- "0..*" FieldValidationIssue : contains
+FeedbackState ..> SubmissionPhase : current phase
+FeedbackState ..> FeedbackMessage : drives form-level feedback
+FeedbackState ..> FieldError : drives field feedback
+FeedbackState ..> LoadingState : drives pending feedback
+FeaturePage ..> EmptyState : renders when no results exist
+FeaturePage ..> ConfirmationDialog : requests confirmation
+FieldValidationIssue --> FieldError : rendered for fieldId
+FeedbackMessage --> FeedbackSeverity : presents severity
+FeaturePage ..> LocaleProvider : resolves current locale
+FeedbackPresentation ..> LocaleProvider : resolves message keys
+FeaturePage --> FeatureApi : invokes feature operation
+FeaturePage --> errorMapper : maps API failure
+errorMapper ..> ApiError : reads kind, status, and safe code
+errorMapper ..> ApiValidationDetail : validates allow-listed tokens
+errorMapper ..> FeedbackState : returns safe feedback
+errorMapper ..> FieldValidationIssue : creates recognized field issues
+FeatureApi --> apiClient : sends request
+apiClient ..> ApiError : returns normalized failure
+ApiError o-- "0..*" ApiValidationDetail : optional safe details
+FeatureApi ..> InvitationResultDTO : AA06 result example
+ProtectedRoute --> AuthProvider : checks session state
+AdminUserManagementPage --> adminUserApi : requests invitation
+adminUserApi --> apiClient : sends AA06 request
+
+note right of errorMapper
+Map allow-listed kind/status/safe-code and field/code pairs to localized keys.
+Unknown validation details become form-level feedback.
+ApiError.message is never rendered.
+end note
+
+note bottom of EmptyState
+Empty state and read-loading belong to resource state.
+SubmissionPhase models mutations only.
+end note
+
+note right of LocaleProvider
+WEB02 owns shared PT/EN locale and message catalog.
+Draft values and validation state stay with FeaturePage.
+end note
+
+note right of ApiError
+Current implementation has kind, status, message only.
+code and validationDetails are proposed WEB01 extensions; only
+recognized tokens are used. message is never displayed by WEB04.
+end note
+@enduml

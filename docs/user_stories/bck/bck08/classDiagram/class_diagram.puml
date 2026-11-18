@@ -1,0 +1,212 @@
+@startuml class_diagram
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam linetype ortho
+left to right direction
+title BCK08 - Component Size Configuration 
+package "Presentation Layer (API)" as API {
+ class ComponentConfigurationRoutes {
+  + setupRoutes(): Router
+ }
+ class ComponentConfigurationController <<controller>> {
+  - service: ComponentConfigurationService
+  + create(req, res, next): Promise<void>
+  + update(req, res, next): Promise<void>
+  + consult(req, res, next): Promise<void>
+  - validatePath(req): void
+ }
+ class AuthMiddleware <<auth>> {
+  + verifyToken(req, res, next): Promise<void>
+ }
+ class RoleMiddleware <<RBAC>> {
+  {static} + requireRole(...roles: string[]): Middleware
+ }
+ class ValidationMiddleware <<validator>> {
+  {static} + validate(schema: JoiSchema): Middleware
+ }
+
+ class ComponentConfigurationSchemas  {
+  {static} + create: JoiSchema
+  {static} + update: JoiSchema
+ }
+}
+
+
+package "Application Layer" as APP {
+ class ComponentConfigurationService <<service>> {
+  - repository: IComponentConfigurationRepository
+  - products: IProductRepository
+  - sizes: IPizzaSizeRepository
+  - unitOfWork: IUnitOfWork
+  - impact: IComponentConfigurationImpactGuard
+  + create(productId: ProductId,\n    sizeId: PizzaSizeId,\n    dto: ComponentConfigurationData):\n    Promise<ComponentConfigurationResponseDTO>
+  + update(productId: ProductId,\n    sizeId: PizzaSizeId,\n    changes: ComponentConfigurationUpdateDTO):\n    Promise<ComponentConfigurationResponseDTO>
+  - mergeChanges(current: ComponentSizeConfiguration,\n    changes: ComponentConfigurationUpdateDTO): ComponentConfigurationData
+  + consult(productId: ProductId): Promise<ComponentConfigurationResponseDTO[]>
+ }
+ interface IUnitOfWork {
+  + withTransaction(work: (tx: TransactionContext) => Promise<T>): Promise<T>
+ }
+ interface IComponentConfigurationImpactGuard  {
+  + assertSafeChange(current: ComponentSizeConfiguration | null,\n    candidate: ComponentSizeConfiguration,\n    tx: TransactionContext):\n    Promise<void>
+ }
+ class ComponentConfigurationData <<dto>> {
+  + amount: string
+  + currency: string
+  + stockUnitsConsumed: int | null
+ }
+ class ComponentConfigurationUpdateDTO <<dto>> {
+  + amount?: string
+  + currency?: string
+  + stockUnitsConsumed?: int | null
+ }
+ class ComponentConfigurationResponseDTO <<dto>> {
+  + productId: string
+  + sizeId: string
+  + amount: string
+  + currency: string
+  + stockUnitsConsumed: int | null
+ }
+ class ComponentConfigurationResponseMapper <<mapper>> {
+  {static} + toDTO(configuration: ComponentSizeConfiguration): ComponentConfigurationResponseDTO
+ }
+}
+package "Domain Layer" as DOMAIN {
+ class ComponentSizeConfiguration <<entity, aggregateRoot>> {
+  - productId: ProductId
+  - sizeId: PizzaSizeId
+  - price: Money
+  - consumption: StockUnitsConsumed | null
+  {static} + create(product: Product, size: PizzaSize, price: Money, units: int | null): ComponentSizeConfiguration
+  + revised(product: Product, price: Money, units: int | null): ComponentSizeConfiguration
+  + getProductId(): ProductId
+  + getSizeId(): PizzaSizeId
+  + getPrice(): Money
+  + getConsumption(): StockUnitsConsumed | null
+ }
+ class Money <<vo>> {
+  - amount: BigDecimal
+  - currency: string
+  {static} + create(amount: string, currency: string): Money
+  + getAmount(): string
+  + getCurrency(): string
+ }
+ class StockUnitsConsumed <<vo>> {
+  - units: int
+  {static} + create(units: int): StockUnitsConsumed
+  + getUnits(): int
+ }
+ interface TransactionContext <<opaque repository contract>>
+ interface IComponentConfigurationRepository {
+  + findByPair(productId: ProductId,\n    sizeId: PizzaSizeId,\n    tx: TransactionContext):\n    Promise<ComponentSizeConfiguration | null>
+  + findByPairForUpdate(productId: ProductId,\n    sizeId: PizzaSizeId,\n    tx: TransactionContext):\n    Promise<ComponentSizeConfiguration | null>
+  + findByProduct(productId: ProductId): Promise<ComponentSizeConfiguration[]>
+  + insert(configuration: ComponentSizeConfiguration, tx: TransactionContext): Promise<void>
+  + save(configuration: ComponentSizeConfiguration, tx: TransactionContext): Promise<void>
+ }
+ package "Related domains" {
+  class Product <<aggregateRoot>> {
+   + getId(): ProductId
+   + isPizzaComponent(): boolean
+   + isStockControlled(): boolean
+  }
+  class ProductId <<vo>> {
+   - value: string
+   + getValue(): string
+  }
+  class PizzaSize <<aggregateRoot>> {
+   + getId(): PizzaSizeId
+  }
+  class PizzaSizeId <<vo>> {
+   - value: string
+   + getValue(): string
+  }
+  class PizzaComponentType <<aggregateRoot>>
+  interface IProductRepository  {
+   + findById(productId: ProductId): Promise<Product | null>
+   + findByIdForUpdate(productId: ProductId, tx: TransactionContext): Promise<Product | null>
+  }
+  interface IPizzaSizeRepository {
+   + findByIdForUpdate(sizeId: PizzaSizeId, tx: TransactionContext): Promise<PizzaSize | null>
+  }
+ }
+}
+package "Infrastructure Layer" as INFRA {
+ class PostgresComponentConfigurationRepository <<adapter>>
+ class ComponentConfigurationPersistenceMapper <<mapper>> {
+  {static} + toDomain(row, product: Product, size: PizzaSize): ComponentSizeConfiguration
+  {static} + toRow(configuration: ComponentSizeConfiguration): Record
+ }
+ class PostgresProductRepository <<adapter>>
+ class PostgresPizzaSizeRepository <<adapter>>
+ class PostgresUnitOfWork <<adapter>> {
+  + withTransaction(work: callback): Promise<T>
+ }
+ class Database{
+  + query(text, values): Promise<QueryResult>
+  + withTransaction(work: callback): Promise<T>
+ }
+}
+ComponentConfigurationRoutes --> ComponentConfigurationController
+ComponentConfigurationRoutes ..> AuthMiddleware
+ComponentConfigurationRoutes ..> RoleMiddleware 
+ComponentConfigurationRoutes ..> ValidationMiddleware : validate(schema)
+ComponentConfigurationRoutes ..> ComponentConfigurationSchemas
+ComponentConfigurationController --> ComponentConfigurationService
+ComponentConfigurationController ..> ComponentConfigurationData
+ComponentConfigurationController ..> ComponentConfigurationUpdateDTO
+ComponentConfigurationService ..> ComponentConfigurationData
+ComponentConfigurationService ..> ComponentConfigurationUpdateDTO
+ComponentConfigurationService --> IComponentConfigurationRepository
+ComponentConfigurationService --> IProductRepository
+ComponentConfigurationService --> IPizzaSizeRepository
+ComponentConfigurationService --> IUnitOfWork
+ComponentConfigurationService --> IComponentConfigurationImpactGuard
+ComponentConfigurationService ..> ComponentSizeConfiguration
+ComponentConfigurationService ..> Money
+ComponentConfigurationService ..> ComponentConfigurationResponseMapper
+ComponentConfigurationResponseMapper ..> ComponentSizeConfiguration
+ComponentConfigurationResponseMapper ..> ComponentConfigurationResponseDTO
+IComponentConfigurationImpactGuard ..> ComponentSizeConfiguration
+IComponentConfigurationRepository ..> ComponentSizeConfiguration
+IComponentConfigurationRepository ..> TransactionContext
+IUnitOfWork ..> TransactionContext
+ComponentSizeConfiguration "1" *-- "1" Money : price
+ComponentSizeConfiguration "1" *-- "0..1" StockUnitsConsumed : consumption
+ComponentSizeConfiguration --> ProductId : identity part
+ComponentSizeConfiguration --> PizzaSizeId : identity part
+ComponentSizeConfiguration "0..*" --> "1" Product : references by identity
+ComponentSizeConfiguration "0..*" --> "1" PizzaSize : references by identity
+Product "1" *-- "1" ProductId
+PizzaSize "1" *-- "1" PizzaSizeId
+Product "0..*" --> "0..1" PizzaComponentType : exactly one when component
+PostgresComponentConfigurationRepository ..|> IComponentConfigurationRepository
+PostgresProductRepository ..|> IProductRepository
+PostgresPizzaSizeRepository ..|> IPizzaSizeRepository
+PostgresUnitOfWork ..|> IUnitOfWork
+PostgresUnitOfWork --> Database
+PostgresComponentConfigurationRepository --> Database
+PostgresProductRepository --> Database
+PostgresPizzaSizeRepository --> Database
+PostgresComponentConfigurationRepository ..> ComponentConfigurationPersistenceMapper
+ComponentConfigurationPersistenceMapper ..> ComponentSizeConfiguration
+note bottom of ValidationMiddleware
+ Existing validate(schema) returns a function validating req.body only.
+ Routes register create schema for POST and update schema for PATCH.
+ POST requires all fields; PATCH requires at least one known field.
+ PATCH fields are optional; omitted fields stay omitted.
+ Both schemas use strict types; no coercion, defaults or rounding.
+ Core business checks remain in Domain.
+ validatePath(req) checks route references in the controller.
+end note
+note bottom of ComponentSizeConfiguration
+ Identity = (ProductId, PizzaSizeId); no generated configuration ID.
+ create/revised validate component eligibility and price policy.
+ EUR; finite amount >= 0; at most 2 decimals; no rounding.
+ Stock-controlled: mandatory integer units >= 0.
+ Otherwise units must be null (including rejecting numeric zero).
+ revised preserves both references and returns a validated candidate.
+ Product and Size have independent lifecycles, not owned children.
+end note
+@enduml

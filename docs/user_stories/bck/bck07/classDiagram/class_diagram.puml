@@ -1,0 +1,180 @@
+@startuml class_diagram
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam linetype ortho
+title Class Diagram (Design) - BCK07 Pizza Component Type Management
+package "Presentation Layer (API)" {
+ class ComponentTypeRoutes {
+  + setupRoutes(): Router
+ }
+ class ComponentTypeController {
+  - service: ComponentTypeService
+  + create(req, res, next): Promise<void>
+  + getById(req, res, next): Promise<void>
+  + search(req, res, next): Promise<void>
+  + update(req, res, next): Promise<void>
+  + remove(req, res, next): Promise<void>
+ }
+ class AuthMiddleware <<auth>> {
+  + verifyToken(req, res, next): void
+ }
+ class RoleMiddleware <<rbac>> {
+  + requireRole(roles): Middleware
+ }
+ class ValidationMiddleware <<validator>> {
+  + validate(req): void
+ }
+}
+package "Application Layer" {
+ class ComponentTypeService <<service>> {
+  - repository: IComponentTypeRepository
+  - unitOfWork: IUnitOfWork
+  - impact: IComponentTypeImpactGuard
+  - toSearchCriteria(query: ComponentTypeSearchDTO): ComponentTypeSearchCriteria
+  - mergeChanges(current: PizzaComponentType, changes: ComponentTypeUpdateDTO): ComponentTypeData
+  + create(dto: ComponentTypeData): Promise<ComponentTypeResponseDTO>
+  + getById(id: ComponentTypeId): Promise<ComponentTypeResponseDTO>
+  + search(query: ComponentTypeSearchDTO): Promise<ComponentTypeResponseDTO[]>
+  + update(id: ComponentTypeId, changes: ComponentTypeUpdateDTO): Promise<ComponentTypeResponseDTO>
+  + remove(id: ComponentTypeId): Promise<void>
+ }
+ interface IUnitOfWork {
+  + withTransaction(work: callback): Promise<T>
+ }
+ interface IComponentTypeImpactGuard <<interface>> {
+  + assertSafeCreate(candidate: PizzaComponentType, tx): Promise<void>
+  + assertSafeUpdate(current: PizzaComponentType, candidate: PizzaComponentType, tx): Promise<void>
+  + assertSafeRemoval(current: PizzaComponentType, tx): Promise<void>
+ }
+ class ComponentTypeData <<dto>> {
+  + name: string
+  + assemblyOrder: int
+  + minQuantity: int
+  + maxQuantity: int | null
+ }
+ class ComponentTypeUpdateDTO <<dto>> {
+  + name?: string
+  + assemblyOrder?: int
+  + minQuantity?: int
+  + maxQuantity?: int | null
+ }
+ class ComponentTypeResponseDTO <<dto>> {
+  + id: string
+  + name: string
+  + assemblyOrder: int
+  + minQuantity: int
+  + maxQuantity: int | null
+ }
+ class ComponentTypeSearchDTO <<dto>> {
+  + id: string?
+  + name: string?
+ }
+ class ComponentTypeResponseMapper {
+  + toDTO(type: PizzaComponentType): ComponentTypeResponseDTO
+ }
+}
+package "Domain Layer" {
+ class PizzaComponentType <<aggregateRoot>> {
+  - id: ComponentTypeId
+  - name: ComponentTypeName
+  - assemblyOrder: int
+  - minQuantity: int
+  - maxQuantity: int | null
+  {static} + create(id: ComponentTypeId, name: ComponentTypeName, order: int, min: int, max: int | null): PizzaComponentType
+  + revised(name: ComponentTypeName, order: int, min: int, max: int | null): PizzaComponentType
+  + getId(): ComponentTypeId
+  + getName(): ComponentTypeName
+  + getAssemblyOrder(): int
+  + getMinQuantity(): int
+  + getMaxQuantity(): int | null
+ }
+ class ComponentTypeId <<vo>> {
+  - value: string
+  {static} + create(value?: string): ComponentTypeId
+  + getValue(): string
+ }
+ class ComponentTypeName <<vo>> {
+  - value: string
+  {static} + create(value: string): ComponentTypeName
+  + getValue(): string
+ }
+ class ComponentTypeSearchCriteria <<criteria>> {
+  + id: ComponentTypeId?
+  + name: string?
+ }
+ interface IComponentTypeRepository {
+  + findById(id: ComponentTypeId, tx?): Promise<PizzaComponentType | null>
+  + search(criteria: ComponentTypeSearchCriteria): Promise<PizzaComponentType[]>
+  + findByIdForUpdate(id: ComponentTypeId, tx): Promise<PizzaComponentType | null>
+  + existsByOrder(order: int, excludingId: ComponentTypeId | null, tx): Promise<boolean>
+  + insert(type: PizzaComponentType, tx): Promise<void>
+  + save(type: PizzaComponentType, tx): Promise<void>
+  + delete(id: ComponentTypeId, tx): Promise<void>
+ }
+}
+package "Infrastructure Layer" {
+ class PostgresComponentTypeRepository <<adapter>>
+ class PostgresUnitOfWork <<adapter>> {
+  + withTransaction(work: callback): Promise<T>
+ }
+ class Database <<database>> {
+  + query(text, values): Promise<QueryResult>
+  + withTransaction(work: callback): Promise<T>
+ }
+}
+package "Related domain (context only)" {
+ class Product <<aggregateRoot>> {
+  - componentTypeId: ComponentTypeId | null
+  - isPizzaComponent: boolean
+ }
+}
+ComponentTypeRoutes --> ComponentTypeController
+ComponentTypeRoutes ..> AuthMiddleware
+ComponentTypeRoutes ..> RoleMiddleware
+ComponentTypeRoutes ..> ValidationMiddleware
+ComponentTypeController --> ComponentTypeService
+ComponentTypeController ..> ComponentTypeUpdateDTO
+ComponentTypeService ..> ComponentTypeUpdateDTO
+ComponentTypeController ..> ComponentTypeData
+ComponentTypeController ..> ComponentTypeSearchDTO
+ComponentTypeService --> IComponentTypeRepository
+ComponentTypeService --> IUnitOfWork
+ComponentTypeService --> IComponentTypeImpactGuard
+ComponentTypeService --> ComponentTypeResponseMapper
+ComponentTypeService ..> ComponentTypeSearchCriteria
+IComponentTypeRepository ..> ComponentTypeSearchCriteria
+ComponentTypeService ..> PizzaComponentType
+ComponentTypeResponseMapper ..> PizzaComponentType
+ComponentTypeResponseMapper ..> ComponentTypeResponseDTO
+PizzaComponentType "1" *-- "1" ComponentTypeId
+PizzaComponentType "1" *-- "1" ComponentTypeName
+Product "0..*" --> "0..1" PizzaComponentType : classified by
+PostgresComponentTypeRepository ..|> IComponentTypeRepository
+PostgresUnitOfWork ..|> IUnitOfWork
+PostgresUnitOfWork --> Database
+PostgresComponentTypeRepository --> Database
+note bottom of ComponentTypeUpdateDTO
+ Omitted fields retain their current values.
+ Explicit maxQuantity = null removes the upper bound.
+ Only maxQuantity accepts null; ? denotes an optional field.
+ The complete resulting state is validated before saving.
+end note
+note bottom of PizzaComponentType
+ min >= 0; finite max >= min; null = unbounded.
+ revised() returns a validated candidate with the same ID.
+ Order uniqueness is a set-wide rule enforced at persistence.
+end note
+note bottom of IComponentTypeRepository
+ Postgres adapter implements all operations shown here.
+ Search uses domain-owned criteria, independent of HTTP
+ and application DTOs.
+end note
+note bottom of Product
+ Exactly one type when isPizzaComponent = true;
+ otherwise none. No ownership or cascade deletion.
+end note
+legend bottom
+ Interfaces denote injected JavaScript contracts.
+endlegend
+@enduml

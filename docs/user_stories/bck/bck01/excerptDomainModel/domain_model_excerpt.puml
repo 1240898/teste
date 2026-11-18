@@ -1,0 +1,121 @@
+@startuml
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam classAttributeIconSize 0
+skinparam roundcorner 4
+hide methods
+
+title Domain Model Excerpt - BCK01 (User & Authentication Management)
+
+' -----------------------------------------------------------------------------
+' USER AGGREGATE (Core Aggregate for BCK01)
+' -----------------------------------------------------------------------------
+package "User Aggregate" <<Rectangle>> {
+
+    class User <<entity>> <<aggregateRoot>> {
+        + active : boolean
+    }
+
+    class UserId <<vo>> {
+        + value : string
+    }
+
+    class Email <<vo>> {
+        + emailAddress : String
+    }
+
+    class Password <<vo>> {
+        + passwordHash : String
+    }
+
+    class UserName <<vo>> {
+        + name : String
+    }
+
+    class MarketingConsent <<vo>> {
+        + consentGiven : boolean
+        + timestamp : DateTime
+    }
+
+    enum UserRole <<enum>> {
+        MANAGER
+        EMPLOYEE
+        CUSTOMER
+    }
+
+    User "1" *-- "1" UserId : identified by >
+    User "1" *-- "1" Email : has >
+    User "1" *-- "1" Password : has >
+    User "1" *-- "1" UserName : has >
+    User "1" *-- "1" MarketingConsent : manages >
+    User "1" --> "1..*" UserRole : assigned >
+
+    note right of User
+        <b>Invariants (User Aggregate):</b>
+        - Uniquely identified by immutable <i>UserId</i>
+          and unique, case-insensitive <i>Email</i>.
+        - <i>UserId</i> follows the business format <i>USR-00001</i>.
+        - <i>Password</i> stores only a salted hash;
+          plaintext credentials are never persisted.
+        - At least one <i>UserRole</i> (1..*); multiple roles allowed.
+          Self-registration defaults to <i>CUSTOMER</i>.
+          Elevation to <i>MANAGER</i> / <i>EMPLOYEE</i> requires <i>MANAGER</i>.
+          No separate Administrator role in Phase 1.
+        - <i>MarketingConsent</i> belongs to the User account.
+        - <i>active = false</i> blocks authentication while
+          preserving history (soft deactivation).
+    end note
+}
+
+' -----------------------------------------------------------------------------
+' CUSTOMER AGGREGATE (Related External Aggregate — conceptual link only)
+' -----------------------------------------------------------------------------
+package "Customer Aggregate" <<Rectangle>> {
+
+    class Customer <<entity>> <<aggregateRoot>> {
+    }
+
+    class CustomerId <<vo>> {
+        + value : UUID
+    }
+
+    class CustomerName <<vo>> {
+        + name : String
+    }
+
+    class PhoneNumber <<vo>> {
+        + number : String
+    }
+
+    class "Email" as CustomerEmail <<vo>> {
+        + email : String
+    }
+
+    class ContactInfo <<vo>> {
+    }
+
+    Customer "1" *-- "1" CustomerId : identified by >
+    Customer "1" *-- "1" CustomerName : named >
+    Customer "1" *-- "1" ContactInfo : has >
+    ContactInfo "1" *-- "1" PhoneNumber : has >
+    ContactInfo "1" *-- "1" CustomerEmail : has >
+
+    note bottom of Customer
+        <b>Separation of Concerns:</b>
+        - <b>Customer</b> = commercial/business profile
+          (Name + mandatory ContactInfo: Phone, Email).
+        - <b>User</b> = system identity, credentials, roles
+          and marketing consent (Manager, Employee or Customer).
+        - Anonymous kiosk customers create no persistent
+          Customer record to link later.
+        - A registered Customer may optionally link to a User.
+        - Customer Email is a distinct VO from User Email.
+    end note
+}
+
+' -----------------------------------------------------------------------------
+' CROSS-AGGREGATE RELATIONSHIPS
+' -----------------------------------------------------------------------------
+Customer "0..1" --> "0..1" User : linked to >
+
+@enduml

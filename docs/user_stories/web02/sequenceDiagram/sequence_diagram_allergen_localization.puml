@@ -1,0 +1,58 @@
+@startuml sequence_diagram_allergen_localization
+title WEB02 - SD 5: Display localized allergen names by stable ID
+hide footbox
+skinparam shadowing false
+autonumber
+
+actor "System User" as User
+participant FeatureView as Page
+participant apiClient as Client
+participant BackEndAPI as API
+participant AllergenNameSource as Source
+participant AllergenLabel as Label
+participant LocaleProvider as Locale
+participant FeedbackView as Feedback
+
+note over Page,Source
+    WEB05 page is already authorized under WEB03.
+    The WEB05 adapter uses approved back-end labels by stable ID.
+    The allergen API response below is proposed in Q4.
+    WEB05 and the API owners must confirm it before implementation.
+end note
+User -> Page : Open product detail
+Page -> Client : get(/catalogue/:productId, options)
+Client -> API : GET /api/v1/catalogue/:productId
+alt Business data request succeeds
+    API --> Client : Product and category text, allergens with ID and name
+    Client --> Page : Product DTO
+    Page -> Source : loadFor(allergenIds)
+    opt Allergen labels not already loaded for this view
+        Source -> Client : get(/allergens)
+        Client -> API : GET /api/v1/allergens
+        API --> Client : Allergen records with ID, name and proposed labels, or error
+        Client --> Source : Allergen list or ApiError
+    end
+    Source --> Page : Available PT/EN labels by stable ID, or source unavailable
+    Page -> Page : Build display data, preserve product and category text
+    loop Each allergen on first render and on locale change
+        Page -> Label : render(allergen)
+        Label -> Locale : Read active locale
+        Locale --> Label : pt-PT or en-GB
+        alt Label for selected locale is available
+            Label --> User : Display localized name for the same allergen ID
+        else Label missing or source unavailable
+            Label -> Feedback : render(translationUnavailable, sourceName)
+            Feedback --> User : Identify the stored name and explain that translation is unavailable
+        end
+    end
+else Business data request fails
+    API --> Client : Error response
+    Client --> Page : ApiError
+    Page -> Feedback : Render safe localized failure and recovery action
+    Feedback --> User : Report catalogue loading failure
+end
+note over Page,Locale
+    Changing locale selects a label from the current read model.
+    A missing label remains an AC 3 acceptance gap for that data.
+end note
+@enduml

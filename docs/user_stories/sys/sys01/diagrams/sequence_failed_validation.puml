@@ -1,0 +1,72 @@
+@startuml
+title SYS01 - Failed validation, migration gate and deployment recovery
+
+actor Operator
+participant "Deployment workflow (deploy.yml)" as Workflow
+participant "Backend validation job" as BackendTests
+database "Runner PostgreSQL 18\n(ephemeral / isolated)" as RunnerDB
+participant "SYS08 backup evidence" as Backup
+participant "Previous known-good API image" as PreviousAPI
+participant "DEI VM deploy agent" as Deploy
+database "Shared DEI PostgreSQL 18" as DEIDB
+participant "GitHub artifacts" as Artifacts
+
+Operator -> Workflow: Start scheduled/manual deploy
+Workflow -> Workflow: Wait for `dei-release` queue slot
+Workflow -> Workflow: Acquire slot; resolve candidate SHA
+Workflow -> BackendTests: Require RUN_DATABASE_TESTS=1
+
+alt RUN_DATABASE_TESTS missing or not 1
+  BackendTests --> Workflow: Explicit flag assertion fails
+  Workflow -> Artifacts: Archive sanitized validation failure
+  Workflow --> Operator: Failed before image packaging or SSH; VM unchanged
+else Flag is 1; run PostgreSQL tests
+  BackendTests -> RunnerDB: Apply migrations and execute DB suites
+  alt PostgreSQL tests fail
+    RunnerDB --> BackendTests: Test failure
+    BackendTests --> Workflow: Backend validation fails
+    Workflow -> Artifacts: Archive test output and diagnostics
+    Workflow --> Operator: Failed before SSH; VM and DEI DB unchanged
+  else Tests pass; candidate migration is pending
+    RunnerDB --> BackendTests: Test suite passes
+    BackendTests --> Workflow: Backend gate passes
+    Workflow -> Backup: Require confirmed restorable SYS08 backup
+    alt Backup confirmation absent
+      Backup --> Workflow: Not confirmed
+      Workflow -> Artifacts: Archive backup-gate failure
+      Workflow --> Operator: Stop; do not skip migration or activate candidate
+    else Backup confirmed; run compatibility gate
+      Backup --> Workflow: Confirmation recorded
+      Workflow -> RunnerDB: Create migrated scratch schema from synthetic baseline
+      RunnerDB --> Workflow: Apply candidate migration to scratch DB
+      Workflow -> PreviousAPI: Run prior-version compatibility suite against scratch DB
+      alt Prior-version compatibility test fails
+        PreviousAPI --> Workflow: Failure on migrated schema
+        Workflow -> Artifacts: Archive compatibility test output
+        Workflow --> Operator: Stop before migration to shared DEI database
+      else Compatibility passes; production deploy begins
+        PreviousAPI --> Workflow: Reads and writes pass
+        Workflow -> Deploy: Apply migration to DEI database; activate candidate
+        Deploy -> DEIDB: Apply versioned migration
+        DEIDB --> Deploy: Migration succeeds
+        Deploy --> Workflow: Candidate activated
+        Workflow -> Deploy: Run deployed smoke checks
+        Deploy --> Workflow: A required smoke check fails
+        Workflow -> Deploy: Automatic recovery within same queue slot
+        Deploy -> DEIDB: Start previous API; verify connectivity and read-only compatibility smoke
+        DEIDB --> Deploy: Schema remains available to previous API
+        Deploy --> Workflow: Report whether previous release is restored
+        Workflow -> Artifacts: Archive failure, recovery and test evidence
+        Workflow --> Operator: Run remains failed; queue slot released after archival
+      end
+    end
+  end
+end
+
+note over Workflow,DEIDB
+  CI database tests never connect to shared DEI PostgreSQL.
+  Missing backup confirmation or failed old-version compatibility
+  terminates the deploy path before shared migration and activation.
+  Automatic recovery holds the same dei-release slot throughout.
+end note
+@enduml

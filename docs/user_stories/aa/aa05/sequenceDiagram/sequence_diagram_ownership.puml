@@ -1,0 +1,94 @@
+@startuml sequence_diagram_ownership
+skinparam shadowing true
+autonumber
+title AA05 - Customer Ownership Verification and Confidentiality
+
+actor "System User" as User
+participant "apiClient" as Client
+participant "FeatureRoutes" as Routes
+participant "AuthorizationAuditMiddleware" as AuditMW
+participant "OwnershipMiddleware" as OwnershipMW
+participant "AuthorizationPolicy" as Policy
+participant "CustomerOwnershipResolver" as Resolver
+participant "ICustomerRepository" as Customers
+database PostgreSQL as DB
+participant "FeatureController" as Controller
+participant "ISecurityLogger" as Logger
+
+note over User,Routes
+  This flow starts after authentication and the operation's role check succeed.
+  Authentication and role-denial responses are shown in the role-authorization SD.
+end note
+
+User -> Client : request customer-data operation with resource ID
+activate Client
+activate User
+Client -> Routes : HTTP request + authenticated Actor
+activate Routes
+Routes -> AuditMW : auditDenials(req, res, next)
+activate AuditMW
+AuditMW --> Routes : next()
+Routes -> OwnershipMW : requireOwnership(operationId, params, customerId)
+activate OwnershipMW
+
+OwnershipMW -> Policy : requiresOwnership(operationId, actor.roles)
+activate Policy
+Policy --> OwnershipMW : ownership required / not required
+deactivate Policy
+
+alt ownership check is not required (unscoped operation or explicit exemption)
+  OwnershipMW --> Routes : next()
+  deactivate OwnershipMW
+  Routes -> Controller : handleRequest(req, res)
+  activate Controller
+  Controller --> Routes : operation result
+  deactivate Controller
+  Routes --> Client : HTTP success response
+else ownership check is required
+  OwnershipMW -> Resolver : isOwner(actor, targetCustomerId)
+  activate Resolver
+  activate OwnershipMW
+  Resolver -> Customers : findByUserId(actor.sub)
+  activate Customers
+  Customers -> DB : SELECT customer WHERE user_id = actor.sub
+  activate DB
+  DB --> Customers : Customer row / null
+  deactivate DB
+  Customers --> Resolver : Customer / null
+  deactivate Customers
+  Resolver --> OwnershipMW : ownership result (compare Customer ID)
+  deactivate Resolver
+
+  alt Customer does not own the requested resource, or no linked Customer exists
+    OwnershipMW --> Routes : 404 Not Found + ownership-denied marker
+    deactivate OwnershipMW
+    Routes --> Client : 404 Not Found (conceal resource existence)
+    Routes --> AuditMW : response finished (marked ownership denial)
+    AuditMW -> Logger : record(OWNERSHIP_DENIED, statusCode=404, reasonCode=RESOURCE_NOT_OWNED_OR_NOT_FOUND)
+    activate Logger
+    Logger --> AuditMW : recorded
+    deactivate Logger
+  else Customer owns the requested resource
+    OwnershipMW --> Routes : next()
+    deactivate OwnershipMW
+    Routes -> Controller : handleRequest(req, res)
+    activate Controller
+    Controller --> Routes : requested customer data
+    deactivate Controller
+    Routes --> Client : 200 OK (authorized data)
+  end
+end
+
+deactivate AuditMW
+deactivate Routes
+Client --> User : display data or not-found feedback
+deactivate Client
+deactivate User
+
+note over Policy,Resolver
+  A multi-role user such as EMPLOYEE + CUSTOMER can use operations
+  allowed to either role, but the additional role does not bypass
+  ownership checks on customer data. An exemption applies only when
+  explicitly defined for the specific operation.
+end note
+@enduml

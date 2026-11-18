@@ -1,0 +1,100 @@
+@startuml sequence_diagram_new_account_customer_role
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - AA03 Automatic CUSTOMER Role for a New Account (local registration)
+
+actor User as "Client / User"
+participant SPA as "SPA (Front-End)"
+participant Routes as "UserRoutes"
+participant Validator as "ValidationMiddleware\n(Joi)"
+participant Controller as "UserController"
+participant Service as "UserService"
+participant Hasher as "IPasswordHasher\n(Bcrypt)"
+participant Repo as "IUserRepository"
+participant UserAgg as "User\n<<aggregateRoot>>"
+database DB as "Database\n(Persistence)"
+
+note over User, DB
+    The same rule applies to every way an account is created:
+    - first Google sign-in (AA02, User.createFromExternalIdentity) -> active, [CUSTOMER];
+    - invited account (AA06) -> INACTIVE, [CUSTOMER] (CUSTOMER never activates);
+    - bootstrap Manager command -> [CUSTOMER] + MANAGER.
+    In all cases the role is set inside the User factory, never received as input.
+    All errors use the errorHandler format { error: { message, status } }.
+end note
+
+User -> SPA : fills registration form\n(name, email, password, marketingConsent)
+activate SPA
+SPA -> Routes : POST /api/v1/users/register\n{ name, email, password, marketingConsent }
+activate Routes
+Routes -> Validator : ValidationMiddleware.validate(schemas.register)\n(req, res, next)
+activate Validator
+
+alt A) Body contains "roles" (or any unknown field)
+    Validator --> Routes : throw AppError("Invalid request body", 400)
+    Routes --> SPA : 400 Bad Request\n{ error: { message: "Invalid request body", status: 400 } }
+    note right of SPA : interaction ends:\nuser-chosen roles are never accepted (BR 6)
+else B) Body valid
+    Validator --> Routes : next()
+    deactivate Validator
+    Routes -> Controller : register(req, res)
+    activate Controller
+    Controller -> Service : register(new RegisterUserDTO(req.body))
+    activate Service
+    Service -> Service : UserName / Email / MarketingConsent.create(...)\nvalidatePassword(password)
+    Service -> Repo : findByEmail(email)
+    activate Repo
+    Repo -> DB : SELECT ... FROM users WHERE email = $1
+    activate DB
+    DB --> Repo : row / no row
+    deactivate DB
+    Repo --> Service : user / null
+    deactivate Repo
+
+    alt B1) E-mail already registered (returning user)
+        Service --> Controller : throw AppError("Email already registered", 409)
+        Controller --> SPA : 409 Conflict\n{ error: { message: "Email already registered", status: 409 } }
+        note right of SPA
+            interaction ends: the existing account is
+            NOT re-created and its roles are untouched (BR 5)
+        end note
+    else B2) New account
+        Service -> Hasher : hash(password)
+        activate Hasher
+        Hasher --> Service : bcrypt hash
+        deactivate Hasher
+        Service -> Repo : nextId()
+        activate Repo
+        Repo --> Service : "USR-000xx"
+        deactivate Repo
+        Service -> UserAgg : create(id, name, email, Password.createFromHash(hash), consent)
+        activate UserAgg
+        UserAgg -> UserAgg : roles = normalizeRoles(DEFAULT_ROLES)\n= [CUSTOMER]; active = true
+        note right of UserAgg
+            No "roles" parameter exists:
+            the back end alone decides the
+            initial role (BR 1, BR 2).
+        end note
+        UserAgg --> Service : user
+        deactivate UserAgg
+        Service -> Repo : save(user)
+        activate Repo
+        Repo -> DB : INSERT INTO users (..., roles = '{CUSTOMER}', active = true)
+        activate DB
+        DB --> Repo : inserted row
+        deactivate DB
+        Repo --> Service : saved user
+        deactivate Repo
+        Service --> Controller : UserResponseDTO { id, roles: ["CUSTOMER"], active: true, ... }
+        deactivate Service
+        Controller --> SPA : 201 Created\n{ id, name, email, roles: ["CUSTOMER"], active: true, marketingConsent, createdAt }
+        deactivate Controller
+    end
+end
+
+deactivate Routes
+deactivate SPA
+
+@enduml

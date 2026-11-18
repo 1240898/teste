@@ -1,0 +1,435 @@
+@startuml class_diagram
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam linetype ortho
+skinparam nodesep 30
+skinparam ranksep 50
+left to right direction
+
+title Class Diagram (Design) - BCK05 Product Management
+
+' -----------------------------------------------------------------------------
+' PRESENTATION LAYER (API)
+' -----------------------------------------------------------------------------
+package "Presentation Layer (API)" <<Rectangle>> {
+    class ProductRoutes {
+        + setupRoutes(): Router
+    }
+
+    class ProductController {
+        - productService: ProductService
+        + createProduct(req, res): Promise<void>
+        + updateProduct(req, res): Promise<void>
+        + listProducts(req, res): Promise<void>
+        + getProductById(req, res): Promise<void>
+        + deactivateProduct(req, res): Promise<void>
+        + activateProduct(req, res): Promise<void>
+    }
+
+    class AuthMiddleware <<shared BCK01>> {
+        + verifyToken(req, res, next): Promise<void>
+    }
+
+    class RoleMiddleware <<shared BCK01>> {
+        + {static} requireRole(...roles: string[]): Middleware
+    }
+
+    class ValidationMiddleware <<shared>> {
+        + {static} validate(schema): Middleware
+    }
+}
+
+' -----------------------------------------------------------------------------
+' APPLICATION LAYER
+' -----------------------------------------------------------------------------
+package "Application Layer" <<Rectangle>> {
+    class ProductService {
+        - productRepository: IProductRepository
+        - referenceReader: IProductReferenceReader
+        - impactChecker: IProductImpactChecker
+        - unitOfWork: IUnitOfWork
+        - stockProvisioning: IStockProvisioning
+        - productMapper: ProductMapper
+        + createProduct(dto: CreateProductDTO): Promise<ProductResponseDTO>
+        + updateProduct(id: string, dto: UpdateProductDTO): Promise<ProductResponseDTO>
+        + listProducts(filter: ProductFilterDTO): Promise<ProductResponseDTO[]>
+        + getProductById(id: string): Promise<ProductResponseDTO>
+        + deactivateProduct(id: string): Promise<void>
+        + activateProduct(id: string): Promise<ProductResponseDTO>
+        - validatedProps(dto): ProductProps
+        - ensureReferencesExist(props: ProductProps, tx): Promise<void>
+    }
+
+    class ProductMapper {
+        + {static} toProps(dto: CreateProductDTO | UpdateProductDTO): ProductProps
+        + {static} toDTO(product: Product): ProductResponseDTO
+        + {static} toDTOList(products: Product[]): ProductResponseDTO[]
+    }
+
+    interface IProductReferenceReader <<interface>> {
+        + categoryExists(id: CategoryId, tx?): Promise<boolean>
+        + componentTypeExists(id: ComponentTypeId, tx?): Promise<boolean>
+        + findMissingAllergens(ids: AllergenId[], tx?): Promise<AllergenId[]>
+        + compositionWouldCreateCycle(id: ProductId, childIds: ProductId[], tx?): Promise<boolean>
+    }
+
+    interface IProductImpactChecker <<interface>> {
+        + assertComponentRoleRemovable(id: ProductId, tx): Promise<void>
+        + assertComponentTypeChangeAllowed(id: ProductId, newType: ComponentTypeId, tx): Promise<void>
+        + assertPricingModeChangeAllowed(id: ProductId, newMode: PricingMode, tx): Promise<void>
+    }
+
+    interface IUnitOfWork <<interface>> {
+        + withTransaction<T>(work: (tx) => Promise<T>): Promise<T>
+    }
+
+    interface IStockProvisioning <<interface>> <<contract with BCK09>> {
+        + initializeForProduct(productId: string, tx, initialUnits?: int): Promise<void>
+        + disableForProduct(productId: string, tx): Promise<void>
+    }
+
+    package "DTOs" <<Rectangle>> {
+        class CreateProductDTO <<dto>> {
+            + name: string
+            + description: string
+            + categoryId: string
+            + isSellable: boolean
+            + isPizzaComponent: boolean
+            + isStockControlled: boolean
+            + initialUnits?: int
+            + pizzaComponentTypeId: string | null
+            + allergenIds: number[]
+            + pricingMode: string | null
+            + basePrice: number | null
+            + acquisitionType: string
+            + compositionItems?: CompositionItemDTO[]
+        }
+
+        class CompositionItemDTO <<dto>> {
+            + childProductId: string
+            + quantity: number
+        }
+
+        class UpdateProductDTO <<dto>>
+
+        class ProductFilterDTO <<dto>> {
+            + name?: string
+            + categoryId?: string
+            + isSellable?: string
+            + isPizzaComponent?: string
+            + isStockControlled?: string
+            + isActive?: string
+            + pizzaComponentTypeId?: string
+            + excludeAllergenIds?: string
+            + acquisitionType?: string
+        }
+
+        class ProductResponseDTO <<dto>> {
+            + id: string
+            + name: string
+            + description: string
+            + categoryId: string
+            + isSellable: boolean
+            + isPizzaComponent: boolean
+            + isStockControlled: boolean
+            + isActive: boolean
+            + pizzaComponentTypeId: string | null
+            + allergenIds: number[]
+            + pricingMode: string | null
+            + basePrice: number | null
+            + acquisitionType: string
+            + compositionItems: CompositionItemDTO[]
+            + createdAt: string
+            + updatedAt: string
+        }
+    }
+}
+
+' -----------------------------------------------------------------------------
+' DOMAIN LAYER (Pure Domain Model with Inheritance & Composition)
+' -----------------------------------------------------------------------------
+package "Domain Layer" <<Rectangle>> {
+    abstract class Product <<entity>> <<aggregateRoot>> {
+        - id: ProductId
+        - name: ProductName
+        - description: ProductDescription
+        - categoryId: CategoryId
+        - isActive: boolean
+        - allergenIds: AllergenId[]
+        - acquisitionType: AcquisitionType
+        - compositionItems: ProductCompositionItem[]
+        - createdAt: Date
+        - updatedAt: Date
+        + {static} validateProps(props: ProductProps): void
+        + {static} create(id: ProductId, props: ProductProps): Product
+        + {static} restore(state): Product
+        + revise(props: ProductProps): void
+        + deactivate(): void
+        + activate(): void
+        + addCompositionItem(childProduct: Product, quantity: Quantity): void
+    }
+
+    class PizzaComponent <<entity>> {
+        - pizzaComponentTypeId: ComponentTypeId
+        + getComponentTypeId(): ComponentTypeId
+    }
+
+    class SellableProduct <<entity>> {
+        - pricingMode: PricingMode | null
+        - basePrice: Money | null
+        + getPricingMode(): PricingMode | null
+        + getBasePrice(): Money | null
+    }
+
+    class PredefinedPizza <<entity>> {
+    }
+
+    Product <|-- PizzaComponent
+    Product <|-- SellableProduct
+    SellableProduct <|-- PredefinedPizza
+
+    note right of Product
+      Complete and overlapping generalization:
+      each product is sellable, a component, or both.
+    end note
+
+    class ProductProps <<type>> {
+        + name: ProductName
+        + description: ProductDescription
+        + categoryId: CategoryId
+        + allergenIds: AllergenId[]
+        + pricingMode: PricingMode | null
+        + basePrice: Money | null
+        + acquisitionType: AcquisitionType
+        + compositionItems: ProductCompositionItem[]
+    }
+
+    enum PricingMode <<implementation detail>> {
+        FIXED
+        COMPONENT_BASED
+    }
+
+    enum AcquisitionType {
+        PRODUCED
+        PURCHASED
+    }
+
+    class ProductId <<vo>> {
+        - value: string
+        + {static} create(value: string): ProductId
+        + getValue(): string
+        + equals(other: ProductId): boolean
+    }
+
+    class ProductName <<vo>> {
+        - name: string
+        + {static} create(name: string): ProductName
+        + getValue(): string
+        + equals(other: ProductName): boolean
+    }
+
+    class ProductDescription <<vo>> {
+        - text: string
+        + {static} create(text: string): ProductDescription
+        + getValue(): string
+    }
+
+    class Money <<vo>> {
+        - amount: BigDecimal
+        - currency: string = "EUR"
+        + {static} create(amount: number, currency = "EUR"): Money
+        + getAmount(): BigDecimal
+        + getCurrency(): string
+    }
+
+    class ProductCompositionItem <<vo>> {
+        - quantity: Quantity
+    }
+
+    class Quantity <<vo>> {
+        - amount: int
+        + {static} create(amount: int): Quantity
+        + getAmount(): int
+    }
+
+    class CategoryId <<vo>> <<BCK03 ref>> {
+        - value: string
+    }
+
+    class ComponentTypeId <<vo>> <<BCK07 ref>> {
+        - value: string
+    }
+
+    class AllergenId <<vo>> <<BCK04 ref>> {
+        - value: integer
+    }
+
+    class ProductSearchCriteria <<type>> {
+        + name?: string
+        + categoryId?: string
+        + isActive?: boolean
+        + pizzaComponentTypeId?: string
+        + excludeAllergenIds?: number[]
+        + acquisitionType?: AcquisitionType
+    }
+
+    interface IProductRepository <<interface>> {
+        + nextId(tx?): Promise<ProductId>
+        + findById(id: ProductId, tx?): Promise<Product | null>
+        + findByIdForUpdate(id: ProductId, tx): Promise<Product | null>
+        + search(criteria: ProductSearchCriteria): Promise<Product[]>
+        + save(product: Product, tx?): Promise<Product>
+    }
+}
+
+' -----------------------------------------------------------------------------
+' INFRASTRUCTURE LAYER
+' -----------------------------------------------------------------------------
+package "Infrastructure Layer" <<Rectangle>> {
+    class ProductRepository {
+        - database: Database
+        + nextId(tx?): Promise<ProductId>
+        + findById(id, tx?): Promise<Product | null>
+        + findByIdForUpdate(id, tx): Promise<Product | null>
+        + search(criteria): Promise<Product[]>
+        + save(product, tx?): Promise<Product>
+    }
+
+    class ProductReferenceReader {
+        - database: Database
+        + categoryExists(id, tx?): Promise<boolean>
+        + componentTypeExists(id, tx?): Promise<boolean>
+        + findMissingAllergens(ids, tx?): Promise<AllergenId[]>
+        + compositionWouldCreateCycle(id, childIds, tx?): Promise<boolean>
+    }
+
+    class ProductImpactChecker <<adapter>> {
+        - database: Database
+        + assertComponentRoleRemovable(id, tx): Promise<void>
+        + assertComponentTypeChangeAllowed(id, newType, tx): Promise<void>
+        + assertPricingModeChangeAllowed(id, newMode, tx): Promise<void>
+    }
+
+    class ProductRowMapper {
+        + {static} toDomain(row): Product
+        + {static} toPersistence(product: Product): ProductPersistenceModel
+    }
+
+    class PostgresUnitOfWork <<shared>> {
+        - database: Database
+        + withTransaction<T>(work): Promise<T>
+    }
+
+    class ProductPersistenceModel <<PostgreSQL: products>> {
+        {field} + id: VARCHAR(32)
+        {field} + name: VARCHAR(100)
+        {field} + description: VARCHAR(500)
+        {field} + category_id: VARCHAR(32)
+        {field} + is_active: BOOLEAN
+        {field} + pizza_component_type_id: VARCHAR(32)
+        {field} + pricing_mode: VARCHAR(32)
+        {field} + base_price_amount: NUMERIC(10,2)
+        {field} + base_price_currency: CHAR(3)
+        {field} + acquisition_type: VARCHAR(32)
+        {field} + created_at: TIMESTAMPTZ
+        {field} + updated_at: TIMESTAMPTZ
+    }
+
+    class ProductAllergenPersistenceModel <<PostgreSQL: product_allergens>> {
+        {field} + product_id: VARCHAR(32)
+        {field} + allergen_id: SMALLINT
+    }
+
+    class ProductCompositionPersistenceModel <<PostgreSQL: product_compositions>> {
+        {field} + parent_product_id: VARCHAR(32)
+        {field} + child_product_id: VARCHAR(32)
+        {field} + quantity: INT
+    }
+}
+
+' -----------------------------------------------------------------------------
+' RELATIONSHIPS & DEPENDENCIES
+' -----------------------------------------------------------------------------
+
+' Presentation -> Application
+ProductRoutes --> ProductController : dispatches to >
+ProductRoutes ..> AuthMiddleware : applies >
+ProductRoutes ..> RoleMiddleware : applies >
+ProductRoutes ..> ValidationMiddleware : validates body >
+ProductController --> ProductService : invokes >
+ProductController ..> CreateProductDTO : builds >
+ProductController ..> UpdateProductDTO : builds >
+ProductController ..> ProductFilterDTO : builds >
+UpdateProductDTO --|> CreateProductDTO
+CreateProductDTO "1" *-- "0..*" CompositionItemDTO : contains >
+
+' Application -> Domain / ports
+ProductService --> IProductRepository : persists via >
+ProductService --> IProductReferenceReader : checks references via >
+ProductService --> IProductImpactChecker : validates BCK08/BCK10 impact >
+ProductService --> IUnitOfWork : transacts with >
+ProductService --> IStockProvisioning : invokes stock lifecycle contract >
+ProductService --> ProductMapper : maps via >
+ProductService ..> Product : creates / revises >
+ProductService ..> ProductSearchCriteria : builds from filter >
+ProductMapper ..> ProductProps : builds >
+ProductMapper ..> ProductResponseDTO : produces >
+
+' Domain structure
+Product "1" *-- "1" ProductId : identified by >
+Product "1" *-- "1" ProductName : named >
+Product "1" *-- "1" ProductDescription : described by >
+SellableProduct "1" *-- "0..1" Money : basePrice >
+Product --> AcquisitionType : acquisition type >
+Product "1" *-- "0..*" ProductCompositionItem : composed of >
+ProductCompositionItem "0..*" --> "1" Product : references child product >
+ProductCompositionItem "1" *-- "1" Quantity : specifies >
+SellableProduct --> PricingMode : pricing strategy >
+Product "1" o-- "1" CategoryId : references >
+PizzaComponent "1" o-- "1" ComponentTypeId : references >
+Product "1" o-- "0..*" AllergenId : references >
+Product ..> ProductProps : validated from >
+IProductRepository ..> ProductSearchCriteria : filters by >
+
+' Infrastructure implementations
+ProductRepository ..|> IProductRepository : implements
+ProductReferenceReader ..|> IProductReferenceReader : implements
+ProductImpactChecker ..|> IProductImpactChecker : implements
+PostgresUnitOfWork ..|> IUnitOfWork : implements
+ProductRepository ..> ProductRowMapper : uses >
+ProductRepository --> ProductPersistenceModel : reads / writes >
+ProductRepository --> ProductAllergenPersistenceModel : reads / writes >
+ProductRepository --> ProductCompositionPersistenceModel : reads / writes >
+ProductRowMapper ..> Product : restores >
+
+note right of IStockProvisioning
+  Cross-Context Contract:
+  BCK05 invokes BCK09 via this port to coordinate 
+  stock lifecycle events (initialization / tracking end) 
+  within the same database transaction (UoW).
+  Stock itself is fully defined and managed in BCK09.
+end note
+
+note right of ProductCompositionItem
+  Composition rules:
+  - Positive quantity.
+  - Acyclic structure.
+  - Duplicate child products are combined into a single item with summed quantities.
+end note
+
+note bottom of ProductService
+  1. Validate VOs + Product.validateProps (400) BEFORE any DB access.
+  2. Create/update run in ONE transaction via unitOfWork.withTransaction.
+  3. Stock definitions and tracking are owned by BCK09.
+end note
+
+note as ClientClarificationsBCK05
+  Client rules: names may repeat; category exactly one.
+  Product requires Sellable and/or Pizza Component.
+  Predefined Pizza product: Sellable, not Pizza Component.
+  Disable stock tracking even with non-zero units; retain history.
+  Deactivation is independent of stock and preserves references.
+  BCK09 lifecycle API needs implementation alignment.
+end note
+@enduml

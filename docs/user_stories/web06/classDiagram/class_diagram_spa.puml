@@ -1,0 +1,358 @@
+@startuml class_diagram_spa
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam linetype ortho
+
+title Class Diagram (Design) - WEB06 Kitchen Configuration Page (Front-End SPA)
+
+' -----------------------------------------------------------------------------
+' component = React component (function), module = plain JS module,
+' record = shape of a JavaScript object, existing = delivered by another story.
+' -----------------------------------------------------------------------------
+package "Front-End (SPA)" <<Rectangle>> {
+
+    package "kitchen (WEB06) - frontend/src/kitchen" <<Rectangle>> {
+
+        class KitchenConfigurationsModule <<component>> {
+            + props.request : ModuleRequest
+            + render() : Routes
+        }
+        note right of KitchenConfigurationsModule
+            Default export loaded lazily by ModulePage
+            (WEB01) for the "kitchenConfigurations" entry.
+            Nested routes (all MANAGER, inherited from
+            the WEB03 section "kitchen-configurations"):
+              index           -> KitchenConfigurationListPage
+              new             -> KitchenConfigurationEditorPage
+              :configurationId -> KitchenConfigurationDetailPage
+            Builds ONE kitchenConfigurationApi from
+            props.request and passes it down.
+        end note
+
+        class kitchenConfigurationApi <<module>> {
+            + createKitchenConfigurationApi(request) : KitchenConfigurationApi
+            + list(signal) : Summary[]
+            + getById(id, signal) : Detail
+            + getActive(signal) : ActiveConfiguration
+            + create({ name, content }) : Detail
+            + update(id, { name, content, version }) : Detail
+            + remove(id) : null
+            + activate(id) : ActivationResult
+            + validate(content) : ValidationReport
+            + listAssets(signal) : KitchenAsset[]
+        }
+        note right of kitchenConfigurationApi
+            HTTP adapter (WEB01 convention): one function
+            per endpoint, DTO in / DTO out, ids encoded
+            with encodeURIComponent, no cache, no rules.
+            getActive() is the SAME contract used by the
+            VIS01 viewer (it has its own adapter call).
+        end note
+
+        class configurationJson <<module>> {
+            + parseConfigurationText(text) : ParseResult
+            + formatConfiguration(value) : string
+            + readImportFile(file : File) : Promise<ImportedFile>
+            + MAX_IMPORT_BYTES = 100 KB
+        }
+        note bottom of configurationJson
+            Pure functions (unit-tested without React).
+            parseConfigurationText: JSON.parse + line /
+            column of a syntax error; top level must be
+            an object.
+            readImportFile: only ".json", <= 100 KB, UTF-8;
+            never sends anything by itself.
+        end note
+
+        class ParseResult <<record>> {
+            + ok : boolean
+            + value? : object
+            + error? : { line, column, message }
+        }
+
+        class ImportedFile <<record>> {
+            + suggestedName : string
+            + text : string
+        }
+
+        class KitchenConfigurationListPage <<component>> {
+            - configurations : Summary[]
+            - state : "loading" | "ready" | "empty" | "error"
+            - activationNotice : ActivationResult | null
+            + onActivate(summary) : void
+            + onDelete(summary) : void
+        }
+        note right of KitchenConfigurationListPage
+            Re-reads the list after every successful
+            change (WEB05 / WEB01 BR 14).
+            Delete is disabled for the ACTIVE row
+            (the back end also rejects it with 409).
+        end note
+
+        class KitchenConfigurationEditorPage <<component>> {
+            + props.mode : "create" | "edit"
+            + props.initial : Detail | null
+            - name : string
+            - text : string
+            - version : number | null
+            - syntaxError : SyntaxPosition | null
+            - issues : ValidationIssue[]
+            - submitting : boolean
+            - concurrency : ConcurrencyState
+            + onImport(file) : void
+            + onValidate() : void
+            + onSave() : void
+            + onReloadLatest() : void
+            + onResolveConflict(path, choice) : void
+            + onContinueWithRebased() : void
+            + onDiscardMyDraft() : void
+            + onAcknowledgeReview(checked) : void
+        }
+        note right of KitchenConfigurationEditorPage
+            The typed / imported text is KEPT after any
+            failure (WEB04 AC 5). Save and Validate are
+            disabled while a request is in progress.
+            base = record as loaded (kept all session).
+            409 (stale version) -> phase "conflict":
+            draft = { name, text } kept, Save disabled,
+            "Reload latest version" offered (SD 2).
+            After reload: rebaseDraft(base, draft, latest)
+            -> the save is built on latest; only the
+            Manager's own changes are re-applied.
+            Save is enabled again only in phase
+            "reviewing" with every conflict resolved and
+            reviewAcknowledged = true; the next PUT sends
+            the rebased content with latest.version.
+            Language (BR 21): all of this is React state
+            of this page; the route is not keyed by
+            language and no effect depends on it, so a
+            PT/EN switch only re-renders the texts.
+        end note
+
+        class ConcurrencyState <<record>> {
+            + phase : "none" | "conflict" | "reviewing"
+            + base : { name, content, version }
+            + draft : { name, text } | null
+            + latest : Detail | null
+            + rebase : RebaseResult | null
+            + resolutions : Map<path, "mine" | "theirs">
+            + reviewAcknowledged : boolean
+        }
+
+        class ConcurrentChangePanel <<component>> {
+            + props.draft : { name, text }
+            + props.latest : Detail | null
+            + props.rebase : RebaseResult | null
+            + props.resolutions : Map<path, choice>
+            + props.reviewAcknowledged : boolean
+            + onReloadLatest() : void
+            + onResolveConflict(path, choice) : void
+            + onContinueWithRebased() : void
+            + onDiscardMyDraft() : void
+            + onAcknowledgeReview(checked) : void
+        }
+        note bottom of ConcurrentChangePanel
+            "This configuration was changed by another
+            user (now version N, <updatedAt>)."
+            Lists the other user's changes (kept), the
+            Manager's changes re-applied on the latest
+            version and every conflict with
+            [Keep mine] / [Keep theirs].
+            Save needs all conflicts resolved AND the
+            checkbox "I reviewed the other user's changes".
+            The whole draft is never sent over latest.
+        end note
+
+        class compareConfigurations <<module>> {
+            + compareConfigurations(from, to) : ChangeSet
+        }
+        note bottom of compareConfigurations
+            Pure function. One change per path:
+            /name; every leaf outside elements
+            (e.g. /content/kitchen/dimensions/width);
+            elements matched BY ID: added, removed, or
+            changed leaves (/content/elements[id]/...).
+            Other arrays compared as a whole.
+        end note
+
+        class ChangeSet <<record>> {
+            + changes : Change[]
+        }
+
+        class Change <<record>> {
+            + path : string
+            + kind : "set" | "add" | "remove"
+            + before : any
+            + after : any
+        }
+
+        class rebaseDraft <<module>> {
+            + rebaseDraft(base, draft, latest) : RebaseResult
+            + applyResolutions(result, resolutions) : RebaseResult
+        }
+        note bottom of rebaseDraft
+            Pure three-way rebase (D16):
+            candidate = copy of latest; for each change of
+            compareConfigurations(base, draft):
+            - no change of (base -> latest) on the same or an
+              overlapping path -> applied to candidate
+            - same value -> nothing to do
+            - different value -> Conflict (Manager decides)
+            New draft elements appended after latest's.
+            Draft not parseable -> "rebase-impossible".
+        end note
+
+        class RebaseResult <<record>> {
+            + candidate : { name, content }
+            + applied : Change[]
+            + theirs : Change[]
+            + conflicts : Conflict[]
+        }
+
+        class Conflict <<record>> {
+            + path : string
+            + base : any
+            + mine : any
+            + theirs : any
+        }
+
+        class KitchenConfigurationDetailPage <<component>> {
+            + props.configurationId : string
+            - detail : Detail | null
+            - editing : boolean
+        }
+
+        class ActiveConfigurationBanner <<component>> {
+            + props.active : Summary | null
+            + props.loadError : ApiError | null
+            + onOpenViewer() : void
+        }
+        note bottom of ActiveConfigurationBanner
+            "Active: <name> (<id>)" + "Open / reload
+            the kitchen viewer" (navigates to
+            /kitchen/viewer, which re-reads the
+            active configuration on mount).
+            No active one -> explicit warning;
+            never a default layout.
+        end note
+
+        class JsonContentEditor <<component>> {
+            + props.value : string
+            + props.onChange(text) : void
+            + props.syntaxError : SyntaxPosition | null
+            + props.readOnly : boolean
+        }
+
+        class ValidationIssueList <<component>> {
+            + props.issues : ValidationIssue[]
+        }
+        note bottom of ValidationIssueList
+            One row per issue: JSON path, message
+            (i18n by code + params, WEB02) - announced
+            with role="alert" for screen readers.
+            Messages are derived from codes at render
+            time, so a language switch re-translates
+            them without losing the issues (BR 21).
+        end note
+
+        class ActivationConfirmDialog <<component>> {
+            + props.target : Summary
+            + props.currentActive : Summary | null
+        }
+        class DeleteConfirmDialog <<component>> {
+            + props.target : Summary
+        }
+    }
+
+    package "Shared (existing / extended)" <<Rectangle>> {
+
+        class ModulePage <<existing WEB01>> {
+            + props.roles : UserRole[]
+            + props.load : () => Promise<Module>
+        }
+        class ModuleRequest <<existing WEB01>> {
+            + request(method, path, { body, query, signal })
+        }
+        note bottom of ModuleRequest
+            Session-bound: adds the bearer token and
+            re-checks /auth/me after a 401 / 403
+            (WEB01 SD 3 / WEB03 SD 3).
+        end note
+        class apiClient <<existing WEB01>> {
+            + request(method, path, options)
+        }
+        class ApiError <<extended>> {
+            + status : number
+            + kind : string
+            + message : string
+            + details : ValidationIssue[] | undefined
+        }
+        note bottom of ApiError
+            ALN-2: copies error.details from a 4xx
+            body (array of { path, code, message }).
+        end note
+        class moduleRoutes <<extended WEB01>> {
+            + kitchenConfigurations : { path, roles: [MANAGER] }
+        }
+        class navigationPolicy <<extended WEB03>> {
+            + "kitchen-configurations" : enabled = true
+        }
+        class LanguageContext <<WEB02>> {
+            + language : "pt" | "en"
+            + t(key, params) : string
+        }
+        note bottom of LanguageContext
+            Selection persisted by WEB02 across
+            navigation, refreshes and visits.
+            Changing it re-renders consumers only.
+        end note
+        class ConfirmDialog <<WEB04>>
+        class LoadingIndicator <<WEB04>>
+        class FeedbackMessage <<WEB04>>
+    }
+}
+
+ModulePage ..> KitchenConfigurationsModule : lazy load,\npasses request
+moduleRoutes ..> ModulePage
+navigationPolicy ..> moduleRoutes : same path / roles
+KitchenConfigurationsModule ..> kitchenConfigurationApi : creates with request
+kitchenConfigurationApi --> ModuleRequest
+ModuleRequest --> apiClient
+apiClient ..> ApiError : throws
+
+KitchenConfigurationsModule --> KitchenConfigurationListPage
+KitchenConfigurationsModule --> KitchenConfigurationEditorPage
+KitchenConfigurationsModule --> KitchenConfigurationDetailPage
+KitchenConfigurationDetailPage --> KitchenConfigurationEditorPage : edit mode
+KitchenConfigurationListPage --> ActiveConfigurationBanner
+KitchenConfigurationListPage --> ActivationConfirmDialog
+KitchenConfigurationListPage --> DeleteConfirmDialog
+KitchenConfigurationEditorPage --> JsonContentEditor
+KitchenConfigurationEditorPage --> ValidationIssueList
+KitchenConfigurationEditorPage *-- ConcurrencyState
+KitchenConfigurationEditorPage --> ConcurrentChangePanel : phase != "none"
+KitchenConfigurationEditorPage ..> compareConfigurations
+compareConfigurations ..> ChangeSet
+ChangeSet *-- Change
+KitchenConfigurationEditorPage ..> rebaseDraft
+rebaseDraft ..> compareConfigurations
+rebaseDraft ..> RebaseResult
+RebaseResult *-- Conflict
+ConcurrentChangePanel --> JsonContentEditor : read-only (latest)
+KitchenConfigurationEditorPage ..> LanguageContext : t()
+ValidationIssueList ..> LanguageContext : t(code, params)
+ConcurrentChangePanel ..> LanguageContext : t()
+KitchenConfigurationEditorPage ..> configurationJson
+configurationJson ..> ParseResult
+configurationJson ..> ImportedFile
+KitchenConfigurationListPage ..> kitchenConfigurationApi
+KitchenConfigurationEditorPage ..> kitchenConfigurationApi
+KitchenConfigurationDetailPage ..> kitchenConfigurationApi
+ActivationConfirmDialog ..> ConfirmDialog
+DeleteConfirmDialog ..> ConfirmDialog
+KitchenConfigurationListPage ..> LoadingIndicator
+KitchenConfigurationEditorPage ..> FeedbackMessage
+ValidationIssueList ..> ApiError : reads details
+
+@enduml

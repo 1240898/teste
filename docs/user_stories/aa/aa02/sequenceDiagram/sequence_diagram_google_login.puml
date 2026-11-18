@@ -1,0 +1,142 @@
+@startuml sequence_diagram_google_login
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - AA02 Successful Google Sign-In (OIDC Authorization Code Flow + PKCE)
+
+actor User as "Client / User"
+participant SPA as "SPA (Front-End)\nGoogleSignInButton /\nGoogleCallbackPage"
+participant Routes as "AuthRoutes"
+participant Validator as "ValidationMiddleware\n(Joi)"
+participant Controller as "AuthController"
+participant ExtService as "ExternalAuthenticationService"
+participant Store as "IAuthorizationStateStore\n(InMemory)"
+participant IdP as "IExternalIdentityProvider\n(GoogleOidcProvider)"
+participant Google as "Google Identity Services\n(OIDC Provider)"
+participant Repo as "IUserRepository"
+database DB as "Database\n(Persistence)"
+participant Service as "UserService"
+participant JWT as "ITokenService\n(JWT)"
+participant Mapper as "UserResponseMapper"
+
+note over User, Mapper
+    Success path only: linked, active account with at least one role.
+    Account-resolution outcomes (new account, inactive, no role, e-mail conflict): SD 2.
+    Cancellation, invalid payload and authentication failures: SD 3.
+end note
+
+== 1. Start external authentication ==
+
+User -> SPA : clicks "Continue with Google"\n(login page, next to local login - AA01)
+activate SPA
+SPA -> Routes : POST /api/v1/auth/google/authorization
+activate Routes
+note right of Routes : public rate limiter +\nCache-Control: no-store
+Routes -> Controller : startGoogleLogin(req, res)
+activate Controller
+Controller -> ExtService : startAuthorization()
+activate ExtService
+ExtService -> IdP : createAuthorizationRequest()
+activate IdP
+IdP -> IdP : generate state, nonce, codeVerifier\ncodeChallenge = S256(codeVerifier)
+IdP --> ExtService : { authorizationUrl, state, nonce, codeVerifier }
+deactivate IdP
+ExtService -> Store : save(state, { provider: GOOGLE, nonce,\ncodeVerifier, expiresAt: now + 10 min })
+activate Store
+Store --> ExtService : stored
+deactivate Store
+ExtService --> Controller : ExternalAuthorizationDTO { authorizationUrl, state }
+deactivate ExtService
+Controller --> SPA : 200 OK { authorizationUrl, state }
+deactivate Controller
+deactivate Routes
+
+SPA -> SPA : sessionStorage.set("oidc_state", state)
+SPA -> Google : browser redirect to authorizationUrl\n(response_type=code, client_id, redirect_uri,\nscope="openid email profile", state, nonce,\ncode_challenge, code_challenge_method=S256)
+deactivate SPA
+activate Google
+
+== 2. Authentication at Google (outside LaPrizza) ==
+
+Google -> User : Google sign-in and consent screen
+User -> Google : Google credentials + consent
+note over User, Google
+    The Google password is entered only on Google's pages.
+    LaPrizza never receives, collects or stores it (AC 5).
+end note
+Google --> SPA : 302 redirect_uri\n/auth/callback/google?code=...&state=...
+deactivate Google
+activate SPA
+
+== 3. Complete authentication in LaPrizza ==
+
+SPA -> SPA : query state equals sessionStorage "oidc_state"\nremove stored state
+SPA -> Routes : POST /api/v1/auth/google/callback\n{ code, state }
+activate Routes
+Routes -> Validator : ValidationMiddleware.validate(schemas.googleCallback)\n(req, res, next)
+activate Validator
+Validator --> Routes : next()  (payload valid)
+deactivate Validator
+
+Routes -> Controller : completeGoogleLogin(req, res)
+activate Controller
+Controller -> ExtService : completeAuthorization(new ExternalCallbackDTO(req.body))
+activate ExtService
+
+ExtService -> ExtService : verifyIdentity(code, state)
+activate ExtService
+ExtService -> Store : consume(state)
+activate Store
+Store --> ExtService : pending { provider, nonce, codeVerifier }\n(entry removed: single use)
+deactivate Store
+
+ExtService -> IdP : exchangeAndVerify(code, codeVerifier, nonce)
+activate IdP
+IdP -> Google : POST token endpoint\n(code, client_id, client_secret,\nredirect_uri, code_verifier)
+activate Google
+Google --> IdP : { id_token, access_token, expires_in }
+deactivate Google
+IdP -> IdP : verify id_token: signature (Google JWKS),\niss, aud = client_id, exp, nonce;\nemail_verified = true; discard access_token
+IdP --> ExtService : ExternalIdentityClaims\n{ provider: GOOGLE, subject, email, emailVerified, name }
+deactivate IdP
+deactivate ExtService
+
+ExtService -> ExtService : resolveAccount(claims)
+activate ExtService
+ExtService -> Repo : findByExternalIdentity(GOOGLE, subject)
+activate Repo
+Repo -> DB : SELECT users + user_external_identities\nWHERE provider = 'GOOGLE' AND subject = $1
+activate DB
+DB --> Repo : user row + identity rows
+deactivate DB
+Repo --> ExtService : user (linked; current internal roles)
+deactivate Repo
+deactivate ExtService
+
+ExtService -> ExtService : assertCanStartSession(user):\nuser.isActive() and user.hasActiveRole()
+
+ExtService -> Service : issueAuthToken(user)
+activate Service
+Service -> JWT : generateToken({ sub: user.getId().getValue(),\nemail: user.getEmail().getValue(), roles: user.getRoles() })
+activate JWT
+JWT --> Service : accessToken (string)
+deactivate JWT
+Service -> Mapper : toDTO(user)
+activate Mapper
+Mapper --> Service : UserResponseDTO
+deactivate Mapper
+Service --> ExtService : AuthTokenDTO { accessToken, tokenType: "Bearer",\nexpiresIn: tokenService.expiresIn, user }
+deactivate Service
+
+ExtService --> Controller : AuthTokenDTO
+deactivate ExtService
+Controller --> SPA : 200 OK { accessToken, tokenType: "Bearer",\nexpiresIn, user { id, name, email, roles, active, ... } }
+deactivate Controller
+deactivate Routes
+
+SPA -> SPA : keep the token as defined by AA04;\nroles taken only from the back-end response (AA03)
+SPA --> User : navigate to the start page allowed\nby the internal roles (WEB03)
+deactivate SPA
+
+@enduml

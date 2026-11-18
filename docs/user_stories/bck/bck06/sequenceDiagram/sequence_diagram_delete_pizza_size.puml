@@ -1,0 +1,98 @@
+@startuml SD_BCK06_DeletePizzaSize
+title BCK06 - Delete a pizza size
+autonumber
+skinparam maxMessageSize 105
+skinparam shadowing true
+
+actor Manager
+participant "PizzaSizeRoutes" as Routes
+participant "AuthMiddleware" as Auth
+participant "RoleMiddleware" as Roles
+participant "ValidationMiddleware\n(Joi)" as Validation
+participant "PizzaSizeController" as Controller
+participant "PizzaSizeService" as Service
+participant "IPizzaSizeRepository\n: PizzaSizeRepository" as Repo
+database "PostgreSQL" as DB
+
+Manager -> Routes : DELETE /api/v1/pizza-sizes/{id}
+activate Routes
+activate Manager
+
+Routes -> Auth : verifyToken(req, res, next)
+activate Auth
+break Missing / invalid token
+Auth --> Routes : authentication error
+Routes --> Manager : 401 Unauthorized
+end
+Auth --> Routes : identity established
+deactivate Auth
+
+Routes -> Roles : requireRole('MANAGER')(req, res, next)
+activate Roles
+break Caller lacks Manager role
+Roles --> Routes : authorization error
+Routes --> Manager : 403 Forbidden
+end
+Roles --> Routes : next()
+deactivate Roles
+
+Routes -> Validation : validate(req.params, idSchema)
+activate Validation
+break Invalid id format (PSIZE-####)
+Validation --> Manager : 400 Bad Request
+end
+Validation --> Routes : next()
+deactivate Validation
+
+Routes -> Controller : delete(req, res, next)
+activate Controller
+
+Controller -> Service : delete(id)
+activate Service
+
+Service -> Repo : findById(id)
+activate Repo
+Repo -> DB : SELECT * FROM pizza_sizes WHERE id = $1
+activate DB
+DB --> Repo : row or null
+deactivate DB
+Repo --> Service : pizzaSize or null
+deactivate Repo
+
+break Pizza size not found
+Service --> Controller : not-found error
+Controller --> Manager : 404 Not Found
+end
+
+Service -> Repo : isReferencedByOtherEntities(id)
+activate Repo
+Repo -> DB : Inspect foreign keys referencing pizza_sizes(id)\nand check for matching rows
+activate DB
+DB --> Repo : true / false
+deactivate DB
+Repo --> Service : isReferenced
+deactivate Repo
+
+break Size is referenced by business information
+Service --> Controller : integrity violation error
+Controller --> Manager : 409 Conflict
+end
+
+Service -> Repo : delete(id)
+activate Repo
+Repo -> DB : DELETE FROM pizza_sizes WHERE id = $1
+activate DB
+DB --> Repo : success / error
+deactivate DB
+Repo --> Service : void
+deactivate Repo
+
+Service --> Controller : void
+Controller --> Manager : 204 No Content
+
+deactivate Service
+deactivate Controller
+deactivate Routes
+deactivate Manager
+
+@enduml

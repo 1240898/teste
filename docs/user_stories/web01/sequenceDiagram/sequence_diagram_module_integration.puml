@@ -1,0 +1,61 @@
+@startuml sequence_diagram_module_integration
+autonumber
+title WEB01 - SD3: open a protected module in the shared shell
+
+actor "Website user" as User
+participant "BrowserRouter / AppShell" as Shell
+participant "ModulePage / ProtectedRoute" as Guard
+participant ConfirmedModule as Confirm
+participant AuthProvider as Auth
+participant authApi as AuthApi
+participant apiClient as Client
+participant "Back-End API" as API
+participant "LazyModule / ErrorBoundary" as Lazy
+participant "Feature page" as Page
+
+note over Shell, Guard
+Route registered only if a loader exists.
+Viewer: EMPLOYEE or MANAGER.
+Kitchen configurations and planning: MANAGER.
+end note
+
+User -> Shell : Open enabled feature route
+Shell -> Guard : Match route inside AppShell
+Guard -> Auth : Read shared session and required roles
+alt Session still loading
+  Guard --> User : Show permission check; keep protected content hidden
+else No valid session or required role
+  Guard --> User : Show sign-in or access-denied feedback
+else Required role appears in shared state
+  Guard -> Confirm : Mount guarded child
+  Confirm -> Auth : refresh(expectedToken)
+  Auth -> AuthApi : getCurrentUser(token)
+  AuthApi -> Client : get("/auth/me", { accessToken })
+  Client -> API : GET /api/v1/auth/me (Bearer)
+  opt API responds
+    API --> Client : Current user DTO or HTTP error
+  end
+  Client --> AuthApi : JSON or ApiError
+  AuthApi --> Auth : Parsed user or error
+  Auth --> Confirm : Session state with current permissions
+  alt Role confirmed
+    Confirm -> Lazy : Mount with load and ModuleRequest
+    Lazy -> Page : Load and render on demand
+    alt Import or render fails
+      Lazy --> User : Section error and retry inside shell
+    else Module ready
+      Page --> User : Show feature inside the same layout
+    end
+  else Required role not confirmed
+    Guard --> User : Keep the protected view unavailable
+  end
+end
+
+note over Confirm, API
+Protected error rule for SD2, SD4 and SD5:
+when ModuleRequest receives a 401 or 403, ConfirmedModule
+awaits refresh(expectedToken) before rethrowing the original ApiError.
+The provider rechecks /auth/me via authApi and apiClient.
+Other errors are rethrown without a role check. No request is replayed.
+end note
+@enduml

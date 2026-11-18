@@ -1,0 +1,93 @@
+@startuml sequence_diagram_consult_search
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - Consult and Search Stock Periods
+
+actor Manager
+participant Routes as "StockRoutes"
+participant Auth as "AuthMiddleware"
+participant Roles as "RoleMiddleware"
+participant Validator as "ValidationMiddleware"
+participant Controller as "StockController"
+participant Service as "StockManagementService"
+participant QueryRepository as "IStockQueryRepository"
+participant Mapper as "StockResponseMapper"
+database DB as "PostgreSQL"
+
+alt Consult one Product's stock
+    Manager -> Routes : GET /api/v1/stock/{productId}
+else Search stock
+    Manager -> Routes : GET /api/v1/stock?productName=...&isActive=...&historical=true|false
+end
+activate Routes
+Routes -> Auth : verifyToken(req, res, next)
+activate Auth
+Auth --> Routes : identity established
+deactivate Auth
+Routes -> Roles : requireRole(MANAGER)
+activate Roles
+Roles --> Routes : authorized
+deactivate Roles
+Routes -> Validator : validate Product ID or search filters / pagination / historical
+activate Validator
+Validator --> Routes : next()
+deactivate Validator
+Routes -> Controller : getForProduct(req, res) / search(req, res)
+activate Controller
+
+alt Individual consultation
+    Controller -> Service : getForProduct(productId)
+    activate Service
+    Service -> QueryRepository : findCurrentSummaryByProductId(productId)
+    activate QueryRepository
+    QueryRepository -> DB : SELECT Product joined with stock WHERE ended_at IS NULL
+    DB --> QueryRepository : StockSummary / none
+    QueryRepository --> Service : summary / null
+    deactivate QueryRepository
+    alt No current stock record
+        Service --> Controller : NotFound
+        Controller --> Manager : 404 Not Found
+    else Current stock exists
+        Service -> Mapper : toStockResponse(summary)
+        Mapper --> Service : StockResponseDTO
+        Service --> Controller : StockResponseDTO
+        Controller --> Manager : 200 OK
+    end
+    deactivate Service
+else Search
+    Controller -> Service : search(query)
+    activate Service
+    Service -> QueryRepository : searchPeriods(criteria)
+    activate QueryRepository
+    QueryRepository -> DB : SELECT Product and stock periods using historical filter
+    DB --> QueryRepository : matching rows and total count
+    QueryRepository --> Service : StockSearchPage
+    deactivate QueryRepository
+    Service -> Mapper : toSearchResult(page, query)
+    Mapper --> Service : StockSearchResultDTO
+    Service --> Controller : StockSearchResultDTO
+    Controller --> Manager : 200 OK
+    deactivate Service
+end
+
+deactivate Controller
+deactivate Routes
+
+note over QueryRepository,DB
+  The stock API uses one resource root: /api/v1/stock.
+  Search defaults to current periods (endedAt IS NULL).
+  historical=true returns only completed periods (endedAt IS NOT NULL).
+  Product ID, name and optional isActive filters are combined;
+  omitting isActive includes active and inactive Products.
+  Results include startedAt and nullable endedAt and are paginated.
+end note
+
+note over Manager,Service
+  Inactive Products remain consultable and searchable by the
+  Manager. Product.isActive does not determine whether stock
+  tracking exists; an open StockInformation period does.
+end note
+
+@enduml

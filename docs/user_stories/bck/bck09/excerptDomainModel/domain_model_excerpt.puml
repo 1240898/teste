@@ -1,0 +1,70 @@
+@startuml domain_model_excerpt
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam classAttributeIconSize 0
+skinparam linetype ortho
+hide methods
+
+title Domain Model Excerpt - BCK09 Stock Information Management
+
+package "Product Aggregate" <<Rectangle>> {
+    class Product <<entity>> <<aggregateRoot>> {
+        + isActive : boolean
+    }
+
+    class ProductId <<vo>> {
+        + value : string
+    }
+
+    Product "1" *-- "1" ProductId : identified by >
+
+    note bottom of Product
+        Product has its own active state.
+        Stock tracking is represented by
+        StockInformation, not by a stock-control
+        boolean on Product. Product activation
+        and stock availability are independent.
+    end note
+}
+
+package "Stock Aggregate" <<Rectangle>> {
+    class StockInformation <<entity>> <<aggregateRoot>> {
+        + startedAt : DateTime
+        + endedAt : DateTime?
+    }
+
+    class StockId <<vo>> {
+        + value : string
+    }
+
+    class AbstractStockQuantity <<vo>> {
+        + availableUnits : int
+    }
+
+    StockInformation "1" *-- "1" StockId : identified by >
+    StockInformation "1" *-- "1" AbstractStockQuantity : maintains >
+
+    note bottom of StockInformation
+        Business rules:
+        - A Product is under stock tracking when it
+          has one StockInformation record with no endedAt.
+        - A Product has at most one current record and
+          may retain all completed periods.
+        - Disabling tracking records endedAt and preserves
+          the final quantity, including a non-zero balance.
+        - Enabling tracking creates a new period with
+          startedAt and Manager-supplied units, or zero.
+        - availableUnits is a non-negative integer.
+        - A decrease that would make the quantity
+          negative is rejected.
+        - A zero quantity does not deactivate Product.
+        - Snapshots do not record stock movements.
+    end note
+}
+
+Product "1" -- "0..*" StockInformation : has tracking periods >
+note "A period is current when endedAt is empty; setting endedAt closes that period. All completed periods and their final quantities are retained. Product activation remains independent." as TrackingState
+TrackingState .. Product
+TrackingState .. StockInformation
+
+@enduml

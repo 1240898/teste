@@ -1,0 +1,13 @@
+$kind: http-request
+name: Tomato Sauce Configuration
+url: http://localhost:8080/api/v1/products/PROD-00002/component-configurations/PSIZE-0001
+method: POST
+body:
+  type: json
+  content: |-
+    {
+      "amount": "0.50",
+      "currency": "EUR",
+      "stockUnitsConsumed": 1
+    }
+order: 1806

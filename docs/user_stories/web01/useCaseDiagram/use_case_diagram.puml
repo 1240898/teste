@@ -1,0 +1,39 @@
+@startuml use_case_diagram
+!pragma layout smetana
+left to right direction
+title WEB01 - Access to LaPrizza services through the shared SPA
+
+actor "Website user\n(guest or signed in)" as User
+actor "Restaurant Staff" as Staff
+actor "LaPrizza Manager" as Manager
+Staff --|> User
+Manager --|> User
+
+rectangle "LaPrizza Web Application" {
+  usecase "UC1 - Access available\nLaPrizza services" as UC1
+  rectangle "Integration examples from related stories" {
+    usecase "UC2 - Edit a product" as UC2
+    usecase "UC3 - View the\nactive kitchen" as UC3
+    usecase "UC4 - Run a forecast\nand consult its result" as UC4
+  }
+}
+
+User -- UC1
+Manager -- UC2
+Staff -- UC3
+Manager -- UC3
+Manager -- UC4
+
+note right of UC2
+WEB05 example using BCK05 REST.
+The read-only permissions of Staff
+are separate from product editing.
+end note
+note right of UC3
+VIS01 uses the active WEB06 configuration.
+end note
+note right of UC4
+WEB07 / AI05 / AI06: planning only.
+No stock update or order confirmation.
+end note
+@enduml

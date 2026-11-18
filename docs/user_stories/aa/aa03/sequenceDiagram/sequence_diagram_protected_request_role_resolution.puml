@@ -1,0 +1,147 @@
+@startuml sequence_diagram_protected_request_role_resolution
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - AA03 Role Resolution on Every Protected Request (e.g. GET /api/v1/stock)
+
+participant SPA as "SPA (Front-End)"
+participant Routes as "StockRoutes\n(any protected module)"
+participant AuthMW as "AuthMiddleware"
+participant Service as "UserService"
+participant JWT as "ITokenService\n(JWT)"
+participant Repo as "IUserRepository"
+participant Mapper as "UserMapper"
+database DB as "Database\n(Persistence)"
+participant UserAgg as "User\n<<aggregateRoot>>"
+participant RoleMW as "RoleMiddleware\nrequireRole('MANAGER')"
+participant Controller as "StockController"
+participant ErrH as "errorHandler"
+
+note over SPA, ErrH
+    Roles and the active state are read from the database on EVERY protected request,
+    so role removals and deactivations (AA06) take effect immediately, without a new login.
+    The "roles" claim inside the JWT and any role sent by the client are ignored.
+    Every error branch ends the interaction: the business controller is never reached.
+    Every thrown error goes through errorHandler and is returned as { error: { message, status } }.
+end note
+
+activate SPA
+SPA -> Routes : GET /api/v1/stock\nAuthorization: Bearer <token>
+activate Routes
+Routes -> AuthMW : verifyToken(req, res, next)
+activate AuthMW
+AuthMW -> Service : resolveActor(token)
+activate Service
+Service -> JWT : verifyToken(token)
+activate JWT
+
+alt A) Token missing, malformed, expired or with an invalid signature
+    JWT --> Service : throw
+    deactivate JWT
+    Service --> AuthMW : throw AppError("Invalid or expired token", 401)
+    AuthMW --> ErrH : error
+    ErrH --> SPA : 401 Unauthorized\n{ error: { message: "Invalid or expired token", status: 401 } }
+    note right of SPA : authentication failure (AA04 renewal / new login)
+else B) Token valid
+    activate JWT
+    JWT --> Service : { sub, email, roles }
+    deactivate JWT
+    note right of Service : only "sub" is used;\nthe "roles" claim is ignored (D3)
+    Service -> Repo : findById(UserId.create(sub))
+    activate Repo
+    Repo -> DB : SELECT ... FROM users WHERE id = $1
+    activate DB
+
+    alt B1) Database unavailable
+        DB --> Repo : connection / query error
+        deactivate DB
+        Repo --> Service : throw (no status)
+        Service --> AuthMW : rethrow
+        AuthMW --> ErrH : error
+        ErrH --> SPA : 500 Internal Server Error\n{ error: { message: "Internal Server Error", status: 500 } }
+        note right of SPA
+            roles cannot be confirmed -> request denied;
+            next() is never called (fail closed, BR 9)
+        end note
+    else B2) Row loaded
+        activate DB
+        DB --> Repo : row (roles, active) / no row
+        deactivate DB
+        Repo -> Mapper : toDomain(row)
+        activate Mapper
+        Mapper -> UserAgg : User.restore(data)
+
+        alt B2a) Persisted roles invalid (unknown / duplicated value)
+            UserAgg --> Mapper : throw domain AppError (default status 400)
+            Mapper --> Repo : throw AppError("Invalid persisted account", 500)
+            deactivate Mapper
+            note right of Mapper
+                Integrity error is mapped to 500 (D9):
+                corrupted stored data is a server fault,
+                never a "400 Bad Request" of the client.
+            end note
+            Repo --> Service : rethrow
+            Service --> AuthMW : rethrow
+            AuthMW --> ErrH : error (status 500)
+            ErrH --> SPA : 500 Internal Server Error\n{ error: { message: "Internal Server Error", status: 500 } }
+            note right of SPA : message sanitized; request denied (fail closed, BR 9)
+        else B2b) Row valid
+            activate Mapper
+            UserAgg --> Mapper : user
+            Mapper --> Repo : user
+            deactivate Mapper
+            Repo --> Service : user / null
+            deactivate Repo
+
+            alt B2b-i) User no longer exists
+                Service --> AuthMW : throw AppError("Invalid or expired token", 401)
+                AuthMW --> ErrH : error
+                ErrH --> SPA : 401 Unauthorized\n{ error: { message: "Invalid or expired token", status: 401 } }
+            else B2b-ii) User found
+                Service -> Service : assertCanAccess(user)
+                activate Service
+                Service -> UserAgg : isActive() / hasActiveRole()
+                activate UserAgg
+                UserAgg --> Service : current state
+                deactivate UserAgg
+                deactivate Service
+
+                alt Inactive account (deactivated after login)
+                    Service --> AuthMW : throw AppError("Account is not active", 403)
+                    AuthMW --> ErrH : error
+                    ErrH --> SPA : 403 Forbidden\n{ error: { message: "Account is not active", status: 403 } }
+                else No role left (all roles removed after login)
+                    Service --> AuthMW : throw AppError("No active role is assigned\nto this account", 403)
+                    AuthMW --> ErrH : error
+                    ErrH --> SPA : 403 Forbidden\n{ error: { message: "No active role is assigned to this account", status: 403 } }
+                else Active with roles
+                    Service --> AuthMW : AuthenticatedActor { sub, email,\nroles: user.getRoles() }
+                    deactivate Service
+                    AuthMW -> AuthMW : req.user = actor
+                    AuthMW -> RoleMW : next()
+                    deactivate AuthMW
+                    activate RoleMW
+                    RoleMW -> RoleMW : ['MANAGER'].some(r => req.user.roles.includes(r))
+
+                    alt C1) Required role not held (e.g. roles = ["CUSTOMER"])
+                        RoleMW --> ErrH : throw AppError("Forbidden: insufficient permissions", 403)
+                        ErrH --> SPA : 403 Forbidden\n{ error: { message: "Forbidden: insufficient permissions", status: 403 } }
+                        note right of SPA : authenticated but not authorized (AA05)
+                    else C2) Required role held (e.g. ["CUSTOMER", "MANAGER"])
+                        RoleMW -> Controller : next()
+                        deactivate RoleMW
+                        activate Controller
+                        Controller --> SPA : 200 OK (business data)
+                        deactivate Controller
+                    end
+                end
+            end
+        end
+    end
+end
+
+deactivate Routes
+deactivate SPA
+
+@enduml

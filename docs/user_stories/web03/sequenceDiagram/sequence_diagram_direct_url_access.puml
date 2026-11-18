@@ -1,0 +1,116 @@
+@startuml sequence_diagram_direct_url_access
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - WEB03 Direct URL Access to a Protected Section (e.g. /manage/stock typed in the address bar)
+
+actor User as "Client / User"
+participant Router as "AppRoutes\n(router, WEB01)"
+participant Guard as "ProtectedRoute\n(AA03, extended)"
+participant Access as "accessPolicy"
+participant Auth as "AuthProvider"
+participant Page as "StockPage\n(WEB05)"
+participant API as "apiClient"
+participant BE as "Back-End API\nAuthMiddleware + RoleMiddleware"
+
+note over User, BE
+    The menu (SD 1) only HIDES options. This diagram shows the check that runs whenever a section
+    is requested by URL, bookmark, browser history or an in-app link (AC 2, AC 3, AC 7).
+    Section "stock": access = "protected", roles = [MANAGER] (navigationPolicy, Table 1).
+    The page component is mounted ONLY on ALLOW: on every other decision no protected request is made.
+end note
+
+User -> Router : types /manage/stock and presses Enter
+activate Router
+Router -> Router : findSectionByPath("/manage/stock")
+
+alt A) Path does not match any section
+    Router --> User : NotFoundPage (WEB02)
+    note right of Router : interaction ends
+
+else B) Section "stock" found
+    Router -> Guard : render(section = stock)
+    activate Guard
+    Guard -> Access : evaluateAccess(stock, auth)
+    activate Access
+    Access -> Auth : status, hasAnyRole("MANAGER")
+    Auth --> Access : state
+    Access --> Guard : decision
+    deactivate Access
+
+    alt B1) PENDING (status = "loading": /auth/me still running)
+        Guard --> User : loading indicator (WEB04)\nno page, no business request
+        note right of Guard : re-evaluated when AuthProvider\nfinishes loading
+
+    else B2) LOGIN_REQUIRED (status = "guest")
+        Guard -> Router : navigate("/login?returnTo=/manage/stock", { replace: true })
+        Router --> User : LoginPage (AA01 / AA02)
+        note right of Router
+            returnTo carries ONLY the path (no token, no data, AA04 AC 6).
+            After login, LoginPage navigates to returnTo only if
+            navigationPolicy.isSafeReturnPath(returnTo) (internal path of a
+            known section); otherwise to "/". The guard runs again there.
+        end note
+
+    else B3) ACCOUNT_DENIED (status = "denied": inactive account / no role, AA03)
+        Guard --> User : AccessDeniedPage(auth.deniedMessage)
+
+    else B4) Authenticated: roles must be confirmed before the page is mounted
+        Guard -> Auth : refresh()
+        activate Auth
+        Auth -> API : GET /api/v1/auth/me\n(skipAuthFailureHandler = true: answer mapped\nby AuthProvider, never by the global handler)
+        activate API
+        API -> BE : GET /api/v1/auth/me (Bearer)
+        activate BE
+        BE --> API : 200 { roles, active } / 401 / 403 / 5xx
+        deactivate BE
+        API --> Auth : result
+        deactivate API
+        Auth -> Auth : update currentUser / status (as in SD 1)
+        Auth --> Guard : state changed
+        deactivate Auth
+        Guard -> Access : evaluateAccess(stock, auth)
+        activate Access
+        Access --> Guard : decision
+        deactivate Access
+
+        alt B4a) FORBIDDEN (e.g. roles = [CUSTOMER] or [EMPLOYEE] or [ADMINISTRATOR])
+            Guard --> User : AccessDeniedPage("You do not have permission\nto access this page.")
+            note right of Guard
+                StockPage is NOT mounted: no stock data is requested
+                or rendered. The message does not reveal the section's
+                content, the required roles or the user's roles (AC 3).
+                Link "Back to start" (WEB02).
+            end note
+
+        else B4b) LOGIN_REQUIRED / ACCOUNT_DENIED (refresh answered 401 / 403 / 5xx)
+            Guard --> User : LoginPage / AccessDeniedPage (same as B2 / B3)
+
+        else B4c) ALLOW (roles contain MANAGER, e.g. [MANAGER] or [CUSTOMER, MANAGER])
+            Guard -> Page : mount
+            activate Page
+            Page -> API : GET /api/v1/stock
+            activate API
+            API -> BE : GET /api/v1/stock (Bearer)
+            activate BE
+            BE -> BE : verifyToken -> resolveActor (roles from DB)\n-> requireRole("MANAGER")
+            note right of BE
+                Back-end check on the SAME request (AC 7, AA05):
+                if the role was removed meanwhile -> 403,
+                handled as in SD 3.
+            end note
+            BE --> API : 200 OK { stock page }
+            deactivate BE
+            API --> Page : data
+            deactivate API
+            Page --> User : stock section (current section highlighted, WEB02)
+            deactivate Page
+        end
+    end
+    deactivate Guard
+end
+
+deactivate Router
+
+@enduml

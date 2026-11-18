@@ -1,0 +1,102 @@
+@startuml sequence_diagram_viewer_lifecycle
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - VIS01 Viewer Lifecycle (resize, reload, leaving the page / logout)
+
+actor User as "Restaurant Staff /\nLaPrizza Manager"
+participant Shell as "AppShell / routes\n(WEB01 / WEB02 / WEB03)"
+participant Auth as "AuthProvider"
+participant Viewer as "KitchenViewer"
+participant Load as "kitchenViewerLoader\n+ SceneAssetLoader"
+participant Engine as "ViewerEngine"
+participant Modules as "SceneModule[]"
+participant Three as "three\n(WebGLRenderer)"
+
+note over User, Three
+    Precondition: state "ready" (sequence_diagram_open_viewer, step 5).
+    One KitchenViewer owns at most one ViewerEngine. Every path that leaves or replaces the scene
+    goes through ViewerEngine.dispose(), so GPU memory is released and no render loop keeps running.
+    The effect creates a fresh canvas after loading assets. Cleanup removes it explicitly.
+end note
+
+== 1. Resize (window resized, navigation collapsed - WEB02 responsive layout) ==
+
+User -> Shell : resizes the window / toggles the navigation
+Shell --> Engine : ResizeObserver callback(width, height)
+activate Engine
+Engine -> Engine : camera.aspect = width / height;\nupdateProjectionMatrix()
+Engine -> Three : setSize(width, height, false)
+deactivate Engine
+note right of Engine : the canvas fills the main content area;\nheader and navigation are never covered
+
+== 2. Reload (viewer "Reload" / "Retry", or "Open / reload the kitchen viewer" after an activation in WEB06) ==
+
+alt From the WEB06 page (usWEB06 D9)
+    User -> Shell : "Open / reload the kitchen viewer"
+    Shell -> Viewer : navigate to /kitchen/viewer -> fresh mount\n(full sequence_diagram_open_viewer)
+else Inside the viewer
+    User -> Viewer : Reload / Retry
+    activate Viewer
+    Viewer -> Viewer : restart() calls the previous cleanup;\nabort its controller
+    Viewer -> Engine : dispose()
+    activate Engine
+    Engine -> Three : setAnimationLoop(null)
+    loop every registered module (reverse order, each in try/catch)
+        Engine -> Modules : dispose()
+    end
+    Engine -> Engine : traverse scene; loadedAssets.dispose()
+    Engine -> Three : renderer.dispose(); forceContextLoss()
+    note right of Engine : if build() is pending, the attempt signal is aborted;\nthe load finalizer sweeps again when the build settles
+    deactivate Engine
+    Viewer -> Viewer : release assets still held by the effect;\ncanvas.remove(); set loading; increment attempt
+    Viewer --> User : state "loading" (previous scene removed)
+    Viewer -> Load : WebGL check; loadActiveKitchen(...)\nthen preloadAll(...)
+    activate Load
+    Load --> Viewer : ViewerState / LoadedAssets
+    deactivate Load
+    alt all assets loaded
+        Viewer -> Viewer : createElement("canvas"); append to viewport
+        Viewer -> Engine : ViewerEngine.create(newCanvas, ...);\nawait load(...); start()
+        Viewer --> User : scene of the CURRENT active configuration
+        note right of Viewer : a failure here follows\nsequence_diagram_engine_failure
+    else empty / invalid / denied / expired / error
+        Viewer --> User : same handling as sequence_diagram_open_viewer (C1-D1)
+        note right of Viewer : a failed reload never brings back the\nprevious scene (usWEB06 3.4.5 step 6)
+    end
+    deactivate Viewer
+end
+
+== 3. Leaving the viewer (another section) or logout / session ended by WEB03 ==
+
+alt Navigation to another section
+    User -> Shell : selects another menu option
+else Logout (AA04)
+    User -> Shell : "Sign out"
+    Shell -> Auth : logout()
+    activate Auth
+    Auth --> Shell : guest (token discarded)
+    deactivate Auth
+else Session ended by WEB03 after a 401 of any business request
+    Auth --> Shell : guest; redirect /login?returnTo
+end
+
+Shell -> Viewer : unmount (route no longer rendered)
+activate Viewer
+Viewer -> Viewer : abort the effect's controller
+Viewer -> Engine : engine?.dispose()
+activate Engine
+Engine -> Engine : mark disposed; running = false
+Engine -> Three : setAnimationLoop(null)
+Engine -> Engine : resizeObserver.disconnect(); remove listeners
+Engine -> Modules : dispose() for every registered module\n(reverse order, each in try/catch)
+Engine -> Engine : traverse scene; loadedAssets.dispose()
+Engine -> Three : renderer.dispose(); forceContextLoss()
+deactivate Engine
+Viewer -> Viewer : release assets still held by the effect;\ncanvas.remove()
+deactivate Viewer
+Shell --> User : new section / sign-in screen
+note right of Shell : Back navigation after logout goes through the\nmodule slot again: no scene is shown to a Guest (AA04)
+
+@enduml

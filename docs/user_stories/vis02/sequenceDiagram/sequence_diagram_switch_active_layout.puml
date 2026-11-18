@@ -1,0 +1,76 @@
+@startuml sequence_diagram_switch_active_layout
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - VIS02 Switching the Active Kitchen Configuration (AC 4)
+
+actor Manager as "LaPrizza Manager"
+participant Page as "Kitchen configurations page\n(WEB06)"
+participant BE as "Back-End API\n(WEB06)"
+participant Viewer as "KitchenViewer\n(VIS01)"
+participant Engine as "ViewerEngine\n(VIS01)"
+participant Old as "KitchenLayoutModule\n(compact)"
+participant New as "KitchenLayoutModule\n(extended)"
+participant Assets as "LoadedAssets\n(VIS01)"
+
+note over Manager, Assets
+    Precondition: KCF-00001 "Compact kitchen" (12 x 8 x 3.2 m, line on the NORTH wall) is ACTIVE and shown
+    by the viewer (state "ready", sequence_diagram_build_kitchen_layout).
+    The viewer never keeps a previous layout: every load rebuilds the scene from the configuration that is
+    ACTIVE at that moment (VIS01 BR 4 / BR 8). A module instance is never reused between loads.
+end note
+
+== 1. Activation in WEB06 (usWEB06 SD 3) ==
+
+Manager -> Page : activates KCF-00002 "Extended assembly line"\n(16 x 10 x 3.5 m, line on the EAST wall) and confirms
+activate Page
+Page -> BE : POST /kitchen-configurations/KCF-00002/activation
+activate BE
+BE --> Page : 200 { activeConfiguration: { id: "KCF-00002", name, status: "ACTIVE",\nversion, elementCount, updatedAt, activatedAt },\npreviousActiveConfigurationId: "KCF-00001" }
+deactivate BE
+Page --> Manager : "Extended assembly line is now the active configuration"\n+ "Open / reload the kitchen viewer"
+deactivate Page
+
+== 2. Reload of the viewer (usVIS01 SD 2) ==
+
+Manager -> Viewer : "Open / reload the kitchen viewer" (fresh mount)\nor "Reload" inside the viewer
+activate Viewer
+Viewer -> Engine : dispose()  (previous attempt, BEFORE the new one)
+activate Engine
+Engine -> Engine : stop the render loop
+Engine -> Old : dispose()  (modules in reverse order)
+activate Old
+Old -> Old : scene.remove("layout:root")\nshapes.dispose() - procedural geometries, once\nroom geometries dispose()\nmaterials.dispose() - materials created for this build\nclones: skeleton.dispose() if skinned; disposed = true
+note right of Old : geometries / materials / textures of the\nimported files are NOT touched (BR 10)
+Old --> Engine : done
+deactivate Old
+Engine -> Assets : dispose()  (imported files of the compact kitchen, once)
+Engine -> Engine : renderer.dispose(); forceContextLoss()
+deactivate Engine
+Viewer -> Viewer : new attempt with a fresh canvas (VIS01 D17)
+
+Viewer -> BE : GET /kitchen-configurations/active (through kitchenViewerApi, VIS01)
+activate BE
+BE --> Viewer : 200 KCF-00002 version 4 + assets of the extended kitchen
+deactivate BE
+
+alt A) Preload or engine failure (e.g. a model file of KCF-00002 unavailable)
+    Viewer --> Manager : state "error" (asset-unavailable + asset id) or "failed" + [Retry]
+    note right of Viewer : interaction ends: the compact kitchen is NOT\nshown again - only the active one can be shown
+else B) Every asset of KCF-00002 preloaded
+    Viewer -> Engine : create(...) ; load(KCF-00002, newLoadedAssets, factories)
+    activate Engine
+    Engine -> New : build(SceneContext of KCF-00002)
+    activate New
+    New -> New : room 16 x 10 x 3.5 m;\none object per EQUIPMENT element of KCF-00002 (14)\nwith its own position / rotation / scale
+    New --> Engine : "layout:root" added to the scene
+    deactivate New
+    Engine -> Engine : VIS03 builds the 9 assembly-line elements on the EAST wall;\nVIS05-VIS06 modules; VIS07 computes the initial pose\nfor the 16 x 10 x 3.5 m room (single owner of the camera)
+    Viewer -> Engine : start()
+    deactivate Engine
+    Viewer --> Manager : state "ready": extended kitchen only; no object\nof the compact kitchen remains (ids, room size)
+end
+deactivate Viewer
+
+@enduml

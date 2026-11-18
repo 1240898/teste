@@ -1,0 +1,79 @@
+@startuml LaPrizzaDomainModel
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam classAttributeIconSize 0
+hide methods
+
+title Domain Model Excerpt - WEB03 Role-Based Navigation (User Aggregate)
+
+' -----------------------------------------------------------------------------
+' USER AGGREGATE.
+' WEB03 introduces NO new domain concept: it only consumes the current roles
+' and the active state of the User, resolved by the back end (AA03).
+' -----------------------------------------------------------------------------
+package "User Aggregate" <<Rectangle>> {
+
+    class User <<entity>> <<aggregateRoot>> {
+        + active : boolean
+    }
+
+    class UserId <<vo>> {
+        + value : string
+    }
+    note right of UserId
+        - UserId is a unique identifier for a user.
+        - Example: "USR-00123".
+        - The SPA never sends another user's id
+          to obtain "own data" sections (AA05).
+    end note
+
+    class Email <<vo>> {
+        + emailAddress : String
+    }
+
+    class UserName <<vo>> {
+        + name : String
+    }
+
+    enum UserRole <<enum>> {
+        ADMINISTRATOR
+        MANAGER
+        EMPLOYEE
+        CUSTOMER
+    }
+    note right of UserRole
+        Website roles (Table 1):
+        - ADMINISTRATOR -> Administrator
+        - MANAGER -> LaPrizza Manager
+        - EMPLOYEE -> Restaurant Staff
+        - CUSTOMER -> Customer
+        Guest is NOT a role: it is the absence
+        of an authenticated session and gives
+        access only to the public sections.
+    end note
+
+    User "1" *-- "1" UserId : identified by >
+    User "1" *-- "1" Email : has >
+    User "1" *-- "1" UserName : has >
+    User "1" --> "0..*" UserRole : assigned >
+
+    note bottom of User
+        <b>What WEB03 reads from this aggregate</b>
+        (always through GET /api/v1/auth/me, never from the JWT)
+        - roles: the set of sections shown in the menu is the UNION
+          of the sections granted to each role (Table 1).
+        - active: an inactive account, or an account with no role,
+          sees only the public sections plus an access-denied message.
+        <b>What WEB03 does NOT do</b>
+        - It never changes roles or the active state (AA06 / AA07).
+        - It never decides authorization on its own: hiding a menu
+          option is always complemented by the back-end check
+          (AuthMiddleware + RoleMiddleware) on every request (AA05).
+        <b>Note</b>
+        - "Navigation section" is a presentation concept of the SPA
+          (frontend/src/navigation), not a domain concept, and is
+          therefore not part of the domain model.
+    end note
+}
+
+@enduml

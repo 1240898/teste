@@ -1,0 +1,105 @@
+@startuml LaPrizzaDomainModel
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam classAttributeIconSize 0
+hide methods
+
+title Domain Model Excerpt - AA03 Internal Role Resolution (User Aggregate)
+
+' -----------------------------------------------------------------------------
+' USER AGGREGATE.
+' -----------------------------------------------------------------------------
+package "User Aggregate" <<Rectangle>> {
+
+    class User <<entity>> <<aggregateRoot>> {
+        + active : boolean
+    }
+
+    class UserId <<vo>> {
+        + value : string
+    }
+    note right of UserId
+        - UserId is a unique identifier for a user.
+        - Must be a string representing the user ID.
+        - Example: "USR-00123".
+    end note
+
+    class Email <<vo>> {
+        + emailAddress : String
+    }
+
+    class Password <<vo>> {
+        + passwordHash : String
+    }
+
+    class UserName <<vo>> {
+        + name : String
+    }
+
+    class MarketingConsent <<vo>> {
+        + consentGiven : boolean
+        + timestamp : DateTime
+    }
+
+    class ExternalIdentity <<vo>> {
+        + provider : IdentityProvider
+        + subject : String
+        + linkedAt : DateTime
+    }
+    note right of ExternalIdentity
+        Introduced by AA02.
+        The authentication method never
+        influences the roles of the User.
+    end note
+
+    enum UserRole <<enum>> {
+        ADMINISTRATOR
+        MANAGER
+        EMPLOYEE
+        CUSTOMER
+    }
+    note right of UserRole
+        Internal website roles (Table 1):
+        - ADMINISTRATOR -> Administrator
+        - MANAGER -> LaPrizza Manager
+        - EMPLOYEE -> Restaurant Staff
+        - CUSTOMER -> Customer
+        Guest is NOT a role: it is the absence
+        of an authenticated session.
+        CUSTOMER is the only role assigned
+        automatically (by the back end).
+        Every other change is made by an
+        Administrator (AA06).
+    end note
+
+    User "1" *-- "1" MarketingConsent : manages >
+    User "1" *-- "1" UserId : identified by >
+    User "1" *-- "1" Email : has >
+    User "1" *-- "0..1" Password : has local credential >
+    User "1" *-- "1" UserName : has >
+    User "1" *-- "0..*" ExternalIdentity : authenticated through >
+    User "1" --> "0..*" UserRole : assigned >
+
+    note bottom of User
+        <b>Automatic Customer role (AA03)</b>
+        - Every newly created User receives exactly [CUSTOMER],
+          assigned inside the aggregate factories (local registration,
+          first external sign-in, invited account, bootstrap).
+          Roles are never a creation input.
+        - Receiving CUSTOMER does not change the activation state:
+          an invited account (AA06) remains inactive.
+        <b>Returning users</b>
+        - Authentication never re-creates a User, never changes its roles
+          (a revoked CUSTOMER is not restored) and never reactivates it.
+        <b>Access</b>
+        - Roles are 0..*: after AA06 removals a User may have no role.
+        - A User may access protected functionality only if
+          active == true AND it holds at least one role.
+        - Roles are always read from this aggregate; roles supplied
+          by the user, the token or the identity provider are ignored.
+        - The same roles and rules apply whatever the
+          authentication method (local or external).
+    end note
+}
+
+@enduml

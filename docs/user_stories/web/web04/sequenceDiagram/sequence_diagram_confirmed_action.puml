@@ -1,0 +1,118 @@
+@startuml sequence_diagram_confirmed_action
+autonumber
+skinparam shadowing false
+skinparam responseMessageBelowArrow true
+title WEB04 - Validate and Confirm a Consequential Feature Action
+
+actor "System User" as User
+participant "Feature Page" as Page
+participant "Client Validator" as Validator
+participant "Confirmation Interaction" as Confirm
+participant "FeedbackMessage / FieldError / LoadingState" as Feedback
+participant "Feature API Wrapper" as FeatureApi
+participant "errorMapper" as ErrorMapper
+participant "apiClient" as ApiClient
+participant "Feature API" as Api
+participant "Application Service" as AppService
+participant "Domain Policy" as Domain
+
+note over User,Domain
+The owning feature identifies consequential actions from its requirements.
+WEB04 supplies the interaction; confirmation is not authorization.
+end note
+
+User -> Page : choose action and submit current values
+activate Page
+Page -> Page : preserve draft
+Page -> Validator : validate values and action eligibility
+activate Validator
+Validator --> Page : field errors or valid
+deactivate Validator
+
+alt Validation fails
+  Page -> Feedback : show field errors; focus first invalid field
+  activate Feedback
+  Feedback --> User : correction guidance; no request sent
+  deactivate Feedback
+else Validation passes
+  Page -> Confirm : show consequence and choices
+  activate Confirm
+  Confirm --> User : confirm or cancel
+  deactivate Confirm
+
+  alt Cancel
+    User -> Confirm : cancel
+    activate Confirm
+    Confirm --> Page : cancelled
+    deactivate Confirm
+    Page --> User : return to form; no request sent
+  else Confirm
+    User -> Confirm : confirm
+    activate Confirm
+    Confirm --> Page : confirmed
+    deactivate Confirm
+    Page -> Page : create/preserve operation key; prevent repeat submit
+    Page -> Feedback : show pending status
+    activate Feedback
+    Feedback --> User : operation is in progress
+    deactivate Feedback
+    Page -> FeatureApi : execute operation with operation key
+    activate FeatureApi
+    FeatureApi -> ApiClient : feature request
+    activate ApiClient
+    ApiClient -> Api : HTTPS / JSON
+    activate Api
+    Api -> AppService : authorized use case
+    activate AppService
+    AppService -> Domain : enforce business rules
+    activate Domain
+    Domain --> AppService : accepted or rejected
+    deactivate Domain
+    AppService --> Api : outcome
+    deactivate AppService
+    Api --> ApiClient : response
+    deactivate Api
+    ApiClient --> FeatureApi : result or ApiError
+    deactivate ApiClient
+    FeatureApi --> Page : result or uncertain transport failure
+    deactivate FeatureApi
+
+    alt Success confirmed
+      Page -> Feedback : localized success
+      activate Feedback
+      Feedback --> User : action completed
+      deactivate Feedback
+    else Definitive failure
+      Page -> ErrorMapper : toFeedback(ApiError)
+      activate ErrorMapper
+      ErrorMapper --> Page : allow-listed feedback state
+      deactivate ErrorMapper
+      Page -> Feedback : render mapped localized feedback
+      activate Feedback
+      Feedback --> User : action not reported as completed
+      deactivate Feedback
+    else Connection lost; outcome unknown
+      Page -> Page : preserve draft and operation key
+      Page -> FeatureApi : reconcile operation outcome
+      activate FeatureApi
+      FeatureApi -> ApiClient : query status or re-read resource
+      activate ApiClient
+      ApiClient --> FeatureApi : confirmed outcome or still unknown
+      deactivate ApiClient
+      FeatureApi --> Page : reconciliation result
+      deactivate FeatureApi
+      alt Outcome confirmed successful
+        Page -> Feedback : show confirmed success
+        activate Feedback
+        Feedback --> User : action completed
+        deactivate Feedback
+      else Definitively not applied and retryable
+        Page --> User : offer retry with the same idempotency key
+      else Still unknown
+        Page --> User : explain outcome is unconfirmed; do not resubmit
+      end
+    end
+  end
+end
+deactivate Page
+@enduml

@@ -1,0 +1,143 @@
+@startuml SD02_update_customer
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - BCK02 Update Customer (PUT /api/v1/customers/:id)
+
+actor "LaPrizza Manager" as LaPrizzaManager
+participant CustomerRoutes
+participant AuthMiddleware
+participant RoleMiddleware
+participant "ValidationMiddleware\n(Joi)" as ValidationMiddleware
+participant CustomerController
+participant CustomerService
+participant "CustomerRepository\n(Infrastructure)" as CustomerRepository
+database "Database\n(Persistence)" as Database
+participant CustomerMapper
+
+LaPrizzaManager -> CustomerRoutes : PUT /api/v1/customers/:id\n{ name, phoneNumber, email,\naddresses[], dietaryRestrictions[] }
+activate CustomerRoutes
+activate LaPrizzaManager
+
+' Security & Middlewares
+CustomerRoutes -> AuthMiddleware : verifyToken(req, res, next)
+activate AuthMiddleware
+alt Invalid or Missing Token
+    AuthMiddleware --> LaPrizzaManager : 401 Unauthorized\n{ error: "Unauthorized" }
+end
+AuthMiddleware --> CustomerRoutes : next()
+deactivate AuthMiddleware
+
+CustomerRoutes -> RoleMiddleware : requireRole("MANAGER")
+activate RoleMiddleware
+alt Lacks MANAGER Role
+    RoleMiddleware --> LaPrizzaManager : 403 Forbidden\n{ error: "Forbidden: Access denied" }
+end
+RoleMiddleware --> CustomerRoutes : next()
+deactivate RoleMiddleware
+
+CustomerRoutes -> ValidationMiddleware : validate(req.body, updateCustomerSchema)
+note right of ValidationMiddleware
+    name, phoneNumber and email are required.
+    addresses and dietaryRestrictions are optional.
+    dietaryRestriction.allergenId: integer 1..14.
+end note
+activate ValidationMiddleware
+alt Invalid Customer Data
+    ValidationMiddleware --> LaPrizzaManager : 400 Bad Request\n{ error: "Invalid customer data" }
+end
+ValidationMiddleware --> CustomerRoutes : next()
+deactivate ValidationMiddleware
+
+' Application Logic
+CustomerRoutes -> CustomerController : update(req, res)
+activate CustomerController
+
+CustomerController -> CustomerService : updateCustomer(id, updateCustomerDTO)
+activate CustomerService
+
+' Identifier Validation
+CustomerService -> CustomerService : CustomerId.create(id)
+alt Id Has Invalid Format (CUST-NNNNN)
+    CustomerService --> CustomerController : throw DomainError("Invalid customer id")
+    CustomerController --> LaPrizzaManager : 400 Bad Request\n{ error: "Invalid customer id" }
+end
+
+' Load existing customer
+CustomerService -> CustomerRepository : findById(customerId)
+activate CustomerRepository
+CustomerRepository -> Database : findOne({ id })
+activate Database
+Database --> CustomerRepository : customerDoc / null
+deactivate Database
+CustomerRepository -> CustomerMapper : toDomain(customerDoc)
+activate CustomerMapper
+CustomerMapper --> CustomerRepository : customer
+deactivate CustomerMapper
+CustomerRepository --> CustomerService : customer / null
+deactivate CustomerRepository
+
+alt Customer Not Found
+    CustomerService --> CustomerController : throw CustomerNotFoundError("Customer not found")
+    CustomerController --> LaPrizzaManager : 404 Not Found\n{ error: "Customer not found" }
+end
+
+' Value Object Validation
+CustomerService -> CustomerService : CustomerName.create(name)\nPhoneNumber.create(phoneNumber)\nEmail.create(email)\nContactInfo.create(phoneNumber, email)\nAddress.create(street, postalCode, city) [0..*]\nAllergenId.create(allergenId) [0..*]\nDietaryRestriction.create(name, description, allergenId) [0..*]
+alt Invalid Value Object
+    CustomerService --> CustomerController : throw DomainError(message)
+    CustomerController --> LaPrizzaManager : 400 Bad Request\n{ error: message }
+end
+
+' Email Uniqueness (against other customers)
+CustomerService -> CustomerRepository : findByEmail(email)
+activate CustomerRepository
+CustomerRepository -> Database : findOne({ email })
+activate Database
+Database --> CustomerRepository : customerDoc / null
+deactivate Database
+CustomerRepository --> CustomerService : existingCustomer / null
+deactivate CustomerRepository
+
+alt Email Belongs to Another Customer\n(existingCustomer found and its id differs)
+    CustomerService --> CustomerController : throw DuplicateCustomerError("Email already registered")
+    CustomerController --> LaPrizzaManager : 409 Conflict\n{ error: "Email already registered" }
+end
+
+' Aggregate Update (identifier is immutable)
+CustomerService -> CustomerService : customer.updateName(name)\ncustomer.updateContactInfo(contactInfo)\ncustomer.updateAddresses(addresses)\ncustomer.updateDietaryRestrictions(restrictions)\n(CustomerId is preserved)
+
+' Persistence
+CustomerService -> CustomerRepository : save(customer)
+activate CustomerRepository
+CustomerRepository -> CustomerMapper : toPersistence(customer)
+activate CustomerMapper
+CustomerMapper --> CustomerRepository : CustomerPersistenceModel
+deactivate CustomerMapper
+CustomerRepository -> Database : update({ id }, customerDoc)
+activate Database
+Database --> CustomerRepository : updatedCustomerDoc
+deactivate Database
+CustomerRepository -> CustomerMapper : toDomain(updatedCustomerDoc)
+activate CustomerMapper
+CustomerMapper --> CustomerRepository : customer
+deactivate CustomerMapper
+CustomerRepository --> CustomerService : customer
+deactivate CustomerRepository
+
+' Response Mapping
+CustomerService -> CustomerMapper : toDTO(customer)
+activate CustomerMapper
+CustomerMapper --> CustomerService : customerResponseDTO
+deactivate CustomerMapper
+
+CustomerService --> CustomerController : customerResponseDTO
+deactivate CustomerService
+
+CustomerController --> LaPrizzaManager : 200 OK\n{ id, name, phoneNumber, email, addresses[],\ndietaryRestrictions[], active }
+deactivate CustomerController
+deactivate CustomerRoutes
+deactivate LaPrizzaManager
+
+@enduml

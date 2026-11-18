@@ -1,0 +1,30 @@
+$kind: http-request
+url: http://localhost:8080/api/v1/auth/login
+method: POST
+body:
+  type: json
+  content: |-
+    {
+        "email": "costumer@gmail.com",
+        "password": "TesteSeguro123!"
+    }
+auth:
+  type: noauth
+scripts:
+  - type: afterResponse
+    code: |-
+      const body = pm.response.json();
+
+      pm.test("Login succeeded", () => {
+        pm.response.to.have.status(200);
+      });
+
+      pm.test("Login returns the session CSRF token", () => {
+        pm.expect(body.csrfToken).to.be.a("string").and.not.empty;
+      });
+
+      pm.environment.set("accessToken", body.accessToken);
+      pm.environment.set("csrfToken", body.csrfToken);
+      pm.environment.set("initialIdleExpiresAt", body.idleExpiresAt);
+    language: text/javascript
+order: 1000

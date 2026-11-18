@@ -1,0 +1,292 @@
+@startuml class_diagram
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing true
+hide empty members
+title AA04 - Secure Session Handling
+package "Front-End (SPA)" <<Rectangle>> {
+ class AuthProvider <<state management>> {
+  - accessToken: string | null
+  - csrfToken: string | null
+  - idleExpiresAt: Date | null
+  - status: string
+  - generation: number
+  + resumeSession(): Promise<void>
+  + acceptAuthToken(dto: AuthTokenDTO): Promise<void>
+  + refresh(): Promise<void>
+  + logout(): Promise<void>
+  + noteActivity(): void
+  + hasAnyRole(...roles: string[]): boolean
+ }
+ class AuthContext <<context>> {
+  + user: UserResponseDTO | null
+  + status: string
+  + generation: number
+  + idleExpiresAt: Date | null
+  + csrfToken: string | null
+ }
+ class authApi <<API client>> {
+  + login(dto: LoginDTO): Promise<AuthHttpResult>
+  + resumeSession(): Promise<AuthTokenDTO>
+  + renew(csrfToken: string): Promise<AuthTokenDTO>
+  + logout(csrfToken: string): Promise<void>
+ }
+ class AuthHttpResult <<client transport record>> {
+  + dto: AuthTokenDTO
+  + requestDurationMs: number
+ }
+ class apiClient <<HTTP client>> {
+  + request(url: string, options: object): Promise<object>
+ }
+ class ProtectedRoute <<route guard>> {
+  + checkAccess(): boolean
+  + suspendProtectedView(): void
+  + restorePage(url: string): Promise<void>
+ }
+ class LogoutButton <<UI component>> {
+  + onClick(): Promise<void>
+ }
+ AuthProvider --> AuthContext : publishes state
+ AuthProvider --> authApi
+ apiClient --> AuthProvider : snapshot / single-flight renewal
+ ProtectedRoute --> AuthContext
+ ProtectedRoute --> apiClient
+ LogoutButton --> AuthProvider : logout()
+}
+package "Presentation Layer (API)" <<Rectangle>> {
+ class AuthRoutes <<router>> {
+  + setupRoutes(): Router
+ }
+ class AuthController <<controller>> {
+  + login(req: Request, res: Response): Promise<void>
+  + resume(req: Request, res: Response): Promise<void>
+  + renew(req: Request, res: Response): Promise<void>
+  + logout(req: Request, res: Response): Promise<void>
+ }
+ class AuthMiddleware <<middleware>> {
+  {static} + extractToken(req: Request): string
+  + verifyToken(req: Request, res: Response, next: NextFunction): Promise<void>
+ }
+ class RoleMiddleware <<middleware>> {
+  {static} + requireRole(...roles: UserRole[]): Middleware
+ }
+}
+package "Application Layer" <<Rectangle>> {
+ class SessionConfig <<configuration>> {
+  + idleTimeoutSeconds: number
+  + accessTokenTtl: string
+  + activityReportIntervalSeconds: number
+  + sessionRetentionSeconds: number
+  + allowedOrigin: string
+  {static} + load(environment: object, file: object): SessionConfig
+  + validate(): void
+ }
+ note right of SessionConfig
+  AUTH_IDLE_TIMEOUT_SECONDS: required positive integer; no approved default/range.
+  ACCESS_TOKEN_TTL: required positive parsed duration, less than idle timeout,
+  retaining the architectural one-day access-token ceiling.
+  ACTIVITY_REPORT_INTERVAL_SECONDS: required positive integer,
+  strictly below idle timeout and at most idleTimeoutSeconds / 2.
+  Refuse startup on invalid required configuration.
+  SESSION_RETENTION_SECONDS: positive integer, proposed 604800; GDPR decision OPEN.
+  New configuration affects new sessions and still-valid sessions
+  on their next activity-driven renewal, never expired sessions.
+ end note
+ class UserService <<application service>> {
+  - sessions: IApplicationSessionRepository
+  - credentials: ISessionCredentialService
+  - tokenService: ITokenService
+  - userRepository: IUserRepository
+  - config: SessionConfig
+  + login(dto: LoginDTO): Promise<AuthTokenDTO>
+  + establishSession(user: User): Promise<AuthTokenDTO>
+  + resolveActor(token: string): Promise<Actor>
+  + resume(cookieCredential: string): Promise<AuthTokenDTO>
+  + renew(cookieCredential: string, csrfToken: string): Promise<AuthTokenDTO>
+  + logout(cookieCredential: string, csrfToken: string): Promise<void>
+ }
+ interface IApplicationSessionRepository <<repository port>> {
+  + create(session: ApplicationSession): Promise<SessionRecord>
+  + findByCredential(id: string, hash: Buffer): Promise<SessionRecord | null>
+  + findActive(id: string, userId: string): Promise<SessionRecord | null>
+  + findResumable(id: string, hash: Buffer): Promise<SessionRecord | null>
+  + renew(id: string, hash: Buffer, csrfToken: Buffer, idleSeconds: number): Promise<SessionRecord | null>
+  + revoke(id: string, hash: Buffer, csrfToken: Buffer): Promise<boolean>
+ }
+ interface ISessionCredentialService <<security port>> {
+  + create(): SessionCredentialData
+  + parse(value: string): SessionCredentialData
+ }
+ interface ITokenService <<security port>> {
+  + expiresIn: string
+  + generateToken(payload: TokenPayload): string
+  + verifyToken(token: string): TokenClaims
+ }
+ interface IPasswordHasher <<security port>> {
+  + compare(plainText: string, encodedHash: string): Promise<boolean>
+ }
+ class AuthTokenDTO <<DTO>> {
+  + accessToken: string
+  + tokenType: string
+  + expiresIn: string
+  + sessionCredential: string <<internal; emitted as cookie>>
+  + csrfToken: string
+  + idleTimeoutSeconds: number
+  + activityReportIntervalSeconds: number
+  + idleExpiresAt: Date
+  + user: UserResponseDTO
+ }
+ class SessionRecord <<application security record>> {
+  + id: string
+  + userId: string
+  + credentialHash: Buffer
+  + csrfToken: Buffer
+  + createdAt: Date
+  + lastActivityAt: Date
+  + idleExpiresAt: Date
+  + revokedAt: Date | null
+ }
+ class SessionCredentialData <<internal record>> {
+  + id: string
+  + value: string
+  + hash: Buffer
+  + csrfToken: string
+  + csrfTokenBytes: Buffer
+ }
+ class TokenPayload <<internal record>> {
+  + sub: string
+  + sid: string
+ }
+ class TokenClaims <<internal record>> {
+  + sub: string
+  + sid: string
+  + jti: string
+  + iat: number
+  + exp: number
+  + iss: string
+  + aud: string
+ }
+ class Actor <<internal record>> {
+  + sub: string
+  + email: string
+  + roles: UserRole[]
+ }
+ class LoginDTO <<DTO>> {
+  + email: string
+  + password: string
+ }
+ class UserResponseDTO <<DTO>> {
+  + roles: UserRole[]
+ }
+ class UserResponseMapper <<mapper>> {
+  {static} + toDTO(user: User): UserResponseDTO
+ }
+}
+package "Domain Layer" <<Rectangle>> {
+ interface IUserRepository <<repository>> {
+  + findById(id: UserId): Promise<User | null>
+  + findByEmail(email: Email): Promise<User | null>
+ }
+ class User <<entity>> <<aggregateRoot>> {
+  + getId(): UserId
+  + getEmail(): Email
+  + getPassword(): Password
+  + getRoles(): UserRole[]
+  + isActive(): boolean
+ }
+ enum UserRole {
+  ADMINISTRATOR
+  MANAGER
+  RESTAURANT_STAFF
+  CUSTOMER
+
+ }
+ class UserId <<value object>> {
+  {static} + create(value: string): UserId
+  + getValue(): string
+ }
+ class Email <<value object>> {
+  + getValue(): string
+ }
+ class Password <<value object>> {
+  + getHash(): string
+ }
+ User "1" *-- "1" UserId
+ User "1" *-- "1" Email
+ User "1" *-- "1" Password
+}
+package "Infrastructure Layer" <<Rectangle>> {
+ class PostgresApplicationSessionRepository <<repository implementation>> {
+  + create(id: string, userId: string, hash: Buffer, idleSeconds: number): Promise<SessionRecord>
+  + findByCredential(id: string, hash: Buffer): Promise<SessionRecord | null>
+  + findActive(id: string, userId: string): Promise<SessionRecord | null>
+  + findResumable(id: string, hash: Buffer): Promise<SessionRecord | null>
+  + renew(id: string, hash: Buffer, csrfToken: Buffer, idleSeconds: number): Promise<SessionRecord | null>
+  + revoke(id: string, hash: Buffer, csrfToken: Buffer): Promise<boolean>
+ }
+ class SessionCredentialService <<security adapter>> {
+  + create(): SessionCredentialData
+  + parse(value: string): SessionCredentialData
+ }
+ class JwtTokenService <<security adapter>> {
+  + expiresIn: string
+  + generateToken(payload: TokenPayload): string
+  + verifyToken(token: string): TokenClaims
+ }
+ class UserRepository <<repository implementation>> {
+  + findById(id: UserId): Promise<User | null>
+  + findByEmail(email: Email): Promise<User | null>
+ }
+ class Database <<database adapter>> {
+  + query(text: string, values: object[]): Promise<QueryResult>
+  + withTransaction(work: function): Promise<object>
+ }
+}
+AuthRoutes --> AuthController
+AuthRoutes ..> AuthMiddleware
+AuthController --> UserService
+AuthController ..> LoginDTO : constructs for login
+AuthController ..> SessionCookie : reads / writes
+AuthMiddleware --> UserService
+RoleMiddleware ..> Actor
+UserService --> IApplicationSessionRepository
+UserService --> ISessionCredentialService
+UserService --> ITokenService
+UserService --> IPasswordHasher
+UserService --> IUserRepository
+UserService ..> AuthTokenDTO
+UserService ..> UserResponseMapper
+UserService ..> SessionRecord
+UserService ..> Actor
+UserService ..> TokenClaims
+UserService --> SessionConfig
+JwtTokenService --> SessionConfig : access-token lifetime
+class SessionCookie <<browser-managed>> {
+  + name: lap_session | __Host-lap_session
+  + httpOnly: true
+  + sameSite: Lax
+  + secure: production
+  + path: /
+}
+authApi ..> SessionCookie : credentials included; browser attaches automatically
+AuthProvider --> SessionConfig : public timing projection
+authApi ..> AuthHttpResult
+AuthHttpResult --> AuthTokenDTO
+Actor ..> UserRole
+UserResponseDTO ..> UserRole
+User ..> UserRole
+IApplicationSessionRepository ..> SessionRecord
+ISessionCredentialService ..> SessionCredentialData
+ITokenService ..> TokenPayload
+ITokenService ..> TokenClaims
+AuthTokenDTO --> UserResponseDTO
+AuthProvider ..> AuthTokenDTO
+authApi ..> AuthRoutes : HTTPS / JSON
+apiClient ..> AuthMiddleware : protected requests
+PostgresApplicationSessionRepository ..|> IApplicationSessionRepository
+SessionCredentialService ..|> ISessionCredentialService
+JwtTokenService ..|> ITokenService
+UserRepository ..|> IUserRepository
+PostgresApplicationSessionRepository --> Database
+UserRepository --> Database
+@enduml

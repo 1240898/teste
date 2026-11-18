@@ -1,0 +1,239 @@
+@startuml sequence_diagram_create
+title BCK08 - Create a component-size configuration
+autonumber
+skinparam maxMessageSize 105
+skinparam shadowing true
+actor Manager
+participant "ComponentConfigurationRoutes" as Routes
+participant "AuthMiddleware" as Auth
+participant "RoleMiddleware" as Roles
+participant "ValidationMiddleware" as Validator
+participant "ComponentConfigurationController" as Controller
+participant "ComponentConfigurationService" as Service
+participant "IUnitOfWork\n: PostgresUnitOfWork" as UoW
+participant "IProductRepository\n: PostgresProductRepository" as Products
+participant "IPizzaSizeRepository\n: PostgresPizzaSizeRepository" as Sizes
+participant "IComponentConfigurationRepository\n: PostgresComponentConfigurationRepository" as Repo
+participant "Money" as Price
+participant "ComponentSizeConfiguration" as Config
+participant "product : Product" as Product
+participant "size : PizzaSize" as Size
+participant "StockUnitsConsumed" as Units
+participant "IComponentConfigurationImpactGuard" as Impact
+participant "ComponentConfigurationResponseMapper" as Mapper
+database "PostgreSQL" as DB
+Manager -> Routes : POST /api/v1/products/{productId}/component-configurations/{sizeId}
+activate Routes
+Routes -> Auth : verifyToken(req, res, next)
+activate Auth
+break Missing / invalid token
+ Auth --> Routes : authentication error
+ Routes --> Manager : 401 Unauthorized (shared error handler)
+end
+Auth --> Routes : identity established
+deactivate Auth
+Routes -> Roles : requireRole('MANAGER')(req, res, next)
+activate Roles
+break Caller lacks Manager role
+ Roles --> Routes : authorization error
+ Routes --> Manager : 403 Forbidden (shared error handler)
+end
+Roles --> Routes : next()
+deactivate Roles
+Routes -> Validator : validate(schemas.create)(req, res, next)
+activate Validator
+break Invalid body shape / missing fields / wrong primitive types
+ Validator --> Routes : body validation error
+ Routes --> Manager : 400 Bad Request (shared error handler)
+end
+Validator --> Routes : next()
+deactivate Validator
+Routes -> Controller : create(req, res, next)
+activate Controller
+Controller -> Controller : validatePath(req)
+activate Controller
+Controller --> Controller : valid reference encoding or path error
+deactivate Controller
+break Invalid ProductId / PizzaSizeId path representation
+ Controller --> Manager : 400 Bad Request (shared error handler)
+end
+Controller -> Service : create(productId, sizeId, dto)
+activate Service
+Service -> UoW : withTransaction(work)
+activate UoW
+UoW -> DB : BEGIN
+activate DB
+DB --> UoW : transaction started
+deactivate DB
+UoW -> Service : work(tx)
+activate Service
+Service -> Products : findByIdForUpdate(productId, tx)
+activate Products
+Products -> DB : SELECT product FOR UPDATE
+activate DB
+DB --> Products : row or no row
+deactivate DB
+Products --> Service : product or null
+deactivate Products
+Service -> Sizes : findByIdForUpdate(sizeId, tx)
+activate Sizes
+Sizes -> DB : SELECT size FOR UPDATE
+activate DB
+DB --> Sizes : row or no row
+deactivate DB
+Sizes --> Service : size or null
+deactivate Sizes
+break Product or size does not exist
+ Service --> UoW : not-found error
+ UoW -> DB : ROLLBACK
+ activate DB
+ DB --> UoW : rolled back
+ deactivate DB
+ UoW --> Service : rejected
+ Service --> Controller : not-found error
+ Controller --> Manager : 404 Not Found (shared error handler)
+end
+Service -> Repo : findByPair(productId, sizeId, tx)
+activate Repo
+Repo -> DB : SELECT configuration
+activate DB
+DB --> Repo : row or no row
+deactivate DB
+Repo --> Service : current or null
+deactivate Repo
+break Pair already configured
+ Service --> UoW : conflict
+ UoW -> DB : ROLLBACK
+ activate DB
+ DB --> UoW : rolled back
+ deactivate DB
+ UoW --> Service : rejected
+ Service --> Controller : error
+ Controller --> Manager : 409 Conflict (shared error handler)
+end
+Service -> Price : create(dto.amount, dto.currency)
+activate Price
+Price --> Service : price or invalid monetary representation
+deactivate Price
+break Invalid monetary representation
+ Service --> UoW : validation error
+ UoW -> DB : ROLLBACK
+ activate DB
+ DB --> UoW : rolled back
+ deactivate DB
+ UoW --> Service : rejected
+ Service --> Controller : validation error
+ Controller --> Manager : 400 Bad Request (shared error handler)
+end
+Service -> Config : create(product, size, price, dto.stockUnitsConsumed)
+activate Config
+Config -> Product : getId(), isPizzaComponent(), isStockControlled()
+activate Product
+Product --> Config : reference, eligibility, stock-control designation
+deactivate Product
+Config -> Size : getId()
+activate Size
+Size --> Config : size reference
+deactivate Size
+Config -> Price : getAmount(), getCurrency()
+activate Price
+Price --> Config : exact amount and currency
+deactivate Price
+note right of Config
+ Checks EUR, finite amount >= 0 and <= 2 decimal places.
+end note
+opt Stock-controlled product and units provided
+ Config -> Units : create(dto.stockUnitsConsumed)
+ activate Units
+ Units --> Config : non-negative integer value or domain error
+ deactivate Units
+end
+Config --> Service : validated candidate or domain error
+deactivate Config
+break Invalid price, ineligible Product or invalid conditional consumption
+ Service --> UoW : validation error
+ UoW -> DB : ROLLBACK
+ activate DB
+ DB --> UoW : rolled back
+ deactivate DB
+ UoW --> Service : rejected
+ Service --> Controller : validation error
+ Controller --> Manager : 400 Bad Request (shared error handler)
+end
+Service -> Impact : assertSafeChange(null, candidate, tx)
+activate Impact
+break Known consistency conflict
+ Impact --> Service : conflict
+ Service --> UoW : conflict
+ UoW -> DB : ROLLBACK
+ activate DB
+ DB --> UoW : rolled back
+ deactivate DB
+ UoW --> Service : rejected
+ Service --> Controller : conflict
+ Controller --> Manager : 409 Conflict (shared error handler)
+end
+break Policy unresolved or safety cannot be established
+ Impact --> Service : policy unavailable / unable to approve
+ Service --> UoW : abort without write
+ UoW -> DB : ROLLBACK
+ activate DB
+ DB --> UoW : rolled back
+ deactivate DB
+ UoW --> Service : rejected
+ Service --> Controller : operation unavailable
+ Controller --> Manager : failure; final HTTP mapping pending OQ1
+end
+Impact --> Service : void (safety established under agreed policy)
+deactivate Impact
+note over Impact
+ Guard is a required integration seam, without a concrete adapter.
+ The rest of this flow proceeds only when neither rejection applies.
+ No invented cascade, versioning or historical repricing policy.
+end note
+Service -> Repo : insert(candidate, tx)
+activate Repo
+Repo -> DB : INSERT with composite primary key
+activate DB
+DB --> Repo : success or constraint / technical error
+deactivate DB
+Repo --> Service : void or translated error
+deactivate Repo
+break Write failure or concurrent integrity conflict
+ Service --> UoW : error
+ UoW -> DB : ROLLBACK
+ activate DB
+ DB --> UoW : rolled back
+ deactivate DB
+ UoW --> Service : rejected
+ Service --> Controller : error
+ Controller --> Manager : 409 for known conflict; 500 for unexpected failure
+end
+Service -> Mapper : toDTO(candidate)
+activate Mapper
+Mapper --> Service : response DTO
+deactivate Mapper
+Service --> UoW : response DTO
+deactivate Service
+UoW -> DB : COMMIT
+activate DB
+DB --> UoW : commit result
+deactivate DB
+break Commit failed
+ UoW -> DB : ROLLBACK (if transaction remains active)
+ activate DB
+ DB --> UoW : rollback acknowledged or connection unavailable
+ deactivate DB
+ UoW --> Service : error; commit outcome may be unknown
+ Service --> Controller : error
+ Controller --> Manager : 500 Internal Server Error
+end
+UoW --> Service : committed DTO
+deactivate UoW
+Service --> Controller : response DTO
+deactivate Service
+Controller --> Manager : 201 Created + ComponentConfigurationResponseDTO
+deactivate Controller
+deactivate Routes
+
+@enduml

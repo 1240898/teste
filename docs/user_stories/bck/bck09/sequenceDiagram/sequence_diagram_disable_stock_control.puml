@@ -1,0 +1,114 @@
+@startuml sequence_diagram_disable_stock_control
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - Stop Stock Tracking and Preserve the Snapshot
+
+actor Manager
+participant Routes as "StockRoutes"
+participant Auth as "AuthMiddleware"
+participant Roles as "RoleMiddleware"
+participant Validator as "ValidationMiddleware"
+participant Controller as "StockController"
+participant Service as "StockManagementService"
+participant UoW as "IUnitOfWork"
+participant ProductReader as "IProductReader (BCK05 adapter)"
+participant Repository as "IStockRepository"
+participant Aggregate as "StockInformation"
+database DB as "PostgreSQL"
+
+Manager -> Routes : DELETE /api/v1/stock/{productId}
+activate Routes
+Routes -> Auth : verifyToken(req, res, next)
+activate Auth
+Auth --> Routes : identity established
+deactivate Auth
+Routes -> Roles : requireRole(MANAGER)
+activate Roles
+Roles --> Routes : authorized
+deactivate Roles
+Routes -> Validator : validate Product ID
+activate Validator
+Validator --> Routes : next()
+deactivate Validator
+Routes -> Controller : stopTracking(req, res)
+activate Controller
+Controller -> Service : stopTracking(productId)
+activate Service
+Service -> UoW : withTransaction(work)
+activate UoW
+UoW -> DB : BEGIN
+DB --> UoW : transaction started
+UoW -> Service : execute work(tx)
+Service -> ProductReader : getByIdForUpdate(productId, tx)
+activate ProductReader
+ProductReader -> DB : SELECT Product FOR UPDATE
+DB --> ProductReader : Product / none
+ProductReader --> Service : ProductStockStatus / null
+deactivate ProductReader
+
+alt Product does not exist
+    Service --> UoW : throw NotFound
+    UoW -> DB : ROLLBACK
+    DB --> UoW : rolled back
+    UoW --> Service : rethrow error
+    Service --> Controller : error
+    Controller --> Manager : 404 Not Found
+else Product exists
+    Service -> Repository : findCurrentByProductIdForUpdate(productId, tx)
+    activate Repository
+    Repository -> DB : SELECT stock row WHERE ended_at IS NULL FOR UPDATE
+    DB --> Repository : StockInformation / none
+    Repository --> Service : current record / null
+    deactivate Repository
+    alt No current tracking period
+        Service --> UoW : throw NotFound
+        UoW -> DB : ROLLBACK
+        DB --> UoW : rolled back
+        UoW --> Service : rethrow error
+        Service --> Controller : error
+        Controller --> Manager : 404 Not Found
+    else Current tracking period exists
+        Service -> Aggregate : endTracking(nowUtc)
+        activate Aggregate
+        Aggregate --> Service : StockInformation(endedAt=nowUtc)
+        deactivate Aggregate
+        Service -> Repository : save(stock, tx)
+        activate Repository
+        Repository -> DB : UPDATE ended_at=nowUtc
+        DB --> Repository : updated row
+        Repository --> Service : saved
+        deactivate Repository
+        Service --> UoW : success
+        UoW -> DB : COMMIT
+        DB --> UoW : committed
+        UoW --> Service : success
+        Service --> Controller : success
+        Controller --> Manager : 204 No Content
+    end
+end
+
+deactivate UoW
+deactivate Service
+deactivate Controller
+deactivate Routes
+
+note over ProductReader,Aggregate
+  Stopping tracking is a BCK09 operation on the Stock
+  resource. It does not update Product or set Product.isActive.
+  The final quantity is retained in this completed period,
+  including when greater than zero. A new POST /stock starts
+  a new period with a new StockId and startedAt. All prior
+  completed periods remain stored.
+end note
+
+note over Service,Repository
+  This flow reflects the client clarification: stock tracking
+  may be disabled at any balance. The period is closed by
+  setting endedAt; no stock information is deleted. A regular
+  decrease to zero does not call this operation; endedAt remains
+  empty and the period remains current.
+end note
+
+@enduml

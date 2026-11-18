@@ -1,0 +1,40 @@
+@startuml domain_model_excerpt
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam classAttributeIconSize 0
+hide methods
+
+title Domain Model Excerpt - AA01 Local Authentication
+
+package "User Aggregate (AA01-relevant view)" <<Rectangle>> {
+    class User <<entity>> <<aggregateRoot>> {
+        + active : boolean
+    }
+
+    class UserId <<vo>> {
+        + value : string
+    }
+
+    class Email <<vo>> {
+        + emailAddress : String
+    }
+
+    class Password <<vo>> {
+        + passwordHash : String
+    }
+
+    User "1" *-- "1" UserId : identified by >
+    User "1" *-- "1" Email : has >
+    User "1" *-- "1" Password : has >
+
+    note bottom of User
+        AA01 authenticates the account using its local email and password
+        representation, compares email without case sensitivity and checks
+        the account's active state.
+        The Password value represents a stored hash, not plaintext.
+        Role resolution, session lifecycle, authorization, invitation,
+        activation and password recovery are application flows outside
+        this User Aggregate excerpt.
+    end note
+}
+@enduml

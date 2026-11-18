@@ -1,0 +1,10 @@
+name: Local Dev
+values:
+  - key: accessToken
+    value: ''
+  - key: csrfToken
+    value: ''
+  - key: initialIdleExpiresAt
+    value: ''
+  - key: idleExpiresAt
+    value: ''

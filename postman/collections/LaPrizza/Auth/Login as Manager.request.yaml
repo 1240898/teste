@@ -1,0 +1,35 @@
+$kind: http-request
+url: http://localhost:8080/api/v1/auth/login
+method: POST
+body:
+  type: json
+  content: |-
+    {
+        "email": "manager@laprizza.com",
+        "password": "TesteSeguro123!"
+    }
+auth:
+  type: noauth
+scripts:
+  - type: afterResponse
+    code: |
+      
+      const response = pm.response.json();
+
+      pm.test("Login successful", function () {
+          pm.response.to.have.status(200);
+      });
+
+      if (pm.response.code === 200) {
+          pm.test("Access token returned", function () {
+              pm.expect(response.accessToken).to.be.a("string").and.not.empty;
+          });
+          // Save the token in the scopes used by inherited auth in both the
+          // collection and Auth folder definitions.
+          pm.collectionVariables.set("accessToken", response.accessToken);
+          pm.environment.set("accessToken", response.accessToken);
+          pm.collectionVariables.set("json_web_token_0tyu", response.accessToken);
+          pm.environment.set("csrfToken", response.csrfToken);
+      }
+    language: text/javascript
+order: 1000

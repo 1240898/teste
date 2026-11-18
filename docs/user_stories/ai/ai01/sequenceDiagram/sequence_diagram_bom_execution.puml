@@ -1,0 +1,82 @@
+@startuml sequence_diagram_bom_execution
+title AI01 - Calculate the BOM for a WEB07 forecast
+autonumber
+hide footbox
+skinparam shadowing false
+
+actor "LaPrizza Manager" as Manager
+boundary "Planning page\n(WEB07)" as Page
+participant "API Gateway" as Gateway
+participant "Procurement API\n(AI05 / result handler)" as API
+participant "Planning input adapter\n(AI06)" as AI06
+participant "Procurement\nrecords service" as Records
+participant "Backoffice API\n(AA04, inputs, storage)" as Backoffice
+participant "BOM module\n(AI01)" as BOM
+
+Manager -> Page : Execute, replay or read a saved result
+opt New execution or replay
+    Page -> Page : Generate execution ID and keep the selection
+end
+Page -> Gateway : Send execution ID, request and access bearer
+Gateway -> API : Route planning request
+API -> Backoffice : Check current Manager access (AA04)
+Backoffice --> API : Actor ID, 401, 403 or failure
+alt Current Manager can access the selected record
+    alt Execution or replay
+        API -> Records : Reserve execution or claim an eligible retry
+        Records -> Backoffice : Fix selection and claim attempt atomically
+        Backoffice --> Records : Attempt number, stored state or diagnostic
+        Records --> API : Claim outcome
+        break No attempt claimed
+            API --> Gateway : Stored state or diagnostic
+            Gateway --> Page : Stored state or diagnostic
+            Page --> Manager : Display outcome
+        end
+        API -> AI06 : Load inputs for the execution
+        AI06 -> Records : Find sealed inputs by execution or replay reference
+        Records -> Backoffice : Read the saved input snapshot
+        Backoffice --> Records : Snapshot, absent snapshot or error
+        Records --> AI06 : Lookup outcome
+        opt Replay with a snapshot from a completed run
+            AI06 -> Records : Bind the original snapshot for this attempt
+            Records -> Backoffice : Store the replay binding (private storage)
+            Backoffice --> Records : Binding or storage error
+            Records --> AI06 : Binding or diagnostic
+        end
+        opt Lookup confirms no snapshot for a new execution
+            AI06 -> Backoffice : Read the selected inputs (read-only identity)
+            Backoffice -> Backoffice : Read one consistent operational snapshot
+            Backoffice --> AI06 : Selected data or diagnostic
+            opt Input set is valid
+                AI06 -> Records : Seal the complete input set for this attempt
+                Records -> Backoffice : Store and bind snapshot in one transaction
+                Backoffice --> Records : Stored snapshot or storage error
+                Records --> AI06 : Snapshot or diagnostic
+            end
+        end
+        AI06 --> API : Stored inputs or diagnostic
+        opt Stored inputs available
+            API -> BOM : bom_requirements(Input, Outcome)
+            BOM --> API : Material requirements or diagnostic
+        end
+        API -> Records : Complete attempt with outcome and snapshot reference
+        Records -> Backoffice : Save only for the current unexpired attempt
+        Backoffice --> Records : Stored state or write unconfirmed
+        opt Outcome write unconfirmed
+            Records -> Backoffice : Read current state by execution ID
+            Backoffice --> Records : Stored state or read error
+        end
+        Records --> API : Stored state or storage diagnostic
+    else Result read or recovery after a lost response
+        API -> Records : Read status by authorised execution ID
+        Records -> Backoffice : Read stored state (private storage)
+        Backoffice --> Records : Status, result or storage error
+        Records --> API : Stored state or diagnostic
+    end
+    API --> Gateway : Result or diagnostic
+else Access denied or authority unavailable
+    API --> Gateway : Access error or service error
+end
+Gateway --> Page : Response
+Page --> Manager : Display status, result or diagnostic
+@enduml

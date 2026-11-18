@@ -1,0 +1,58 @@
+@startuml domain-model-excerpt
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam classAttributeIconSize 0
+hide methods
+
+title Domain Model Excerpt - AA04 Secure Session Handling
+
+package "User Aggregate" <<Rectangle>> {
+    class User <<entity>> <<aggregateRoot>> {
+        + active : boolean
+    }
+
+    class UserId <<vo>> {
+        + value : string
+    }
+
+    class Email <<vo>> {
+        + emailAddress : String
+    }
+
+    class Password <<vo>> {
+        + passwordHash : String
+    }
+
+    class UserName <<vo>> {
+        + name : String
+    }
+
+    class MarketingConsent <<vo>> {
+        + consentGiven : boolean
+        + timestamp : DateTime
+    }
+
+    enum UserRole <<enum>> {
+        ADMINISTRATOR
+        MANAGER
+        RESTAURANT_STAFF
+        CUSTOMER
+    }
+
+    User "1" *-- "1" MarketingConsent : manages >
+    User "1" *-- "1" UserId : identified by >
+    User "1" *-- "1" Email : has >
+    User "1" *-- "1" Password : has >
+    User "1" *-- "1" UserName : has >
+    User "1" --> "1..*" UserRole : assigned >
+
+    note bottom of User
+        AA04 requires protected operations to verify a valid
+        session belonging to an active, authorized user.
+        All User value objects are retained to show the aggregate.
+        Email, Password, UserName and MarketingConsent provide
+        aggregate context, not additional AA04 requirements.
+        Session lifecycle is required behaviour.
+    end note
+}
+@enduml

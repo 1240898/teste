@@ -1,0 +1,77 @@
+@startuml domain_model_excerpt
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam classAttributeIconSize 0
+skinparam linetype ortho
+hide methods
+
+title Domain Model Excerpt - BCK07 Pizza Component Type Management
+
+package "Product Aggregate" <<Rectangle>> {
+
+    class Product <<entity>> <<aggregateRoot>> {
+        + isActive : boolean
+        + isSellable : boolean
+        + isStockControlled : boolean
+        + isPizzaComponent : boolean
+    }
+
+    class ProductId <<vo>> {
+        + value : string
+    }
+
+    class ProductName <<vo>> {
+        + name : String
+    }
+
+    class ProductDescription <<vo>> {
+        + text : String
+    }
+
+    class Money <<vo>> {
+        + amount : BigDecimal
+        + currency : String
+    }
+
+    Product "1" *-- "1" ProductId : identified by >
+    Product "1" *-- "1" ProductName : named >
+    Product "1" *-- "1" ProductDescription : described by >
+    Product "1" *-- "0..1" Money : basePrice >
+
+    note bottom of Product
+        Exactly one component type when
+        isPizzaComponent is true;
+        otherwise no component-type classification.
+    end note
+}
+
+package "Pizza Component Type Aggregate" <<Rectangle>> {
+    class PizzaComponentType <<entity>> <<aggregateRoot>> {
+        + assemblyOrder : int
+        + minQuantity : int
+        + maxQuantity : Integer | null
+    }
+
+    class ComponentTypeId <<vo>> {
+        + value : string
+    }
+
+    class ComponentTypeName <<vo>> {
+        + name : String
+    }
+
+    PizzaComponentType "1" *-- "1" ComponentTypeId
+    PizzaComponentType "1" *-- "1" ComponentTypeName
+
+    note bottom of PizzaComponentType
+        Business rules:
+        - Assembly order is unique across types.
+        - minQuantity >= 0.
+        - Maximum is unbounded or >= minimum.
+        - null represents an unbounded maximum.
+    end note
+}
+
+Product "0..*" --> "0..1" PizzaComponentType : classified by >
+
+@enduml

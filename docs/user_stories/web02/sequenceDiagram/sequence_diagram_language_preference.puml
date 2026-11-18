@@ -1,0 +1,62 @@
+@startuml sequence_diagram_language_preference
+title WEB02 - SD 4: Restore or change language with an unfinished form
+hide footbox
+skinparam shadowing false
+autonumber
+
+actor "System User" as User
+participant App
+participant LanguageSelector as Selector
+participant LocaleProvider as Locale
+participant LocaleStorage as Storage
+participant MessageCatalog as Catalog
+participant FeatureForm as Form
+participant FeedbackView as Feedback
+participant RouteOrientation as Orientation
+
+App -> Locale : initialize() before first routed render
+Locale -> Storage : read()
+alt Valid stored pt-PT or en-GB
+    Storage --> Locale : Saved locale
+else Missing, invalid or unavailable storage
+    Storage --> Locale : No valid preference
+    Locale -> Locale : Use pt-PT default
+end
+Locale -> Locale : Set document language
+Locale --> App : Initial locale ready
+
+User -> Form : Enter text and choose form values
+Form -> Form : updateDraft(field, value)
+User -> Selector : Choose the other language
+Selector -> Locale : setLocale(locale)
+Locale -> Locale : Validate, publish locale and update document language
+Locale -> Storage : write(locale)
+alt Write succeeds
+    Storage --> Locale : Preference saved
+    Locale --> Selector : Keep selected value and focus
+else Storage write fails
+    Storage --> Locale : Storage unavailable
+    Locale --> Selector : Apply in memory, report that saving failed
+end
+
+par Labels and existing feedback update
+    Form -> Locale : t(fieldLabelKey, values)
+    Locale -> Catalog : translate(locale, fieldLabelKey, values)
+    Catalog --> Locale : Localized text
+    Locale --> Form : Label text
+    Form -> Feedback : render(existing messageKey, values)
+    Feedback -> Locale : t(messageKey, values)
+    Locale --> Feedback : Localized feedback
+    Form --> User : Same mounted form and draft, with localized labels
+else Document and heading update
+    Locale --> Orientation : Locale changed, view key unchanged
+    Orientation -> Locale : t(current titleKey)
+    Locale --> Orientation : Localized title
+    Orientation --> User : Update title and heading, preserve current focus
+end
+note over App,Form
+    In-app navigation keeps the provider mounted.
+    On reload or later visit, the first flow runs again.
+    Locale changes do not navigate, remount the form or submit a write.
+end note
+@enduml

@@ -1,0 +1,282 @@
+@startuml class_diagram
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam linetype ortho
+
+title Class Diagram (Design) - BCK01 User & Authentication Management
+
+' -----------------------------------------------------------------------------
+' PRESENTATION LAYER (API)
+' -----------------------------------------------------------------------------
+package "Presentation Layer (API)" <<Rectangle>> {
+    class UserRoutes {
+        + setupRoutes(): Router
+    }
+
+    class AuthRoutes {
+        + setupRoutes(): Router
+    }
+
+    class AuthController {
+        - userService: UserService
+        + login(req: Request, res: Response): Promise<void>
+    }
+
+    class UserController {
+        - userService: UserService
+        + register(req: Request, res: Response): Promise<void>
+        + getAll(req: Request, res: Response): Promise<void>
+        + getById(req: Request, res: Response): Promise<void>
+        + updateRoles(req: Request, res: Response): Promise<void>
+        + deactivate(req: Request, res: Response): Promise<void>
+    }
+
+    class AuthMiddleware {
+        + verifyToken(req: Request, res: Response, next: NextFunction): void
+    }
+
+    class RoleMiddleware {
+        + requireRole(...roles: UserRole[]): Middleware
+    }
+
+    class ValidationMiddleware {
+        + validate(schema: JoiSchema): Middleware
+    }
+}
+
+' -----------------------------------------------------------------------------
+' APPLICATION LAYER
+' -----------------------------------------------------------------------------
+package "Application Layer" <<Rectangle>> {
+    class UserService {
+        - userRepository: IUserRepository
+        - passwordHasher: IPasswordHasher
+        - tokenService: ITokenService
+        + register(dto: RegisterUserDTO): Promise<UserResponseDTO>
+        + login(dto: LoginDTO): Promise<AuthTokenDTO>
+        + listUsers(): Promise<UserResponseDTO[]>
+        + getUserById(id: string): Promise<UserResponseDTO>
+        + updateRoles(id: string, dto: UpdateRolesDTO): Promise<UserResponseDTO>
+        + deactivateUser(id: string): Promise<void>
+    }
+
+    package "DTOs" <<Rectangle>> {
+        class RegisterUserDTO <<dto>> {
+            + name: string
+            + email: string
+            + password: string
+            + marketingConsent: boolean
+        }
+
+        class LoginDTO <<dto>> {
+            + email: string
+            + password: string
+        }
+
+        class UserResponseDTO <<dto>> {
+            + id: string
+            + name: string
+            + email: string
+            + roles: string[]
+            + active: boolean
+            + marketingConsent: boolean
+            + createdAt: string
+        }
+
+        class AuthTokenDTO <<dto>> {
+            + accessToken: string
+            + tokenType: string
+            + expiresIn: string
+            + user: UserResponseDTO
+        }
+
+        class UpdateRolesDTO <<dto>> {
+            + roles: string[]
+        }
+    }
+
+    interface IPasswordHasher <<interface>> {
+        + hash(plainText: string): Promise<string>
+        + compare(plainText: string, hashed: string): Promise<boolean>
+    }
+
+    interface ITokenService <<interface>> {
+        + generateToken(payload: object): string
+        + verifyToken(token: string): object
+    }
+}
+
+' -----------------------------------------------------------------------------
+' DOMAIN LAYER
+' -----------------------------------------------------------------------------
+package "Domain Layer" <<Rectangle>> {
+    class User <<entity>> <<aggregateRoot>> {
+        - id: UserId
+        - name: UserName
+        - email: Email
+        - password: Password
+        - roles: Set<UserRole>
+        - marketingConsent: MarketingConsent
+        - active: boolean
+        + create(id: UserId, name: UserName, email: Email, password: Password, roles: UserRole[], consent: MarketingConsent): User
+        + hasRole(role: UserRole): boolean
+        + addRole(role: UserRole): void
+        + removeRole(role: UserRole): void
+        + setRoles(roles: UserRole[]): void
+        + updateMarketingConsent(consent: MarketingConsent): void
+        + deactivate(): void
+        + activate(): void
+        + getId(): UserId
+        + getName(): UserName
+        + getEmail(): Email
+        + getPassword(): Password
+        + getRoles(): UserRole[]
+        + getMarketingConsent(): MarketingConsent
+        + isActive(): boolean
+    }
+
+    class UserId <<vo>> {
+        - value: string
+        + create(id: string): UserId
+        + getValue(): string
+        + equals(other: UserId): boolean
+    }
+    note right of UserId
+        User business ID format: USR-00001.
+    end note
+
+    class UserName <<vo>> {
+        - name: string
+        + create(name: string): UserName
+        + getValue(): string
+    }
+
+    class Email <<vo>> {
+        - emailAddress: string
+        + create(email: string): Email
+        + getValue(): string
+        + equals(other: Email): boolean
+    }
+
+    class Password <<vo>> {
+        - passwordHash: string
+        + createFromHash(hash: string): Password
+        + getHash(): string
+    }
+
+    class MarketingConsent <<vo>> {
+        - consentGiven: boolean
+        - timestamp: DateTime
+        + create(consentGiven: boolean, timestamp?: DateTime): MarketingConsent
+        + isGiven(): boolean
+        + getTimestamp(): DateTime
+    }
+
+    enum UserRole <<enum>> {
+        MANAGER
+        EMPLOYEE
+        CUSTOMER
+    }
+
+    interface IUserRepository <<interface>> {
+        + nextId(): Promise<string>
+        + findById(id: UserId): Promise<User | null>
+        + findByEmail(email: Email): Promise<User | null>
+        + existsByEmail(email: Email): Promise<boolean>
+        + save(user: User): Promise<User>
+        + findAll(): Promise<User[]>
+    }
+}
+
+' -----------------------------------------------------------------------------
+' INFRASTRUCTURE LAYER
+' -----------------------------------------------------------------------------
+package "Infrastructure Layer" <<Rectangle>> {
+    class UserRepository {
+        - userModel: UserModel
+        + nextId(): Promise<string>
+        + findById(id: UserId): Promise<User | null>
+        + findByEmail(email: Email): Promise<User | null>
+        + existsByEmail(email: Email): Promise<boolean>
+        + save(user: User): Promise<User>
+        + findAll(): Promise<User[]>
+    }
+
+    class UserPersistenceModel <<PostgreSQL / users>> {
+        + id: VARCHAR(32)
+        + name: string
+        + email: string
+        + passwordHash: string
+        + roles: string[]
+        + active: boolean
+        + marketingConsentGiven: boolean
+        + marketingConsentTimestamp: DateTime
+        + createdAt: DateTime
+        + updatedAt: DateTime
+    }
+
+    class UserMapper {
+        + toDomain(raw: any): User
+        + toPersistence(user: User): any
+        + toDTO(user: User): UserResponseDTO
+    }
+
+    class BcryptPasswordHasher {
+        - saltRounds: number = 10
+        + hash(plainText: string): Promise<string>
+        + compare(plainText: string, hashed: string): Promise<boolean>
+    }
+
+    class JwtTokenService {
+        - secret: string
+        - expiresIn: string = "1d"
+        + generateToken(payload: object): string
+        + verifyToken(token: string): object
+    }
+}
+
+' -----------------------------------------------------------------------------
+' RELATIONSHIPS & DEPENDENCIES
+' -----------------------------------------------------------------------------
+
+' Presentation -> Application
+UserRoutes --> UserController : dispatches to >
+UserRoutes ..> AuthMiddleware : applies >
+UserRoutes ..> RoleMiddleware : applies >
+UserRoutes ..> ValidationMiddleware : applies >
+UserController --> UserService : invokes >
+UserController ..> RegisterUserDTO : uses >
+AuthRoutes --> AuthController : dispatches to >
+AuthRoutes ..> ValidationMiddleware : applies >
+AuthController --> UserService : invokes >
+AuthController ..> LoginDTO : uses >
+UserController ..> UpdateRolesDTO : uses >
+
+' Application -> Domain
+UserService --> IUserRepository : persists via >
+UserService --> IPasswordHasher : uses >
+UserService --> ITokenService : uses >
+UserService ..> User : manipulates >
+UserService ..> RegisterUserDTO : receives >
+UserService ..> LoginDTO : receives >
+UserService ..> UserResponseDTO : produces >
+UserService ..> AuthTokenDTO : produces >
+UserService ..> UserMapper : uses >
+
+' Domain structure
+User "1" *-- "1" UserId : identified by >
+User "1" *-- "1" UserName : has >
+User "1" *-- "1" Email : has >
+User "1" *-- "1" Password : has >
+User "1" *-- "1" MarketingConsent : manages >
+User "1" --> "1..*" UserRole : assigned >
+
+' Infrastructure Implementations
+UserRepository ..|> IUserRepository : implements
+UserRepository --> UserPersistenceModel : queries/persists
+UserRepository ..> UserMapper : uses
+BcryptPasswordHasher ..|> IPasswordHasher : implements
+JwtTokenService ..|> ITokenService : implements
+
+@enduml

@@ -1,0 +1,56 @@
+@startuml sequence_diagram_consult
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+title Sequence Diagram - BCK10 Consult a Predefined Pizza
+
+actor Manager
+participant Routes as "PredefinedPizzaRoutes / Express"
+participant Auth as "AuthMiddleware (BCK01)"
+participant Roles as "RoleMiddleware (BCK01)"
+participant ParamValidator as "validateParams (BCK10 route helper)"
+participant Controller as "PredefinedPizzaController"
+participant Service as "PredefinedPizzaManagementService"
+participant ProductRepository as "ProductRepository (BCK05)"
+participant Mapper as "PredefinedPizzaResponseMapper"
+database DB as "PostgreSQL"
+participant Errors as "Global Error Handler"
+
+Manager -> Routes : GET /api/v1/predefined-pizzas/{productId}
+Routes -> Auth : verifyToken(req)
+Auth --> Routes : next() with authenticated req.user
+Routes -> Roles : requireRole(MANAGER)
+Roles --> Routes : next() when authorized
+Routes -> ParamValidator : validate route parameter
+alt malformed ProductId
+  ParamValidator --> Routes : throw AppError (400)
+  Routes -> Errors : Express forwards thrown error
+  Errors --> Manager : 400 Bad Request
+else valid ProductId
+  ParamValidator --> Routes : next() with req.validatedParams.productId
+  Routes -> Controller : getById(req, res)
+  Controller -> Service : getById(productId)
+  Service -> ProductRepository : findById(ProductId)
+  ProductRepository -> DB : SELECT Product and composition items
+  DB --> ProductRepository : Product / no row
+  ProductRepository --> Service : Product / null
+  alt Product does not exist or has no default composition
+    Service --> Controller : rejected Promise (AppError 404)
+    Controller --> Routes : rejected route-handler Promise
+    Routes -> Errors : Express forwards rejected request
+    Errors --> Manager : 404 Not Found
+  else Product is a configured component-based Sellable Product
+    Service -> Mapper : toDTO(Product)
+    Mapper --> Service : { id, componentIds }
+    Service --> Controller : response DTO
+    Controller --> Manager : 200 OK + DTO
+  end
+end
+
+note over Manager,DB
+  The URL parameter is the ProductId shared with BCK05. Consultation returns
+  the maintained default composition. Authentication, authorization,
+  validation and asynchronous route errors are mapped by the global error
+  handler. BCK11 calculates catalogue price and availability separately.
+end note
+@enduml

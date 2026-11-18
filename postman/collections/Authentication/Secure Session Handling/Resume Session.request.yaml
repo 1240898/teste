@@ -1,0 +1,23 @@
+$kind: http-request
+url: http://localhost:8080/api/v1/auth/resume
+method: POST
+headers:
+  Origin: http://localhost:5173
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("Session resumes successfully", () => pm.response.to.have.status(200));
+
+      const body = pm.response.json();
+      pm.test("Resume returns session details without extending idle expiry", () => {
+        pm.expect(body.accessToken).to.be.a("string");
+        pm.expect(body.csrfToken).to.be.a("string");
+        pm.expect(body.idleExpiresAt).to.eql(
+          pm.environment.get("initialIdleExpiresAt")
+        );
+      });
+
+      pm.environment.set("accessToken", body.accessToken);
+      pm.environment.set("csrfToken", body.csrfToken);
+    language: text/javascript
+order: 3000

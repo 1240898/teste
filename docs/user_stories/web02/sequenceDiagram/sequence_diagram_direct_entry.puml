@@ -1,0 +1,78 @@
+@startuml sequence_diagram_direct_entry
+title WEB02 - SD 1: Open or reload a section directly
+hide footbox
+skinparam shadowing false
+autonumber
+
+actor "System User" as User
+participant "Static host" as Host
+participant App
+participant LocaleProvider as Locale
+participant BrowserRouter as Router
+participant AppRoutes as Routes
+participant navigationPolicy as Policy
+participant ProtectedRoute as Guard
+participant AuthProvider as Auth
+participant AppLayout as Layout
+participant RouteOrientation as Orientation
+participant ModuleErrorBoundary as Module
+
+User -> Host : Open or reload a SPA URL
+Host --> User : Serve index.html and assets, retain requested URL
+User -> App : Run SPA entry point
+alt WEB01 start-up configuration fails
+    App --> User : Show configuration error
+else SPA can start
+    App -> Locale : initialize()
+    ref over Locale : SD 4 - Restore preference or use the default
+    App -> Router : Mount stable router
+    Router -> Routes : resolve(location, auth)
+    Routes -> Policy : findSectionByPath(path)
+    Policy --> Routes : Registered route or no enabled match
+    Routes -> Policy : getVisibleSections(auth)
+    Policy --> Routes : Eligible items only
+    Routes -> Layout : render(items, safe initial view, content slot)
+    Layout --> User : Visible branding, navigation and main region
+
+    alt Root path or other account utility after its guard
+        Routes -> Routes : Select StartPage or AccountRoute
+    else No enabled match
+        Routes -> Routes : Select NotFoundPage, startPath = /
+    else Known public section or allowed guest utility
+        Routes -> Routes : Select public feature or sign-in
+    else WEB03 redirects a signed-in user away from sign-in
+        Routes -> Router : navigate(/, replace)
+        Router -> Routes : Resolve Start for the current session
+        Routes -> Routes : Select StartPage
+    else Known protected section
+        Routes -> Guard : evaluate(section, auth)
+        Guard -> Auth : Revalidate per WEB03
+        Routes -> Layout : Publish neutral pending view while waiting
+        Auth --> Guard : Current session and permissions
+        Guard --> Routes : WEB03 outcome
+        note over Routes,Guard : Apply only the outcome for the current location and session
+        alt Login required
+            Routes -> Policy : isSafeReturnPath(candidate pathname)
+            Policy --> Routes : Safe internal path or reject
+            Routes -> Router : navigate(/login with safe returnTo if valid, replace)
+            Router -> Routes : Resolve sign-in route
+            Routes -> Routes : Select AccountRoute
+        else Access denied
+            Routes -> Routes : Select AccessDeniedPage, startPath = /
+        else Access allowed
+            Routes -> Layout : Show module loading status inside the shell
+            Routes -> Module : Mount authorized module within content slot
+            alt Module loads
+                Module --> Routes : Feature content ready
+            else Module load or render fails
+                Module --> Routes : In-shell failure view with safe recovery
+            end
+        end
+    end
+
+    Routes -> Routes : publishView(resolved outcome)
+    Routes -> Layout : render(updated eligible items, view, content)
+    Layout -> Orientation : present(view, locale)
+    Orientation --> User : Localized heading, title and current-section cue
+end
+@enduml

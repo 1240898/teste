@@ -1,0 +1,15 @@
+$kind: http-request
+url: http://localhost:8080/api/v1/users/invitations
+method: POST
+body:
+  type: json
+  content: |-
+    {
+      "name": "New Restaurant Staff",
+      "email": "new.staff@laprizza.com",
+      "role": "EMPLOYEE",
+      "activationMethod": "LOCAL"
+    }
+auth:
+  type: inherit
+order: 2500

@@ -1,0 +1,123 @@
+@startuml sequence_diagram_google_login_failure
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - AA02 Cancelled or Failed Google Sign-In
+
+actor User as "Client / User"
+participant SPA as "SPA (Front-End)\nGoogleCallbackPage"
+participant Google as "Google Identity Services\n(OIDC Provider)"
+participant Routes as "AuthRoutes"
+participant Validator as "ValidationMiddleware\n(Joi)"
+participant Controller as "AuthController"
+participant ExtService as "ExternalAuthenticationService"
+participant Store as "IAuthorizationStateStore\n(InMemory)"
+participant IdP as "IExternalIdentityProvider\n(GoogleOidcProvider)"
+
+note over User, Google
+    Precondition: phase 1 of SD 1 was completed:
+    a pending { state, nonce, codeVerifier } exists in the store,
+    the SPA saved "oidc_state" and the browser is at Google.
+    This diagram shows failure branches only; each one ends
+    the interaction without issuing a LaPrizza token.
+end note
+
+activate Google
+Google -> User : Google sign-in and consent screen
+
+alt 1) User cancels or denies consent at Google
+    User -> Google : cancel / deny
+    Google --> SPA : 302 redirect_uri?error=access_denied&state=...
+    deactivate Google
+    activate SPA
+    SPA -> SPA : remove stored "oidc_state";\nno call to the back end
+    SPA --> User : "Google sign-in was cancelled.\nYou have not been signed in."\n(stays on login page as Guest)
+    deactivate SPA
+    note right of Store
+        The unused pending entry
+        expires after its TTL (10 min).
+    end note
+
+else User authenticates at Google
+    User -> Google : Google credentials + consent
+    Google --> SPA : 302 redirect_uri?code=...&state=...
+    deactivate Google
+    activate SPA
+    SPA -> SPA : compare query state with\nsessionStorage "oidc_state"
+
+    alt 2) Returned state does not match the state stored in this browser
+        SPA -> SPA : remove stored "oidc_state";\nno call to the back end\n(possible login CSRF / stale tab)
+        SPA --> User : "Sign-in could not be completed.\nPlease try again."
+
+    else State matches: send code to the back end
+        SPA -> SPA : remove stored "oidc_state"
+        SPA -> Routes : POST /api/v1/auth/google/callback\n{ code, state }
+        activate Routes
+        Routes -> Validator : ValidationMiddleware.validate(schemas.googleCallback)\n(req, res, next)
+        activate Validator
+
+        alt 3) Invalid payload (missing / oversized code or state, unknown fields)
+            Validator --> SPA : 400 Bad Request\n{ error: { message: "Invalid request body", status: 400 } }
+            deactivate Validator
+            SPA --> User : "Sign-in could not be completed.\nPlease try again."
+
+        else Payload valid
+            activate Validator
+            Validator --> Routes : next()
+            deactivate Validator
+            Routes -> Controller : completeGoogleLogin(req, res)
+            activate Controller
+            Controller -> ExtService : completeAuthorization(new ExternalCallbackDTO(req.body))
+            activate ExtService
+            ExtService -> Store : consume(state)
+
+            alt 4) Unknown, expired or already used state (replay)
+                Store --> ExtService : null (no pending authorization)
+
+            else State valid
+                Store --> ExtService : pending { nonce, codeVerifier }\n(entry removed: single use)
+                ExtService -> IdP : exchangeAndVerify(code, codeVerifier, nonce)
+                activate IdP
+                IdP -> Google : POST token endpoint\n(code, client_id, client_secret,\nredirect_uri, code_verifier)
+                activate Google
+
+                alt 5) Code rejected by Google or Google unreachable
+                    Google --> IdP : invalid_grant error / no response
+                    deactivate Google
+                    IdP --> ExtService : throw code exchange failed
+
+                else Tokens returned
+                    activate Google
+                    Google --> IdP : { id_token, access_token }
+                    deactivate Google
+                    IdP -> IdP : verify id_token: signature (Google JWKS),\niss, aud, exp, nonce; check email_verified
+
+                    alt 6) ID token invalid (signature, iss, aud, exp or nonce)
+                        IdP --> ExtService : throw invalid ID token
+                    else 7) email_verified is false or e-mail missing
+                        IdP --> ExtService : throw unverified e-mail
+                    end
+                end
+                deactivate IdP
+            end
+
+            ExtService -> ExtService : log failure reason without code,\ntokens or secrets (AA05 audit-safe)
+            ExtService --> Controller : throw AppError("External authentication failed", 401)
+            deactivate ExtService
+            Controller --> SPA : 401 Unauthorized\n{ error: { message: "External authentication failed", status: 401 } }
+            deactivate Controller
+            SPA --> User : "Google sign-in failed. Please try again\nor use local sign-in."\n(no token stored, protected pages unavailable)
+        end
+        deactivate Routes
+    end
+    deactivate SPA
+end
+
+note over User, IdP
+    In every branch no AuthTokenDTO is issued, so no protected functionality becomes available (AC 6).
+    The same uniform 401 message is used for all back-end authentication failures (4 to 7);
+    the specific reason is kept only in server logs.
+end note
+
+@enduml

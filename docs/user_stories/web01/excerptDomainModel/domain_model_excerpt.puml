@@ -1,0 +1,132 @@
+@startuml LaPrizzaDomainModel
+skinparam packageStyle rectangle
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+hide methods
+
+title Domain Model Excerpt - WEB01 SPA Setup and Integration (Business Identifiers)
+
+' -----------------------------------------------------------------------------
+' WEB01 introduces NO new domain concept.
+' The excerpt shows the aggregates whose information the SPA reads and maintains
+' ONLY through the Back-End API, and the identifiers that must stay consistent
+' across the SPA, the 3D viewer (VIS) and the AI module (AC 3).
+' -----------------------------------------------------------------------------
+
+package "User Aggregate" <<Rectangle>> {
+
+    class User <<entity>> <<aggregateRoot>> {
+        + active : boolean
+    }
+
+    class UserId <<vo>> {
+        + value : string
+    }
+    note right of UserId
+        Example: "USR-00123".
+    end note
+
+    enum UserRole <<enum>> {
+        ADMINISTRATOR
+        MANAGER
+        EMPLOYEE
+        CUSTOMER
+    }
+    note right of UserRole
+        One SPA for every role (Table 1).
+        Guest is NOT a role: it is the absence
+        of a session. Roles are consumed by
+        WEB03 (navigation), never decided by WEB01.
+    end note
+
+    User "1" *-- "1" UserId : identified by >
+    User "1" --> "0..*" UserRole : assigned >
+}
+
+package "Customer Aggregate" <<Rectangle>> {
+
+    class Customer <<entity>> <<aggregateRoot>> {
+    }
+
+    class CustomerId <<vo>> {
+        + value : string
+    }
+    note right of CustomerId
+        Example: "CUST-00123".
+    end note
+
+    Customer "1" *-- "1" CustomerId : identified by >
+}
+
+package "Product Category Aggregate" <<Rectangle>> {
+
+    class ProductCategory <<entity>> <<aggregateRoot>> {
+    }
+
+    class CategoryId <<vo>> {
+        + value : string
+    }
+    note right of CategoryId
+        Example: "CAT-00123".
+    end note
+
+    ProductCategory "1" *-- "1" CategoryId : identified by >
+}
+
+package "Product Aggregate" <<Rectangle>> {
+
+    class Product <<entity>> <<aggregateRoot>> {
+        + isActive : boolean
+    }
+
+    class ProductId <<vo>> {
+        + value : string
+    }
+    note right of ProductId
+        Example: "PROD-00123".
+        Same value when referenced by the SPA,
+        REST, forecasts and the Prolog knowledge base.
+    end note
+
+    Product "1" *-- "1" ProductId : identified by >
+}
+
+package "Stock Aggregate" <<Rectangle>> {
+
+    class StockInformation <<entity>> <<aggregateRoot>> {
+    }
+
+    class StockId <<vo>> {
+        + value : string
+    }
+    note right of StockId
+        Example: "STOCK-00123".
+    end note
+
+    StockInformation "1" *-- "1" StockId : identified by >
+}
+
+Customer "0..1" --> "0..1" User : associated with >
+Product "0..*" --> "1" ProductCategory : categorized by >
+StockInformation "0..*" --> "1" Product : tracks stock periods for >
+
+note as WEB01Note
+    <b>What WEB01 requires from these aggregates</b>
+    - Identifiers are generated ONLY by the back end and are
+      opaque strings for the SPA: never generated, parsed,
+      incremented or rewritten in the browser (BR 4).
+    - Reuse the identifier for the same resource across
+      components (AC 3). ProductId identifies a product;
+      the viewer uses the active kitchen configuration's
+      own identifier and asset references (WEB06 / VIS01).
+    - Business data is read and maintained ONLY through the
+      Back-End API (apiClient); it is not cached in browser
+      storage (BR 5) and is re-read after a successful change (BR 14).
+    <b>Note</b>
+    - apiClient, ApiError, appConfig and the module slot are
+      technical concepts of the SPA (frontend/src), not domain
+      concepts, and are therefore not part of the domain model.
+end note
+WEB01Note .. ProductId
+
+@enduml

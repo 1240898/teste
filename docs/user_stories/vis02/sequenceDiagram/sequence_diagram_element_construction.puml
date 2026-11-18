@@ -1,0 +1,89 @@
+@startuml sequence_diagram_element_construction
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - VIS02 Construction of One Element (procedural or imported) - shared with VIS03
+
+participant Caller as "KitchenLayoutModule (EQUIPMENT)\n/ AssemblyLineModule (VIS03)"
+participant Factory as "SceneElementFactory"
+participant Shapes as "ProceduralShapeFactory"
+participant Mats as "KitchenMaterialFactory\n(VIS04)"
+participant Assets as "LoadedAssets\n(VIS01)"
+participant Skel as "SkeletonUtils\n(three/addons)"
+participant Place as "placementTransform"
+
+note over Caller, Place
+    One element -> exactly ONE root Group (BR 2). The representation comes from element.model,
+    never from element.type (BR 4). Imported models are taken from LoadedAssets by asset id: the URL was
+    resolved by the back end and the file preloaded by VIS01, so this path never reads a URL (AC 3).
+    Example: { id: "fridge-1", type: "REFRIGERATOR", model: { source: "ASSET", assetId: "AST-MDL-FRIDGE-01" },
+               placement: { position: (-5.2, 0, 2.8), rotation: (0, 90, 0), scale: (1, 1, 1) } }
+end note
+
+Caller -> Factory : create(element)
+activate Factory
+Factory -> Factory : root = new Group()\nroot.name = element.id\nroot.userData = { elementId, category, type, name }
+
+alt A) model.source = "PROCEDURAL" (e.g. counter-1: BOX 2.4 x 0.9 x 0.7)
+    Factory -> Shapes : geometry(model.shape, model.size)
+    activate Shapes
+    alt A1) shape not BOX / CYLINDER / SPHERE / DOME, or a size component not finite and > 0
+        Shapes --> Factory : throw ElementBuildError{ elementId,\n"unknown-shape" | "invalid-number" }
+        Factory --> Caller : throws
+        note right of Caller : interaction ends: the module fails,\nthe viewer shows "failed" (BR 11)
+    else A2) valid
+        Shapes -> Shapes : cache hit "shape|x|y|z"? reuse\nelse unit shape -> scale(size) inside the geometry\n-> translate so that min.y = 0\n(bounding box == size, origin at the bottom centre)
+        Shapes --> Factory : geometry (shared, owned by the shape factory)
+        deactivate Shapes
+        Factory -> Mats : create(element.material)
+        activate Mats
+        Mats --> Factory : MeshStandardMaterial with the texture set\n(owned by the material factory)
+        deactivate Mats
+        Factory -> Factory : mesh = new Mesh(geometry, material)\nroot.add(mesh)
+    end
+else B) model.source = "ASSET" (e.g. fridge-1: AST-MDL-FRIDGE-01)
+    Factory -> Assets : model(model.assetId)
+    activate Assets
+    alt B1) asset not in LoadedAssets / not a MODEL
+        Assets --> Factory : undefined / texture
+        Factory --> Caller : throw ElementBuildError{ elementId,\n"asset-missing" | "asset-kind" }
+        note right of Caller : interaction ends (BR 11); cannot happen when\nthe VIS01 parser and preload succeeded
+    else B2) model available
+        Assets --> Factory : GLTF (preloaded)
+        deactivate Assets
+        Factory -> Skel : clone(gltf.scene)
+        activate Skel
+        Skel --> Factory : clone (new Object3D hierarchy; geometries and\nmaterials SHARED with LoadedAssets - never disposed by VIS02)
+        deactivate Skel
+        note right of Factory : no re-centring, no auto-scaling: the file follows the\nWEB06 convention (metres, Y-up, origin at the bottom\ncentre, front +Z) and its size was measured by\nGltfModelInspector (BR 8)
+        opt element.material present (WEB06 ALN-6 / BR 18)
+            Factory -> Mats : applyOverride(clone, element.material)
+            activate Mats
+            Mats -> Mats : create the override material once and\nassign it to EVERY mesh of the clone
+            Mats --> Factory : done
+            deactivate Mats
+        end
+        Factory -> Factory : root.add(clone)
+    end
+end
+
+== Placement (AC 1) and shadow flags ==
+
+Factory -> Place : applyPlacement(root, element.placement, { static })
+activate Place
+alt C1) a position / rotation / scale component is not finite,\nor a scale component <= 0
+    Place --> Factory : throw ElementBuildError{ elementId, "invalid-number" }
+    Factory --> Caller : throws
+    note right of Caller : interaction ends (BR 11)
+else C2) valid (zero / negative position and rotation are valid)
+    Place -> Place : root.position.set(x, y, z)  (bottom centre, metres)\nroot.rotation.set(degToRad(rx), degToRad(ry), degToRad(rz), "XYZ")\nroot.scale.set(sx, sy, sz)
+    Place -> Place : static (equipment): updateMatrix();\nmatrixAutoUpdate = false\n(VIS03 keeps auto update for parts animated in Sprint 3)
+    Place --> Factory : done
+    deactivate Place
+    Factory -> Factory : traverse root: mesh.castShadow = true;\nmesh.receiveShadow = true (BR 13)
+    Factory --> Caller : root (e.g. "fridge-1" against the WEST wall,\nfront turned from +Z to +X: facing into the room)
+    deactivate Factory
+end
+
+@enduml

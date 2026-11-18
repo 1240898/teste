@@ -1,0 +1,110 @@
+@startuml sequence_diagram_delete_allergen
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - BCK04 Delete Allergen (DELETE /api/v1/allergens/:id)
+
+actor Client as "Manager / Client"
+participant Routes as "AllergenRoutes"
+participant AuthMW as "AuthMiddleware"
+participant RoleMW as "RoleMiddleware"
+participant Controller as "AllergenController"
+participant Service as "AllergenService"
+participant Repo as "IAllergenRepository"
+database DB as "Database\n(Persistence)"
+
+Client -> Routes : DELETE /api/v1/allergens/:id
+activate Routes
+
+' Security Middlewares
+Routes -> AuthMW : verifyToken(req, res, next)
+activate AuthMW
+alt Invalid or Missing Token
+    AuthMW --> Client : 401 Unauthorized\n{ error: { message: "No token provided" | "Invalid or expired token" } }
+else Token Valid
+    AuthMW --> Routes : next()
+    deactivate AuthMW
+
+    Routes -> RoleMW : requireRole("MANAGER")
+    activate RoleMW
+    alt Lacks MANAGER Role
+        RoleMW --> Client : 403 Forbidden\n{ error: { message: "Forbidden: insufficient permissions" } }
+    else Has MANAGER Role
+        RoleMW --> Routes : next()
+        deactivate RoleMW
+
+        ' Controller & Application Logic
+        Routes -> Controller : deleteAllergen(req, res)
+        activate Controller
+
+        Controller -> Service : deleteAllergen(req.params.id)
+        activate Service
+
+        Service -> Service : AllergenId.create(id)
+        alt Malformed id or outside 1..14
+            Service --> Controller : throw AppError(400, "Allergen id must be an integer between 1 and 14")
+            Controller --> Client : 400 Bad Request
+        end
+
+        Service -> Repo : findById(allergenId)
+        activate Repo
+        Repo -> DB : SELECT ... FROM allergens WHERE id = id
+        activate DB
+        DB --> Repo : row / none
+        deactivate DB
+        Repo --> Service : allergen / null
+        deactivate Repo
+
+        alt Allergen Not Found
+            Service --> Controller : throw AppError(404, "Allergen not found")
+            Controller --> Client : 404 Not Found\n{ error: { message: "Allergen not found" } }
+        else Allergen Exists
+            ' Invariant & Integrity Check (AC 6 / BR 3)
+            Service -> Repo : isReferenced(allergenId)
+            activate Repo
+            Repo -> DB : to_regclass(referencing tables)\n(product_allergens, customer_dietary_restriction_allergens)
+            activate DB
+            DB --> Repo : existing tables
+            deactivate DB
+            loop for each existing referencing table
+                Repo -> DB : SELECT EXISTS(... WHERE allergen_id = id)
+                activate DB
+                DB --> Repo : referenced (boolean)
+                deactivate DB
+            end
+            Repo --> Service : isReferenced (boolean)
+            deactivate Repo
+
+            alt Referenced by Existing Business Entities (AC 6)
+                Service --> Controller : throw AppError(409, "Allergen referenced by existing business information cannot be removed")
+                Controller --> Client : 409 Conflict\n{ error: { message: "Allergen referenced by existing business information cannot be removed" } }
+            else Safe to Delete
+                Service -> Repo : delete(allergenId)
+                activate Repo
+                Repo -> DB : DELETE FROM allergens WHERE id = id
+                activate DB
+                alt Reference created concurrently (23001 / 23503 - ON DELETE RESTRICT, BR 5)
+                    DB --> Repo : restrict / foreign_key violation
+                    Repo --> Service : throw AppError(409, "Allergen referenced by existing business information cannot be removed")
+                    Service --> Controller : propagate
+                    Controller --> Client : 409 Conflict
+                else Deleted
+                    DB --> Repo : rowCount = 1
+                    deactivate DB
+                    Repo --> Service : void
+                    deactivate Repo
+
+                    Service --> Controller : void
+                    deactivate Service
+
+                    Controller --> Client : 204 No Content
+                    deactivate Controller
+                end
+            end
+        end
+    end
+end
+deactivate Routes
+
+@enduml

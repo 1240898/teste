@@ -1,0 +1,180 @@
+@startuml LaPrizzaDomainModelExcerpt
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam classAttributeIconSize 0
+hide methods
+
+' -----------------------------------------------------------------------------
+' CUSTOMER AGGREGATE.
+' -----------------------------------------------------------------------------
+package "Customer Aggregate" <<Rectangle>> {
+
+    class Customer <<entity>> <<aggregateRoot>> {
+    }
+
+    class CustomerId <<vo>> {
+        + value : string
+    
+    }
+    note right of CustomerId
+        - CustomerId is a unique identifier for a customer.
+        - Must be a string representing the customer ID.
+        - Example: "CUST-00123".
+    end note
+
+    class CustomerName <<vo>> {
+        + name : String
+    }
+
+    class PhoneNumber <<vo>> {
+        + number : String
+    }
+
+    class Email <<vo>> {
+        + email : String
+    }
+
+    class ContactInfo <<vo>> {
+
+    }
+
+    class Address <<vo>> {
+        + street : String
+        + postalCode : String
+        + city : String
+    }
+
+    class DietaryRestriction <<vo>> {
+        + name : String
+        + description : String
+    }
+
+    Customer "1" *-- "1" CustomerId : identified by >
+    Customer "1" *-- "1" CustomerName : named >
+    Customer "1" *-- "1" ContactInfo : has >
+    ContactInfo "1" *-- "1" PhoneNumber : has >
+    ContactInfo "1" *-- "1" Email : has >
+    Customer "1" *-- "0..*" Address : maintains >
+    Address "1" *-- "1" AddressId
+    Customer "1" *-- "0..*" DietaryRestriction : records >
+    }
+
+' -----------------------------------------------------------------------------
+' PRODUCT AGGREGATE.
+' -----------------------------------------------------------------------------
+package "Product Aggregate" <<Rectangle>> {
+
+    class Product <<entity>> <<aggregateRoot>> {
+        + isActive : boolean
+        + isSellable : boolean
+        + isStockControlled : boolean
+        + isPizzaComponent : boolean
+    }
+
+    class ProductId <<vo>> {
+        + value : string
+    }
+    note right of ProductId
+        - ProductId is a unique identifier for a product.
+        - Must be a string representing the product ID.
+        - Example: "PROD-00123".
+    end note
+
+    class ProductName <<vo>> {
+        + name : String
+    }
+
+    class ProductDescription <<vo>> {
+        + text : String
+    }
+
+    class Money <<vo>> {
+        + amount : BigDecimal
+        + currency : String
+    }
+
+    Product "1" *-- "1" ProductId : identified by >
+    Product "1" *-- "1" ProductName : named >
+    Product "1" *-- "1" ProductDescription : described by >
+    Product "1" *-- "0..1" Money : basePrice >
+
+    note right of Product
+    Business rules:
+    - Sellable and Pizza Component are Product types.
+    - Stock-controlled is an independent characteristic.
+    - A Product MUST have at least one type:
+        • Sellable, or
+        • Pizza Component, or
+        • both.
+    - Invalid combinations (must be rejected):
+        • No type (neither Sellable nor Pizza Component)
+        • Exclusively stock-controlled
+    - Any Product (regardless of type) may or may not
+        be subject to stock control.
+    - A Pizza Component must be associated with
+        exactly one PizzaComponentType.
+    - For pizzas, the selling price is determined
+        by their components.
+    end note
+}
+
+' -----------------------------------------------------------------------------
+' ALLERGEN AGGREGATE.
+' -----------------------------------------------------------------------------
+package "Allergen Aggregate" <<Rectangle>> {
+
+    class Allergen <<entity>> <<aggregateRoot>> {
+    }
+
+    class AllergenId <<vo>> {
+        + value : integer
+    }
+
+    note right of AllergenId
+        - AllergenId is a unique identifier for an allergen.
+        - Must be an integer between 1 and 14 (inclusive),
+          corresponding to the official EU Regulation No. 1169/2011.
+    end note
+
+    enum EUAllergenType <<enum>> {
+        1 : GLUTEN
+        2 : CRUSTACEANS
+        3 : EGGS
+        4 : FISH
+        5 : PEANUTS
+        6 : SOYBEANS
+        7 : MILK
+        8 : NUTS
+        9 : CELERY
+        10 : MUSTARD
+        11 : SESAME
+        12 : SULPHITES
+        13 : LUPIN
+        14 : MOLLUSCS
+    }
+
+    AllergenId ..> EUAllergenType : bounded by >
+
+    class AllergenName <<vo>> {
+        + name : String
+    }
+
+    Allergen "1" *-- "1" AllergenId
+    Allergen "1" *-- "1" AllergenName
+
+    note right of Allergen
+        An Allergen represents a food
+        allergen that may be associated
+        with Products and DietaryRestrictions.
+    end note
+}
+
+' -----------------------------------------------------------------------------
+' CROSS-AGGREGATE LINKS 
+' -----------------------------------------------------------------------------
+
+DietaryRestriction "0..*" --> "0..*" Allergen : relates to >
+Product "0..*" --> "0..*" Allergen : contains >
+
+@enduml
+

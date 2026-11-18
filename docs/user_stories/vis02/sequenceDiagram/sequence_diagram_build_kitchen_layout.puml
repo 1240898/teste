@@ -1,0 +1,90 @@
+@startuml sequence_diagram_build_kitchen_layout
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - VIS02 Building the Kitchen Room and Equipment
+
+actor User as "LaPrizza Manager /\nRestaurant Staff"
+participant Viewer as "KitchenViewer\n(VIS01)"
+participant Engine as "ViewerEngine\n(VIS01)"
+participant Layout as "KitchenLayoutModule"
+participant Mats as "KitchenMaterialFactory\n(VIS04)"
+participant Room as "KitchenRoomBuilder"
+participant Elements as "SceneElementFactory"
+participant Three as "three\n(Scene)"
+
+note over User, Three
+    Precondition (usVIS01 SD 1, steps 1-4): the ACTIVE configuration was received from
+    GET /kitchen-configurations/active, passed parseActiveConfiguration and EVERY asset of "assets"
+    was preloaded into LoadedAssets. VIS02 never requests data, never reads a URL and has no layout of its own.
+    The construction of one element (procedural / imported) is detailed in sequence_diagram_element_construction.
+end note
+
+Viewer -> Engine : await load(configuration, loadedAssets,\n[KitchenLayoutModule, AssemblyLineModule (VIS03), ...], { signal })
+activate Engine
+Engine -> Layout : factory() ; modules.push(module)\n(registered BEFORE build - VIS01 D12)
+Engine -> Layout : build(SceneContext { scene, camera, configuration,\nassets, signal })
+activate Layout
+
+alt A) context.signal already aborted (Reload / leaving the page)
+    Layout --> Engine : return (nothing created, scene unchanged)
+    note right of Layout : interaction ends: the engine handles the\ncancellation (no onFatalError, VIS01 D18)
+else B) not aborted
+
+    == 1. Per-build resources ==
+
+    Layout -> Mats : createMaterialFactory(context.assets)
+    activate Mats
+    Mats --> Layout : materials
+    deactivate Mats
+    Layout -> Layout : shapes = new ProceduralShapeFactory()\nelementFactory = new SceneElementFactory({ assets, shapes, materials })\nroot = Group "layout:root" (userData: KCF id, version)
+
+    == 2. Room (AC 1 - kitchen dimensions) ==
+
+    Layout -> Room : build(content.kitchen.dimensions,\nkitchen.floor.material, kitchen.walls.material, materials)
+    activate Room
+    Room -> Mats : create(floor.material) ; create(walls.material)
+    activate Mats
+    Mats --> Room : floor / wall materials (PBR, texture sets)
+    deactivate Mats
+    Room -> Room : floor: width x depth at y = 0, centred at the origin\nwalls NORTH (z = -depth/2), SOUTH, EAST, WEST:\nlength x height, front face into the room, FrontSide\nUVs in metres; receiveShadow; walls castShadow = false\nno ceiling
+    Room --> Layout : RoomObjects ("layout:room")
+    deactivate Room
+    Layout -> Layout : root.add(room.group)
+
+    == 3. Equipment (AC 1, AC 2, AC 3) ==
+
+    loop for each element of content.elements with category = EQUIPMENT\n(ASSEMBLY_LINE elements are left to VIS03)
+        Layout -> Elements : create(element)
+        activate Elements
+        alt B1) element can be built
+            Elements --> Layout : element root Group\n(name = element.id, placement applied)
+            Layout -> Layout : "layout:equipment".add(root)
+        else B2) unknown shape / non-finite value / size or scale <= 0 /\nasset missing or of the wrong kind
+            Elements --> Layout : throw ElementBuildError{ elementId, reason }
+            deactivate Elements
+            Layout --> Engine : throws (root NOT added to the scene)
+            Engine -> Engine : releaseAll() -> Layout.dispose()\n(releases room, shapes, materials created so far;\nLoadedAssets untouched)
+            Engine --> Viewer : ViewerEngineError{ phase: "build",\nmoduleName: "kitchen-layout", cause }
+            Viewer --> User : state "failed": "The 3D viewer stopped because of an error." + [Retry]
+            note right of Viewer : interaction ends: no partial kitchen (BR 11);\nthe element id only in the development console
+        end
+    end
+
+    == 4. Publication ==
+
+    Layout -> Three : scene.add(root)  ("layout:root" complete)
+    note right of Layout : the camera is NOT touched by VIS02 (BR 12):\nVIS07 is the single owner of the initial view\nand of Reset view (VIS02-ALN-5)
+    Layout --> Engine : done
+    deactivate Layout
+
+    Engine -> Engine : build the next modules (VIS03 assembly line,\nVIS05 lights, VIS06 controls, VIS07 camera module:\ninitial pose computed by VIS07 from width, depth, height\nand the viewer aspect - 8 corners visible, target (0, 0, 0);\nsame function as Reset view, usVIS02 3.8.3)
+    Viewer -> Engine : start()
+    Engine -> Three : setAnimationLoop(renderFrame):\nKitchenLayoutModule.update(dt) is a no-op (static equipment)
+    Engine --> Viewer : running
+    deactivate Engine
+    Viewer --> User : state "ready": room of the ACTIVE configuration with every\nequipment item at its configured position, orientation and scale (AC 4)
+end
+
+@enduml

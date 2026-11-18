@@ -1,0 +1,89 @@
+@startuml SD03_search_customers
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - BCK02 Search Customers (GET /api/v1/customers)
+
+actor "LaPrizza Manager" as LaPrizzaManager
+participant CustomerRoutes
+participant AuthMiddleware
+participant RoleMiddleware
+participant "ValidationMiddleware\n(Joi)" as ValidationMiddleware
+participant CustomerController
+participant CustomerService
+participant "CustomerRepository\n(Infrastructure)" as CustomerRepository
+database "Database\n(Persistence)" as Database
+participant CustomerMapper
+
+LaPrizzaManager -> CustomerRoutes : GET /api/v1/customers\n?name=&phoneNumber=&email=
+activate CustomerRoutes
+activate LaPrizzaManager
+
+' Security & Middlewares
+CustomerRoutes -> AuthMiddleware : verifyToken(req, res, next)
+activate AuthMiddleware
+alt Invalid or Missing Token
+    AuthMiddleware --> LaPrizzaManager : 401 Unauthorized\n{ error: "Unauthorized" }
+end
+AuthMiddleware --> CustomerRoutes : next()
+deactivate AuthMiddleware
+
+CustomerRoutes -> RoleMiddleware : requireRole("MANAGER")
+activate RoleMiddleware
+alt Lacks MANAGER Role
+    RoleMiddleware --> LaPrizzaManager : 403 Forbidden\n{ error: "Forbidden: Access denied" }
+end
+RoleMiddleware --> CustomerRoutes : next()
+deactivate RoleMiddleware
+
+CustomerRoutes -> ValidationMiddleware : validate(req.query, customerSearchSchema)
+activate ValidationMiddleware
+alt Invalid Search Criteria
+    ValidationMiddleware --> LaPrizzaManager : 400 Bad Request\n{ error: "Invalid search criteria" }
+end
+ValidationMiddleware --> CustomerRoutes : next()
+deactivate ValidationMiddleware
+
+' Application Logic
+CustomerRoutes -> CustomerController : search(req, res)
+activate CustomerController
+
+CustomerController -> CustomerService : searchCustomers(customerSearchDTO)
+activate CustomerService
+
+' Search Criteria
+CustomerService -> CustomerService : CustomerSearchCriteria.create(name, phoneNumber, email)
+note right of CustomerService : Without filters, all customers are returned.
+
+' Retrieval
+CustomerService -> CustomerRepository : search(criteria)
+activate CustomerRepository
+CustomerRepository -> Database : find(filters from criteria)
+activate Database
+Database --> CustomerRepository : customerDocs
+deactivate Database
+CustomerRepository -> CustomerMapper : toDomain(customerDocs)
+activate CustomerMapper
+CustomerMapper --> CustomerRepository : customers
+deactivate CustomerMapper
+CustomerRepository --> CustomerService : customers
+deactivate CustomerRepository
+
+' Response Mapping
+loop For each customer
+    CustomerService -> CustomerMapper : toDTO(customer)
+    activate CustomerMapper
+    CustomerMapper --> CustomerService : customerResponseDTO
+    deactivate CustomerMapper
+end
+
+CustomerService --> CustomerController : customerResponseDTO[]
+deactivate CustomerService
+
+CustomerController --> LaPrizzaManager : 200 OK\n[ { id, name, phoneNumber, email, addresses[],\ndietaryRestrictions[], active }, ... ]
+deactivate CustomerController
+deactivate CustomerRoutes
+deactivate LaPrizzaManager
+
+@enduml

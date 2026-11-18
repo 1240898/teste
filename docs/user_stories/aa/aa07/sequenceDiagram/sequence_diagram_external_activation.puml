@@ -1,0 +1,96 @@
+@startuml
+actor Recipient
+participant ActivationPage as SPA
+participant GoogleCallbackPage as Callback
+participant ActivationApi as Client
+participant ActivationController as API
+participant ActivationService as App
+participant IActivationRepository as Repo
+participant IUserRepository as Users
+participant UserService as SignIn
+participant ExternalAuthenticationService as AA02
+participant IOAuthStateStore as State
+participant "IExternalIdentityProvider\n(GoogleOidcProvider adapter)" as Provider
+Recipient -> SPA : Open invitation with EXTERNAL method (SD 1)
+note over Recipient, App
+ This flow starts from an invitation for an inactive LaPrizza account.
+ Normal first Google sign-in without an invitation belongs to AA02.
+end note
+SPA -> Client : startExternal(token)
+Client -> API : POST /activation/external/start
+API -> App : startExternal(token)
+App -> Repo : findEligibleBinding(SHA-256(token), now)
+alt Unknown, unusable or non-external invitation
+ App --> API : Invitation unavailable
+ API --> Client : 400
+ Client --> SPA : Unavailable invitation
+else Eligible at preflight
+ App -> AA02 : startAuthorization(ACTIVATION, binding)
+ AA02 -> Provider : createAuthorizationRequest()
+ Provider --> AA02 : AuthorizationRequest
+ AA02 -> State : save(state, pending)
+ AA02 --> App : ExternalAuthorizationDTO
+ App --> API : ExternalAuthorizationDTO
+ API --> Client : 200 authorizationUrl, state
+ Client --> SPA : ExternalAuthorizationDTO
+ SPA -> Recipient : Redirect to Google and receive callback
+ Recipient -> Callback : Browser returns to registered callback route
+ Callback -> Callback : handleRedirect(query)
+ alt Provider cancellation, missing parameters or unexpected browser state
+  Callback --> Recipient : Show recovery guidance without API completion
+ else Expected state matches the initiating activation flow
+ Callback -> Client : completeExternal(code, state)
+ Client -> API : POST /activation/external/complete
+ API -> App : completeExternal(code, state)
+ App -> AA02 : verifyIdentity(code, state, ACTIVATION)
+ AA02 -> State : consume(state, ACTIVATION)
+ alt Unknown, expired, used or wrong-purpose state
+  AA02 --> App : Verification rejected
+ else Matching pending state
+  AA02 -> Provider : exchangeAndVerify(code, codeVerifier, nonce)
+  alt Verification fails
+   Provider --> AA02 : Verification rejected
+   AA02 --> App : Verification rejected
+  else Claims verified
+   Provider --> AA02 : ExternalIdentityClaims
+   AA02 --> App : VerifiedAuthorization(claims, binding)
+  end
+ end
+ alt Verification rejected
+  App --> API : External verification failed
+ else Verified authorization
+  note right of App
+   Map verified claims to domain values:
+   Email.create(claims.email) and
+   ExternalIdentity.create(claims.provider, claims.subject).
+   Build ActivationCredential.external(identity, verifiedEmail).
+  end note
+  alt Claims cannot be mapped to domain values
+   App --> API : External verification failed
+  else Domain credential built
+   ref over App, Repo : SD 3 — commitActivation(binding, credential)
+   alt Redemption rejected
+    App --> API : Activation error
+   else Redemption committed
+    App -> Users : findById(activatedUserId)
+    Users --> App : Current User
+    App -> SignIn : assertCanAccess(user)
+    opt Access allowed
+     App -> SignIn : issueAuthToken(user)
+     SignIn --> App : AuthTokenDTO or session failure
+    end
+    alt Session issued
+     App --> API : SIGNED_IN with session
+     note right of API : Apply the normal AA04 response handling.
+    else Account ineligible or session creation failed
+     App --> API : ACTIVATED with external sign-in guidance
+    end
+   end
+  end
+ end
+ API --> Client : 200 with session cookie, activation only, or error
+ Client --> Callback : ExternalActivationResponse or mapped error
+ Callback --> Recipient : Enter signed-in area, show activation, or show recovery
+ end
+end
+@enduml

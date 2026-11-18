@@ -1,0 +1,77 @@
+@startuml sequence_diagram_login
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - BCK01 User Authentication / Login (POST /api/v1/auth/login)
+
+actor Client as "Client / User"
+participant Routes as "AuthRoutes"
+participant Validator as "ValidationMiddleware\n(Joi)"
+participant Controller as "AuthController"
+participant Service as "UserService"
+participant Repo as "IUserRepository"
+database DB as "Database\n(Persistence)"
+participant Hasher as "IPasswordHasher\n(Bcrypt)"
+participant JWT as "ITokenService\n(JWT)"
+participant Mapper as "UserMapper"
+
+Client -> Routes : POST /api/v1/auth/login\n{ email, password }
+activate Routes
+
+Routes -> Validator : validate(req.body, loginSchema)
+activate Validator
+alt Validation Failure
+    Validator --> Client : 400 Bad Request\n{ error: "Invalid email or password format" }
+end
+Validator --> Routes : next()
+deactivate Validator
+
+Routes -> Controller : login(req, res)
+activate Controller
+
+Controller -> Service : login(loginDTO)
+activate Service
+
+Service -> Repo : findByEmail(email)
+activate Repo
+Repo -> DB : findOne({ email }).select('+passwordHash')
+activate DB
+DB --> Repo : userDoc / null
+deactivate DB
+Repo --> Service : user / null
+deactivate Repo
+
+alt User not found or inactive
+    Service --> Controller : throw UnauthorizedError("Invalid email or password")
+    Controller --> Client : 401 Unauthorized\n{ error: "Invalid email or password" }
+end
+
+Service -> Hasher : compare(password, user.getPassword().getHash())
+activate Hasher
+Hasher --> Service : isMatch (boolean)
+deactivate Hasher
+
+alt Invalid password
+    Service --> Controller : throw UnauthorizedError("Invalid email or password")
+    Controller --> Client : 401 Unauthorized\n{ error: "Invalid email or password" }
+end
+
+Service -> JWT : generateToken({ sub: user.getId(),\nemail: user.getEmail(), roles: user.getRoles() })
+activate JWT
+JWT --> Service : tokenString
+deactivate JWT
+
+Service -> Mapper : toDTO(user)
+activate Mapper
+Mapper --> Service : userResponseDTO
+deactivate Mapper
+
+Service --> Controller : authTokenDTO { accessToken,\ntokenType: "Bearer", expiresIn: "1d", user: userResponseDTO }
+deactivate Service
+
+Controller --> Client : 200 OK\n{ accessToken, tokenType: "Bearer",\nexpiresIn: "1d", user }
+deactivate Controller
+deactivate Routes
+
+@enduml

@@ -1,0 +1,90 @@
+@startuml sequence_diagram_register
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - BCK01 User Registration (POST /api/v1/users/register)
+
+actor Client as "Client / User"
+participant Routes as "UserRoutes"
+participant Validator as "ValidationMiddleware\n(Joi)"
+participant Controller as "UserController"
+participant Service as "UserService"
+participant Hasher as "IPasswordHasher\n(Bcrypt)"
+participant Domain as "User\n(Domain Entity)"
+participant Repo as "IUserRepository"
+database DB as "Database\n(Persistence)"
+participant Mapper as "UserMapper"
+
+Client -> Routes : POST /api/v1/users/register\n{ name, email, password, marketingConsent }
+activate Routes
+
+Routes -> Validator : validate(req.body, registerSchema)
+activate Validator
+alt Validation Failure (missing field / weak password)
+    Validator --> Client : 400 Bad Request\n{ error: "Validation failed..." }
+end
+Validator --> Routes : next()
+deactivate Validator
+
+Routes -> Controller : register(req, res)
+activate Controller
+
+Controller -> Service : register(registerUserDTO)
+activate Service
+
+Service -> Repo : findByEmail(email)
+activate Repo
+Repo -> DB : findOne({ email })
+activate DB
+DB --> Repo : existingUser / null
+deactivate DB
+Repo --> Service : User / null
+deactivate Repo
+
+alt User Already Exists
+    Service --> Controller : throw ConflictError("User already exists")
+    Controller --> Client : 409 Conflict\n{ error: "User already exists" }
+end
+
+Service -> Hasher : hash(password, saltRounds=10)
+activate Hasher
+Hasher --> Service : passwordHash
+deactivate Hasher
+
+Service -> Repo : nextId()
+activate Repo
+Repo -> DB : nextval(user_id_seq)
+activate DB
+DB --> Repo : USR-00001
+deactivate DB
+Repo --> Service : userId
+deactivate Repo
+
+Service -> Domain : create(userId, name, email, passwordHash,\n[CUSTOMER], MarketingConsent(consentGiven, now))
+activate Domain
+Domain --> Service : userInstance
+deactivate Domain
+
+Service -> Repo : save(userInstance)
+activate Repo
+Repo -> DB : create({ name, email, passwordHash,\nroles: ['CUSTOMER'], active: true,\nmarketingConsentGiven, marketingConsentTimestamp })
+activate DB
+DB --> Repo : persistedUser
+deactivate DB
+Repo --> Service : savedUser
+deactivate Repo
+
+Service -> Mapper : toDTO(savedUser)
+activate Mapper
+Mapper --> Service : userResponseDTO
+deactivate Mapper
+
+Service --> Controller : userResponseDTO
+deactivate Service
+
+Controller --> Client : 201 Created\n{ id, name, email, roles, active,\nmarketingConsent, createdAt }
+deactivate Controller
+deactivate Routes
+
+@enduml

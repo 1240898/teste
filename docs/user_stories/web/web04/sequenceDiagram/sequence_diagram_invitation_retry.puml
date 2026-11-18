@@ -1,0 +1,326 @@
+@startuml sequence_diagram_invitation_retry
+autonumber
+skinparam shadowing false
+skinparam responseMessageBelowArrow true
+title WEB04 / AA06 - Invitation Failure and Safe Retry
+
+actor Administrator as Admin
+participant "AdminUserManagementPage" as Page
+participant "ConfirmationDialog" as Confirm
+participant "adminUserApi" as UserApi
+participant "apiClient" as ApiClient
+participant "AA04 / WEB03 Access Handler" as AccessHandler
+participant "AuthProvider" as AuthProvider
+participant "ProtectedRoute" as ProtectedRoute
+participant "errorMapper" as ErrorMapper
+participant "UserRoutes + Auth/Administrator Middleware" as Routes
+participant "UserController" as Controller
+participant "UserService" as Service
+participant "ActivationInvitationRepository" as InvitationRepo
+participant "Invitation Delivery Adapter" as Mail
+participant "FeedbackMessage" as Feedback
+database "PostgreSQL" as DB
+
+Admin -> Page : choose Send or replace invitation for selected inactive account
+activate Page
+Page -> Page : retain selected existing user id
+Page -> Confirm : confirm every send/replace; a previous invite may stop working
+activate Confirm
+Confirm --> Admin : confirm or cancel; no email/token disclosed
+alt Cancel
+  Admin -> Confirm : cancel
+  Confirm --> Page : cancelled
+  deactivate Confirm
+  Page --> Admin : return without sending a request
+else Confirm
+  Admin -> Confirm : confirm invitation request
+  Confirm --> Page : confirmed
+  deactivate Confirm
+  Page -> Page : state = submitting; disable repeat
+  Page -> UserApi : invite(existingUserId)
+  activate UserApi
+  UserApi -> ApiClient : POST /users/{id}/activation-invitations
+  activate ApiClient
+  ApiClient -> Routes : authenticated HTTPS request
+  activate Routes
+  Routes -> Routes : verify token and Administrator role
+
+  alt Accepted inactive account; HTTP 200 result
+    Routes -> Controller : issueInvitation(userId, actor)
+    activate Controller
+    Controller -> Service : issueActivationInvitation(userId, actor)
+    activate Service
+    Service -> DB : load existing account
+    activate DB
+    DB --> Service : inactive account
+    deactivate DB
+    Service -> InvitationRepo : issue or replace pending invitation
+    activate InvitationRepo
+    InvitationRepo -> DB : persist token hash, recipient, expiry
+    activate DB
+    DB --> InvitationRepo : committed
+    deactivate DB
+    InvitationRepo --> Service : invitation issued
+    deactivate InvitationRepo
+    Service -> Mail : send to intended email
+    activate Mail
+    alt Delivery succeeds
+      Mail --> Service : delivered
+      deactivate Mail
+      Service --> Controller : InvitationResult(SENT, retryable=false)
+    else Delivery fails; retryable
+      Mail --> Service : delivery failure
+      deactivate Mail
+      Service --> Controller : InvitationResult(FAILED, retryable=true)
+    else Delivery fails; not retryable
+      Mail --> Service : terminal delivery failure
+      deactivate Mail
+      Service --> Controller : InvitationResult(FAILED, retryable=false)
+    end
+    deactivate Service
+    Controller --> Routes : HTTP 200 + result DTO
+    deactivate Controller
+    Routes --> ApiClient : response
+    deactivate Routes
+    ApiClient --> UserApi : result DTO
+    deactivate ApiClient
+    UserApi --> Page : deliveryStatus and retryable
+    deactivate UserApi
+    Page -> Page : settle pending state for this POST
+
+    alt deliveryStatus = SENT
+      Page -> Feedback : show localized success
+      activate Feedback
+      Feedback --> Admin : invitation sent
+      deactivate Feedback
+    else deliveryStatus = FAILED and retryable = true
+      Page -> Feedback : show localized failure
+      activate Feedback
+      Feedback --> Admin : sending failed; retry is available
+      deactivate Feedback
+      note over Page,DB
+        HTTP 200 is not itself success.
+        The existing account remains inactive.
+        Retry targets the same user id and does not create another account.
+        Every replacement can invalidate a prior invitation.
+      end note
+      Admin -> Page : select retry / send replacement
+      Page -> Confirm : require confirmation again
+      activate Confirm
+      Confirm --> Admin : this may invalidate the previous invitation; confirm or cancel
+      alt Cancel retry
+        Admin -> Confirm : cancel
+        Confirm --> Page : cancelled; no request
+        deactivate Confirm
+      else Confirm retry
+        Admin -> Confirm : confirm replacement
+        Confirm --> Page : confirmed
+        deactivate Confirm
+        Page -> Page : start new pending state; disable repeat
+        Page -> UserApi : invite(same existingUserId)
+        activate UserApi
+        UserApi -> ApiClient : POST /users/{id}/activation-invitations
+        activate ApiClient
+        ApiClient -> Routes : authenticated HTTPS request
+        activate Routes
+        Routes -> Controller : issue/replace invitation for same user id
+        activate Controller
+        Controller -> Service : issueActivationInvitation(same userId)
+        activate Service
+        Service -> InvitationRepo : invalidate prior invitation; persist replacement
+        activate InvitationRepo
+        InvitationRepo --> Service : replacement persisted
+        deactivate InvitationRepo
+        Service -> Mail : deliver replacement
+        activate Mail
+        Mail --> Service : delivery result
+        deactivate Mail
+        Service --> Controller : InvitationResult(SENT or FAILED, retryable)
+        deactivate Service
+        Controller --> Routes : HTTP 200 + result DTO
+        deactivate Controller
+        Routes --> ApiClient : response
+        deactivate Routes
+        ApiClient --> UserApi : result DTO
+        deactivate ApiClient
+        UserApi --> Page : deliveryStatus and retryable
+        deactivate UserApi
+        Page -> Page : settle pending state for this POST
+        alt Retry result is SENT
+          Page -> Feedback : show localized success
+          activate Feedback
+          Feedback --> Admin : invitation sent
+          deactivate Feedback
+        else Retry result is FAILED and retryable = true
+          Page -> Feedback : show localized failure; offer another confirmed retry
+          activate Feedback
+          Feedback --> Admin : replacement failed; retry available
+          deactivate Feedback
+        else Retry result is FAILED and retryable = false
+          Page -> Feedback : show localized terminal failure
+          activate Feedback
+          Feedback --> Admin : no retry action
+          deactivate Feedback
+        end
+      end
+    else deliveryStatus = FAILED and retryable = false
+      Page -> Feedback : show localized terminal failure
+      activate Feedback
+      Feedback --> Admin : invitation could not be sent; no retry action
+      deactivate Feedback
+    end
+  else 401 Unauthorized or 403 Forbidden
+    Routes --> ApiClient : authentication/authorization response
+    deactivate Routes
+    ApiClient --> UserApi : ApiError(kind, status)
+    deactivate ApiClient
+    Page -> Page : settle pending state for this POST
+    UserApi --> AccessHandler : delegate auth/role outcome before local feedback
+    deactivate UserApi
+    activate AccessHandler
+    alt 401 Unauthorized
+      AccessHandler -> AuthProvider : apply AA04 session policy
+      activate AuthProvider
+      AuthProvider -> ProtectedRoute : publish renewed or ended session
+      activate ProtectedRoute
+      ProtectedRoute --> AuthProvider : keep page or unmount protected page
+      deactivate ProtectedRoute
+      AuthProvider --> AccessHandler : session and route outcome
+      deactivate AuthProvider
+      alt Page remains authenticated and request still failed
+        AccessHandler --> Page : normalized 401
+        Page -> ErrorMapper : toFeedback(ApiError 401)
+        activate ErrorMapper
+        ErrorMapper --> Page : safe authentication feedback
+        deactivate ErrorMapper
+        Page -> Feedback : render safe feedback
+        activate Feedback
+        Feedback --> Admin : authentication required
+        deactivate Feedback
+      else Session ended; page unmounted
+        AccessHandler --> Page : session flow handles navigation
+        note over Page,ProtectedRoute
+          The unmounted page shows no local feedback.
+        end note
+      end
+    else 403 Forbidden
+      AccessHandler -> AuthProvider : refresh roles per WEB03
+      activate AuthProvider
+      AuthProvider -> ProtectedRoute : re-evaluate Administrator route
+      activate ProtectedRoute
+      ProtectedRoute --> AuthProvider : retain page or unmount to access denied
+      deactivate ProtectedRoute
+      AuthProvider --> AccessHandler : updated route outcome
+      deactivate AuthProvider
+      alt Page remains authorized
+        AccessHandler --> Page : normalized 403
+        Page -> ErrorMapper : toFeedback(ApiError 403)
+        activate ErrorMapper
+        ErrorMapper --> Page : access-denied message key
+        deactivate ErrorMapper
+        Page -> Feedback : render safe permission feedback
+        activate Feedback
+        Feedback --> Admin : access denied
+        deactivate Feedback
+      else Role removed; page unmounted
+        AccessHandler --> Page : WEB03 access-denied route takes over
+        note over Page,ProtectedRoute
+          The unmounted page shows no local feedback.
+        end note
+      end
+    end
+    deactivate AccessHandler
+  else 404 Not Found
+    Routes --> ApiClient : safe resource-unavailable response
+    deactivate Routes
+    ApiClient --> UserApi : ApiError(kind, 404)
+    deactivate ApiClient
+    UserApi --> Page : normalized error
+    deactivate UserApi
+    Page -> Page : settle pending state for this POST
+    Page -> ErrorMapper : toFeedback(ApiError)
+    activate ErrorMapper
+    ErrorMapper --> Page : safe resource-unavailable feedback
+    deactivate ErrorMapper
+    Page -> Feedback : render message; do not expose account details
+    activate Feedback
+    Feedback --> Admin : account is unavailable; refresh the list
+    deactivate Feedback
+  else 409 Conflict
+    Routes --> ApiClient : conflict response
+    deactivate Routes
+    ApiClient --> UserApi : ApiError(kind, 409)
+    deactivate ApiClient
+    UserApi --> Page : normalized error
+    deactivate UserApi
+    Page -> Page : settle pending state for this POST
+    Page -> ErrorMapper : toFeedback(ApiError)
+    activate ErrorMapper
+    ErrorMapper --> Page : localized conflict feedback
+    deactivate ErrorMapper
+    Page -> Feedback : show safe conflict feedback
+    activate Feedback
+    Feedback --> Admin : refresh account/invitation state before acting
+    deactivate Feedback
+  else 503 Service Unavailable
+    Routes --> ApiClient : service-unavailable response
+    deactivate Routes
+    ApiClient --> UserApi : ApiError(kind, 503)
+    deactivate ApiClient
+    UserApi --> Page : normalized error
+    deactivate UserApi
+    Page -> Page : settle pending state for this POST
+    Page -> ErrorMapper : toFeedback(ApiError)
+    activate ErrorMapper
+    ErrorMapper --> Page : generic service-unavailable feedback
+    deactivate ErrorMapper
+    Page -> Feedback : render safe feedback
+    activate Feedback
+    Feedback --> Admin : no retry unless API confirms not applied and retryable
+    deactivate Feedback
+  else Response lost; outcome unknown
+    Routes -x ApiClient : response did not reach client
+    deactivate Routes
+    deactivate ApiClient
+    UserApi --> Page : uncertain transport failure
+    deactivate UserApi
+    Page -> Page : settle loading; preserve account selection; mark outcome unknown
+    Page -> Feedback : show outcome unknown and replacement option
+    activate Feedback
+    Feedback --> Admin : delivery cannot be confirmed; replacement will invalidate any prior invite
+    deactivate Feedback
+    Admin -> Page : choose replacement invitation
+    Page -> Confirm : confirm replacement for same account
+    activate Confirm
+    Confirm --> Admin : previous invitation may stop working; confirm or cancel
+    alt Cancel replacement
+      Admin -> Confirm : cancel
+      Confirm --> Page : cancelled; no request
+      deactivate Confirm
+    else Confirm replacement
+      Admin -> Confirm : confirm
+      Confirm --> Page : confirmed
+      deactivate Confirm
+      Page -> Page : start new pending state; disable repeat
+      Page -> UserApi : invite(same existingUserId)
+      activate UserApi
+      UserApi -> ApiClient : POST /users/{id}/activation-invitations
+      activate ApiClient
+      ApiClient -> Routes : authenticated HTTPS request
+      activate Routes
+      Routes --> ApiClient : HTTP 200 + InvitationResult(SENT or FAILED)
+      deactivate Routes
+      ApiClient --> UserApi : result DTO
+      deactivate ApiClient
+      UserApi --> Page : deliveryStatus and retryable
+      deactivate UserApi
+      Page -> Page : settle pending state for replacement POST
+      Page -> Feedback : map POST delivery result
+      activate Feedback
+      Feedback --> Admin : localized SENT/FAILED result; keep retry only if retryable
+      deactivate Feedback
+    end
+  end
+end
+deactivate Page
+@enduml

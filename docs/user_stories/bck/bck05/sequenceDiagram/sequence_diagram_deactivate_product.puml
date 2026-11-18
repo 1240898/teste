@@ -1,0 +1,91 @@
+@startuml sequence_diagram_deactivate_product
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - BCK05 Deactivate Product (DELETE /api/v1/products/:id)
+
+actor Manager
+participant Routes as "ProductRoutes"
+participant AuthMW as "AuthMiddleware"
+participant RoleMW as "RoleMiddleware"
+participant Controller as "ProductController"
+participant Service as "ProductService"
+participant UoW as "IUnitOfWork"
+participant Repo as "IProductRepository"
+participant Product as "Product\n<<aggregateRoot>>"
+database DB as "PostgreSQL"
+
+Manager -> Routes : DELETE /api/v1/products/:id
+activate Routes
+activate Manager
+
+Routes -> AuthMW : verifyToken(req, res, next)
+activate AuthMW
+alt Missing / invalid token
+    AuthMW --> Manager : 401 Unauthorized
+end
+AuthMW --> Routes : next()
+deactivate AuthMW
+
+Routes -> RoleMW : requireRole("MANAGER")
+activate RoleMW
+alt Caller is not MANAGER
+    RoleMW --> Manager : 403 Forbidden
+end
+RoleMW --> Routes : next()
+deactivate RoleMW
+
+Routes -> Controller : deactivateProduct(req, res, next)
+activate Controller
+Controller -> Service : deactivateProduct(id)
+activate Service
+
+Service -> UoW : withTransaction(work)
+activate UoW
+UoW -> DB : BEGIN
+UoW -> Service : work(tx)
+Service -> Repo : findByIdForUpdate(productId, tx)
+activate Repo
+Repo -> DB : SELECT ... FROM products WHERE id = $1 FOR UPDATE
+Repo --> Service : product | null
+deactivate Repo
+
+alt Product not found
+    Service --> Controller : throw AppError(404, "Product not found")
+    Controller --> Manager : 404 Not Found
+else Product exists
+    Service -> Product : deactivate()
+    activate Product
+    note right of Product
+      Idempotent: an already
+      inactive product stays inactive.
+    end note
+    Product --> Service : isActive = false
+    deactivate Product
+
+    Service -> Repo : save(product, tx)
+    activate Repo
+    Repo -> DB : UPDATE products SET is_active = false,\nupdated_at = now() WHERE id = $1
+    Repo --> Service : saved
+    deactivate Repo
+
+    Service --> UoW : success
+    UoW -> DB : COMMIT
+    Service --> Controller : void
+    Controller --> Manager : 204 No Content
+end
+deactivate UoW
+deactivate Service
+deactivate Controller
+deactivate Routes
+deactivate Manager
+
+note over Service, DB
+  Soft deactivation only: the row and all its relationships (category, allergens,
+  component type, BCK08 configurations, BCK10 pizzas, BCK09 stock record) are preserved (AC 9 / AC 10).
+  isStockControlled and the stock quantity are NOT changed and BCK09 is NOT called.
+  PATCH /api/v1/products/:id/activate follows the same flow calling product.activate() and returns 200 OK.
+end note
+
+@enduml

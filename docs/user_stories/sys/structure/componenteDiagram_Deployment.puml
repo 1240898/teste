@@ -1,0 +1,77 @@
+@startuml componentDiagram_Deployment
+!NEW_C4_STYLE=1
+!include <C4/C4_Deployment>
+
+title Deployment Diagram - LaPrizza SYS01
+
+Person(operator, "Developer / System Administrator", "Starts deployments, reviews results and manages workflow settings")
+Person(user, "LaPrizza user", "Accesses the application from the DEI network or VPN")
+
+Deployment_Node(browser, "User device", "Web browser") {
+  Container(ui, "Web Application", "React / JavaScript / Three.js", "SPA running in the browser")
+}
+
+Deployment_Node(github, "GitHub", "SaaS") {
+  Deployment_Node(runner, "GitHub-hosted runner", "ubuntu-latest, ephemeral") {
+    Container(wf, "Deployment workflow", "GitHub Actions", "Reuses Back-End and Front-End checks, builds SHA-tagged images, transfers them to the VM over SSH, validates and archives evidence")
+  }
+  Deployment_Node(settingsNode, "Repository and environment settings", "GitHub") {
+    ContainerDb(deploySettings, "Protected deployment settings", "GitHub Actions", "SSH private key as a secret; pinned VM host key and non-secret deployment configuration")
+  }
+  Deployment_Node(artifactNode, "Workflow artifact storage", "GitHub Actions") {
+    ContainerDb(artifacts, "Run artifacts", "GitHub Actions", "Sanitized test results, deployment logs and revision metadata; retention follows workflow policy")
+  }
+}
+
+Deployment_Node(vm, "DEI VM", "Linux VM; private address; approved external SSH access enabled") {
+  Deployment_Node(host, "Host OS", "OpenSSH and filesystem") {
+    Container(agent, "Remote deployment script", "Bash / dedicated deploy user", "Stages releases, runs Docker Compose and performs application rollback")
+    Container(cfg, "Versioned runtime configuration", "/etc/laprizza/config; owner-only revisions", "Back-End settings and secrets; selected by config revision and mounted read-only")
+    Container(state, "Release state and logs", "/var/lib/laprizza and /var/log/laprizza", "Release manifests and config revisions for active and last known-good images; sanitized deployment logs; no database dumps")
+  }
+  Deployment_Node(docker, "Docker Engine", "Dedicated Docker network") {
+    Container(webHost, "Web host and reverse proxy", "Nginx container; image tagged by commit SHA", "Serves the compiled React application over HTTPS and routes /api/v1/ to the Back-End API")
+    Container(backend, "Back-End API", "Node.js / Express / JavaScript; image tagged by commit SHA", "REST API, authentication, authorization and business operations")
+  }
+}
+
+Deployment_Node(deiDatabase, "DEI PostgreSQL service", "DEI infrastructure template") {
+  ContainerDb(database, "Relational Database", "PostgreSQL 18", "Shared persistent application data; managed separately from the application VM")
+}
+
+Rel(operator, wf, "Pushes code, starts manual runs and reviews results", "HTTPS")
+Rel(wf, deploySettings, "Reads protected deployment settings")
+Rel(wf, artifacts, "Uploads sanitized logs, test results and metadata")
+Rel(wf, agent, "Transfers SHA-tagged image archives and invokes deployment", "SSH :22 via approved external access")
+Rel(agent, docker, "Loads images, runs Compose, checks health and restores releases", "Docker CLI / Compose")
+Rel(agent, state, "Records deployed revision and release history")
+Rel(backend, cfg, "Loads runtime configuration at startup", "Read-only environment file")
+Rel(backend, database, "Reads and writes application data", "Database Driver / TCP over DEI network")
+
+Rel(user, ui, "Uses")
+Rel(ui, webHost, "Requests the SPA and calls /api/v1/", "HTTPS; DEI network or VPN")
+Rel(webHost, backend, "Forwards /api/v1/ requests", "HTTP / JSON over Docker network")
+
+note right of wf
+  **Pre-deployment validation:**
+  - Back-End lint, migrations and coverage tests
+  - Front-End lint, Jest, health integration,
+    production build and bundle-secret scan
+  - Isolated PostgreSQL 18 for CI tests
+
+  **Triggers:** existing daily schedule and
+  workflow_dispatch; schedule is a cron setting
+end note
+
+note bottom of vm
+  SSH reachability from the GitHub-hosted runner is a prerequisite
+  and must use an approved external route. SSH is for deployment;
+  application access remains governed by SYS02.
+end note
+
+note bottom of backend
+  The Prolog service is not in this initial SYS01 deployment scope.
+end note
+
+SHOW_LEGEND()
+@enduml

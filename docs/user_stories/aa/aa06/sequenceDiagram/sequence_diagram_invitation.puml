@@ -1,0 +1,105 @@
+@startuml sequence_diagram_invitation
+skinparam shadowing true
+title AA06 - Invite, Persist and Replace Activation Invitation
+autonumber
+actor Administrator as Admin
+actor "Public registrant" as Registrant
+participant "AdminUserManagementPage" as AdminUI
+participant "LocalRegistrationPage (AA01)" as RegistrationPage
+participant "UserAdministrationApi" as UserAPI
+participant "UserController" as Controller
+participant "UserService" as Service
+participant "PostgresUnitOfWork" as UoW
+participant "UserRepository" as Users
+participant "RoleChangeRecordRepository" as Audit
+participant "ActivationInvitationRepository" as Invitations
+participant "InvitationTokenGenerator" as Token
+participant "InvitationDelivery" as Mail
+
+group Administrator invites a worker 
+  Admin -> AdminUI : enter name, email, role, activation method
+  note right of AdminUI
+    activationMethod is LOCAL or EXTERNAL.
+    The new account has no local credential.
+  end note
+  AdminUI -> UserAPI : inviteWorker(name, email, role, method)
+  UserAPI -> Controller : POST /api/v1/users/invitations
+  Controller -> Service : inviteWorker(dto, administrator)
+  Service -> UoW : withTransaction(work)
+  UoW --> Service : transaction context
+  Service -> Users : findByEmail(email, tx)
+  alt email is not associated with an account
+    Users --> Service : no user
+    Service -> Users : create inactive account with CUSTOMER + requested role
+    Service -> Audit : save initial role assignment records
+    Service -> Token : generate token and hash
+    Token --> Service : raw token + token hash
+    Service -> Invitations : save PENDING(token hash, method, recipient, expiry, tx)
+  else email already belongs to an account
+    Users --> Service : existing user
+    alt existing account is active
+      Service -> Users : add requested role if missing
+      opt role set changed
+        Service -> Audit : save role-change record
+      end
+      note over Service, Mail
+        No activation invitation is issued for an active account.
+      end note
+    else previously active account
+      break account was previously active
+        Service -> UoW : rollback; no invitation is issued
+        Service --> Controller : 409; use administrative reactivation
+        Controller --> UserAPI : 409 Conflict
+        UserAPI --> AdminUI : show reactivation guidance
+      end
+    else never-activated inactive account
+      Service -> Users : add requested role if missing
+      Service -> Audit : save role-change record if changed
+      Service -> Token : generate replacement token and hash
+      Token --> Service : raw token + token hash
+      Service -> Invitations : invalidate pending and save replacement (tx)
+      note right of Invitations
+        Preserve the existing method. If a legacy invitation's
+        method is unknown, require an explicit selected method.
+      end note
+    end
+  end
+  Service -> UoW : commit transaction
+  UoW --> Service : committed
+  opt a first or replacement invitation was issued
+    Service -> Mail : send email after commit
+    alt email delivered
+      Mail --> Service : SENT
+    else delivery failed
+      Mail --> Service : FAILED, retryable
+      note right of Service
+        The account remains inactive. A retry replaces the pending
+        invitation and preserves its activation method.
+      end note
+    end
+  end
+  Service --> Controller : safe result (no raw token)
+  Controller --> UserAPI : 201 Created / delivery result
+  UserAPI --> AdminUI : display result
+end
+
+group Public local registration (AA01)
+  Registrant -> RegistrationPage : submit local registration
+  RegistrationPage -> UserAPI : register(name, email, password)
+  UserAPI -> Controller : POST /api/v1/users/register
+  Controller -> Service : register(dto)
+  Service -> UoW : withTransaction(create inactive account + CUSTOMER + LOCAL invitation)
+  UoW --> Service : committed registration
+  Service -> Mail : send LOCAL activation email after commit
+  Mail --> Service : delivery result
+  Service --> Controller : registration result (no raw token)
+  Controller --> UserAPI : 201 Created
+  UserAPI --> RegistrationPage : show delivery result
+end
+
+note over Admin, Mail
+  AA07 reads activation_method from the invitation and owns invitation
+  inspection, local/external activation, identity validation and consumption.
+  Existing /activate?activationToken=... links remain unchanged.
+end note
+@enduml

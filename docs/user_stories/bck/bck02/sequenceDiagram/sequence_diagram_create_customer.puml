@@ -1,0 +1,127 @@
+@startuml SD01_create_customer
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - BCK02 Create Customer (POST /api/v1/customers)
+
+actor "LaPrizza Manager" as LaPrizzaManager
+participant CustomerRoutes
+participant AuthMiddleware
+participant RoleMiddleware
+participant "ValidationMiddleware\n(Joi)" as ValidationMiddleware
+participant CustomerController
+participant CustomerService
+participant "CustomerRepository\n(Infrastructure)" as CustomerRepository
+database "Database\n(Persistence)" as Database
+participant CustomerMapper
+
+LaPrizzaManager -> CustomerRoutes : POST /api/v1/customers\n{ name, phoneNumber, email,\naddresses[], dietaryRestrictions[] }
+activate CustomerRoutes
+activate LaPrizzaManager
+
+' Security & Middlewares
+CustomerRoutes -> AuthMiddleware : verifyToken(req, res, next)
+activate AuthMiddleware
+alt Invalid or Missing Token
+    AuthMiddleware --> LaPrizzaManager : 401 Unauthorized\n{ error: "Unauthorized" }
+end
+AuthMiddleware --> CustomerRoutes : next()
+deactivate AuthMiddleware
+
+CustomerRoutes -> RoleMiddleware : requireRole("MANAGER")
+activate RoleMiddleware
+alt Lacks MANAGER Role
+    RoleMiddleware --> LaPrizzaManager : 403 Forbidden\n{ error: "Forbidden: Access denied" }
+end
+RoleMiddleware --> CustomerRoutes : next()
+deactivate RoleMiddleware
+
+CustomerRoutes -> ValidationMiddleware : validate(req.body, createCustomerSchema)
+note right of ValidationMiddleware
+    name, phoneNumber and email are required.
+    addresses and dietaryRestrictions are optional.
+    dietaryRestriction.allergenId: integer 1..14.
+end note
+activate ValidationMiddleware
+alt Invalid Customer Data
+    ValidationMiddleware --> LaPrizzaManager : 400 Bad Request\n{ error: "Invalid customer data" }
+end
+ValidationMiddleware --> CustomerRoutes : next()
+deactivate ValidationMiddleware
+
+' Application Logic
+CustomerRoutes -> CustomerController : create(req, res)
+activate CustomerController
+
+CustomerController -> CustomerService : createCustomer(createCustomerDTO)
+activate CustomerService
+
+' Value Object Validation
+CustomerService -> CustomerService : CustomerName.create(name)\nPhoneNumber.create(phoneNumber)\nEmail.create(email)\nContactInfo.create(phoneNumber, email)\nAddressId.create(addressId) [0..*]\nAddress.create(addressId, street, postalCode, city) [0..*]\nAllergenId.create(allergenId) [0..*]\nDietaryRestriction.create(name, description, allergenId) [0..*]
+alt Invalid Value Object
+    CustomerService --> CustomerController : throw DomainError(message)
+    CustomerController --> LaPrizzaManager : 400 Bad Request\n{ error: message }
+end
+
+' Email Uniqueness
+CustomerService -> CustomerRepository : findByEmail(email)
+activate CustomerRepository
+CustomerRepository -> Database : findOne({ email })
+activate Database
+Database --> CustomerRepository : customerDoc / null
+deactivate Database
+CustomerRepository --> CustomerService : customer / null
+deactivate CustomerRepository
+
+alt Email Already Registered
+    CustomerService --> CustomerController : throw DuplicateCustomerError("Email already registered")
+    CustomerController --> LaPrizzaManager : 409 Conflict\n{ error: "Email already registered" }
+end
+
+' Identifier generation
+CustomerService -> CustomerRepository : nextId()
+activate CustomerRepository
+CustomerRepository -> Database : incrementSequence("customer")
+activate Database
+Database --> CustomerRepository : sequenceValue
+deactivate Database
+CustomerRepository --> CustomerService : CustomerId ("CUST-" + zero-padded value)
+deactivate CustomerRepository
+
+' Aggregate Creation
+CustomerService -> CustomerService : Customer.create(customerId, name, contactInfo,\naddresses, dietaryRestrictions)
+
+' Persistence
+CustomerService -> CustomerRepository : save(customer)
+activate CustomerRepository
+CustomerRepository -> CustomerMapper : toPersistence(customer)
+activate CustomerMapper
+CustomerMapper --> CustomerRepository : CustomerPersistenceModel
+deactivate CustomerMapper
+CustomerRepository -> Database : insert(customerDoc)
+activate Database
+Database --> CustomerRepository : savedCustomerDoc
+deactivate Database
+CustomerRepository -> CustomerMapper : toDomain(savedCustomerDoc)
+activate CustomerMapper
+CustomerMapper --> CustomerRepository : customer
+deactivate CustomerMapper
+CustomerRepository --> CustomerService : customer
+deactivate CustomerRepository
+
+' Response Mapping
+CustomerService -> CustomerMapper : toDTO(customer)
+activate CustomerMapper
+CustomerMapper --> CustomerService : customerResponseDTO
+deactivate CustomerMapper
+
+CustomerService --> CustomerController : customerResponseDTO
+deactivate CustomerService
+
+CustomerController --> LaPrizzaManager : 201 Created\n{ id, name, phoneNumber, email, addresses[],\ndietaryRestrictions[] }
+deactivate CustomerController
+deactivate CustomerRoutes
+deactivate LaPrizzaManager
+
+@enduml

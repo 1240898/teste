@@ -1,0 +1,29 @@
+$kind: http-request
+url: http://localhost:8080/api/v1/auth/renew
+method: POST
+headers:
+  X-CSRF-Token: "{{csrfToken}}"
+auth:
+  type: inherit
+  credentials:
+    id: ba444714-3e66-475d-9e4a-832b0e471d08
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("Session renewal succeeds", () => {
+        pm.response.to.have.status(200);
+      });
+
+      const body = pm.response.json();
+      const setCookie = pm.response.headers.get("Set-Cookie") || "";
+      pm.test("Renewal rotates CSRF token and sets a new HttpOnly cookie", () => {
+        pm.expect(body.csrfToken).to.be.a("string").and.not.empty;
+        pm.expect(body.csrfToken).not.to.eql(pm.environment.get("csrfToken"));
+        pm.expect(setCookie).to.match(/lap_session=.*HttpOnly/i);
+      });
+
+      pm.environment.set("accessToken", body.accessToken);
+      pm.environment.set("csrfToken", body.csrfToken);
+      pm.environment.set("idleExpiresAt", body.idleExpiresAt);
+    language: text/javascript
+order: 5000

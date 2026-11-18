@@ -1,0 +1,61 @@
+@startuml
+actor Recipient
+participant ActivationPage as SPA
+participant ActivationApi as Client
+participant ActivationController as API
+participant ActivationService as App
+participant IActivationRepository as Repo
+participant "IPasswordHasher\n(BcryptPasswordHasher adapter)" as Hasher
+Recipient -> SPA : Open invitation link
+note right of SPA : Read activationToken and clear the query parameter.
+SPA -> Client : inspect(token)
+Client -> API : POST /activation/inspect
+API -> App : inspect(token)
+App -> Repo : findEligibleBinding(SHA-256(token), now)
+break Unavailable invitation
+ App --> API : Invitation unavailable
+ API --> Client : 400
+ Client --> SPA : Show recovery guidance
+end
+App --> API : InvitationMethodDTO(method)
+API --> Client : 200 method
+Client --> SPA : InvitationMethodDTO
+alt Method is EXTERNAL
+ ref over SPA, App : SD 2 — startExternal(token)
+else Method is LOCAL
+loop Initial token-only submission and retry if password setup is required
+ SPA -> Client : local(token, password?)
+ Client -> API : POST /activation/local
+ alt Malformed input
+  API --> Client : 400 validation error
+ else Valid request shape
+  API -> App : activateLocal(token, password?)
+  App -> Repo : findBinding(SHA-256(token))
+  alt Unknown token
+   App --> API : Invitation unavailable
+  else Supplied password fails local policy
+   App --> API : 400 validation error
+  else Binding and input eligible
+   opt First password supplied
+    App -> Hasher : hash(password)
+    Hasher --> App : passwordHash
+   end
+   note right of App
+    Build the domain ActivationCredential.local(...):
+    Password.createFromHash(passwordHash) when supplied,
+    or no password when confirming with the token alone.
+   end note
+   ref over App, Repo : SD 3 — commitActivation(binding, credential)
+  end
+  API --> Client : 200 nextSignIn or error
+ end
+ Client --> SPA : ActivationResult or mapped error
+ alt Valid invitation requires first password
+  SPA --> Recipient : Show password setup form
+  Recipient -> SPA : Set password and submit
+ else Success or other error
+  SPA --> Recipient : Show confirmation and local sign-in, or recovery guidance
+ end
+end
+end
+@enduml

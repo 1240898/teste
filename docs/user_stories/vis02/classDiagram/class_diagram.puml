@@ -1,0 +1,317 @@
+@startuml class_diagram
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam linetype ortho
+
+title Class Diagram (Design) - VIS02 Kitchen Layout and Equipment
+
+' -----------------------------------------------------------------------------
+' VIS01 - engine and extension point (reused unchanged, only the touch points)
+' -----------------------------------------------------------------------------
+package "Front-End (SPA) - visualization (VIS01, reused)" <<Rectangle>> {
+
+    class KitchenViewerPage <<page, default export>> {
+        + request: ModuleRequest
+        + render(): ReactNode
+    }
+    note right of KitchenViewerPage
+        Extended by VIS02: default module factories, in order:
+        1. () => new KitchenLayoutModule({ createMaterialFactory })  (VIS02)
+        2. AssemblyLineModule (VIS03)
+        3. lighting (VIS05) / light controls (VIS06)
+        4. camera controls (VIS07) - SINGLE owner of the camera pose
+           (initial view and Reset view); VIS02 never moves the camera
+        KitchenFloorModule (VIS01 baseline) is removed.
+    end note
+
+    class ViewerEngine {
+        + load(configuration, assets, factories, options: { signal }): Promise<void>
+        + start(): void
+        + dispose(): void
+    }
+    note bottom of ViewerEngine
+        Unchanged (VIS01 BR 9). Registers each module BEFORE
+        build(); a throwing build -> releaseAll() +
+        ViewerEngineError{ phase: "build", moduleName, cause }
+        -> viewer state "failed".
+    end note
+
+    interface SceneModule {
+        + name: string
+        + build(context: SceneContext): void | Promise<void>
+        + update(deltaSeconds: number): void
+        + dispose(): void
+    }
+
+    class SceneContext <<DTO>> {
+        + scene: Scene
+        + camera: PerspectiveCamera
+        + renderer: WebGLRenderer
+        + domElement: HTMLCanvasElement
+        + configuration: ActiveKitchenConfigurationDTO
+        + assets: LoadedAssets
+        + signal: AbortSignal
+    }
+
+    class LoadedAssets {
+        + model(assetId): GLTF
+        + texture(assetId): Texture
+        + dispose(): void
+    }
+        note bottom of LoadedAssets
+        Every model and texture of "assets" already
+        loaded (all-or-nothing, VIS01 BR 14), from the
+        URLs resolved by the back end (WEB06 catalogue).
+        Equipment model files are supplied by VIS02:
+        glTF / GLB, metres, Y-up, origin at the bottom
+        centre, front facing +Z (usVIS02 2.4.1, 3.8.1).
+        OWNS their geometries / materials / textures:
+        VIS02 never disposes them (BR 10).
+    end note
+
+    class ActiveKitchenConfigurationDTO <<DTO>> {
+        + id: string
+        + version: number
+        + content: KitchenLayoutDTO
+        + assets: Map<assetId, { kind, format, url }>
+    }
+}
+
+' -----------------------------------------------------------------------------
+' VIS02 - scene module, room and shared element construction
+' -----------------------------------------------------------------------------
+package "Front-End (SPA) - visualization/scene (VIS02)" <<Rectangle>> {
+
+    class KitchenLayoutModule {
+        + name: string = "kitchen-layout"
+        - root: Group | null
+        - roomBuilder: KitchenRoomBuilder
+        - elementFactory: SceneElementFactory | null
+        - shapes: ProceduralShapeFactory | null
+        - materials: KitchenMaterialFactory | null
+        - createMaterialFactory: (assets: LoadedAssets) => KitchenMaterialFactory
+        - disposed: boolean
+        + constructor(options: { createMaterialFactory, roomBuilder?, elementFactory? })
+        + build(context: SceneContext): void
+        + update(deltaSeconds: number): void
+        + dispose(): void
+    }
+    note right of KitchenLayoutModule
+        build() - synchronous (assets already preloaded):
+        1. if context.signal.aborted -> return (nothing created)
+        2. materials = createMaterialFactory(context.assets)
+           shapes = new ProceduralShapeFactory()
+        3. root = Group "layout:root" (userData: id, version)
+        4. room = roomBuilder.build(dimensions, floor / walls
+           material, materials) -> "layout:room"
+        5. for each element with category EQUIPMENT:
+           elementFactory.create(element) -> "layout:equipment"
+        6. scene.add(root)  (ONLY when complete)
+        The camera is never read nor written (BR 12, VIS07).
+        Any ElementBuildError propagates (fail closed, BR 11).
+        update(): no-op (equipment is static).
+        dispose(): idempotent; remove root; release room
+        geometries, shapes, materials - each step in its own
+        try/catch; NEVER LoadedAssets resources.
+    end note
+
+    class KitchenRoomBuilder {
+        + build(dimensions, floorMaterial: MaterialProperties, wallsMaterial: MaterialProperties, materials: KitchenMaterialFactory): RoomObjects
+        + dispose(room: RoomObjects): void
+    }
+    note right of KitchenRoomBuilder
+        Floor: PlaneGeometry(width, depth) rotated to y = 0,
+        centred at the origin. Walls: PlaneGeometry(length,
+        height) on the four borders, front face INTO the room,
+        side = FrontSide (dollhouse view from outside).
+        No ceiling. UVs in metres (1 UV unit = 1 m).
+        Floor / walls: receiveShadow = true;
+        walls: castShadow = false.
+        Names: room:floor, room:wall:NORTH|SOUTH|EAST|WEST.
+    end note
+
+    class RoomObjects <<DTO>> {
+        + group: Group
+        + floor: Mesh
+        + walls: Map<KitchenWall, Mesh>
+        + geometries: BufferGeometry[]
+    }
+
+    class SceneElementFactory <<shared with VIS03>> {
+        - assets: LoadedAssets
+        - shapes: ProceduralShapeFactory
+        - materials: KitchenMaterialFactory
+        + constructor(deps: { assets, shapes, materials })
+        + create(element: SceneElementDTO): Group
+        + release(root: Group): void
+    }
+    note bottom of SceneElementFactory
+        One element -> one root Group:
+        name = element.id;
+        userData = { elementId, category, type, name }.
+        PROCEDURAL: Mesh(shapes.geometry(shape, size),
+          materials.create(element.material))
+        ASSET: SkeletonUtils.clone(assets.model(assetId).scene)
+          (geometry / material SHARED with LoadedAssets);
+          if element.material: materials.applyOverride(clone,
+          element.material) (WEB06 ALN-6)
+        Then applyPlacement(root, placement) and shadow flags
+        (castShadow = receiveShadow = true).
+        Never reads a URL (AC 3). Errors -> ElementBuildError.
+        release(): skeleton.dispose() of skinned clones only.
+    end note
+
+    class ProceduralShapeFactory {
+        - cache: Map<string, BufferGeometry>
+        + geometry(shape: string, size: Vector3): BufferGeometry
+        + dispose(): void
+    }
+    note right of ProceduralShapeFactory
+        Unit shape (BOX 1x1x1, CYLINDER r 0.5 h 1,
+        SPHERE r 0.5, DOME half sphere stretched to h 1)
+        scaled to size INSIDE the geometry and moved so
+        that its bottom is at y = 0: bounding box == size,
+        every size component finite and > 0 (else
+        ElementBuildError "invalid-number"),
+        origin at the bottom centre (WEB06 2.4.3, BR 7).
+        Cache key "shape|x|y|z"; dispose() releases each once.
+    end note
+
+    class placementTransform <<module>> {
+        + applyPlacement(root: Object3D, placement: PlacementDTO, options?: { static: boolean = true }): void
+    }
+    note right of placementTransform
+        position (m), rotation (deg -> MathUtils.degToRad,
+        Euler order "XYZ"), scale; T * R * S on the root only.
+        static: updateMatrix(); matrixAutoUpdate = false.
+        ElementBuildError("invalid-number") ONLY for a non-finite
+        component or a scale component <= 0. Zero / negative
+        position and rotation are valid (WEB06 bounds, [-360, 360]).
+    end note
+
+    class ElementBuildError <<error>> {
+        + elementId: string
+        + reason: "unknown-shape" | "invalid-number" | "asset-missing" | "asset-kind"
+    }
+
+    class sceneObjectNames <<module>> {
+        + LAYOUT_ROOT = "layout:root"
+        + LAYOUT_ROOM = "layout:room"
+        + LAYOUT_EQUIPMENT = "layout:equipment"
+        + LAYOUT_ASSEMBLY_LINE = "layout:assembly-line"
+        + floor(): string
+        + wall(wall: KitchenWall): string
+    }
+    note bottom of sceneObjectNames
+        ":" is not allowed in element ids, so these
+        names never clash with an element (BR 3).
+    end note
+}
+
+' -----------------------------------------------------------------------------
+' OTHER VIS STORIES - contracts used by / using VIS02 (reference only)
+' -----------------------------------------------------------------------------
+package "Other VIS stories (reference)" <<Rectangle>> {
+
+    interface KitchenMaterialFactory <<VIS04>> {
+        + create(properties: MaterialProperties): Material
+        + applyOverride(root: Object3D, properties: MaterialProperties): void
+        + dispose(): void
+    }
+    note bottom of KitchenMaterialFactory
+        VIS02-ALN-2. One instance per build,
+        created by createMaterialFactory(assets).
+        MeshStandardMaterial (PBR) with the texture
+        set of LoadedAssets; dispose() releases only
+        the materials it created (textures belong
+        to LoadedAssets). Room textures: RepeatWrapping.
+    end note
+
+    class AssemblyLineModule <<VIS03>> {
+        + build(context: SceneContext): void
+    }
+    note bottom of AssemblyLineModule
+        VIS02-ALN-3: builds ONLY ASSEMBLY_LINE elements
+        with SceneElementFactory under
+        "layout:assembly-line"; registered after
+        KitchenLayoutModule.
+    end note
+
+    class CameraControlsModule <<VIS07>> {
+        + build(context: SceneContext): void
+    }
+    note bottom of CameraControlsModule
+        VIS02-ALN-5: SINGLE owner of the camera
+        pose. One function computes the initial
+        view and Reset view: target (0, 0, 0);
+        distance D from the 8 corners of the room
+        (width, depth, height) and the current
+        aspect (usVIS02 3.8.3). Limits from the
+        same D: maxDistance = zoomOutFactor * D
+        (>= D), far = 1.1 * (maxDistance + rho);
+        both recomputed when the aspect changes.
+    end note
+}
+
+' -----------------------------------------------------------------------------
+' THIRD-PARTY LIBRARY
+' -----------------------------------------------------------------------------
+package "three (npm)" <<Rectangle>> {
+    class Group
+    class Mesh
+    class PlaneGeometry
+    class BoxGeometry
+    class CylinderGeometry
+    class SphereGeometry
+    class MathUtils
+    class SkeletonUtils <<three/addons>>
+    class PerspectiveCamera
+}
+
+
+' -----------------------------------------------------------------------------
+' RELATIONSHIPS
+' -----------------------------------------------------------------------------
+KitchenViewerPage ..> KitchenLayoutModule : default module factory >
+ViewerEngine "1" o-- "0..*" SceneModule : registers, builds, disposes >
+ViewerEngine ..> SceneContext : creates >
+SceneContext --> ActiveKitchenConfigurationDTO
+SceneContext --> LoadedAssets
+
+KitchenLayoutModule ..|> SceneModule
+AssemblyLineModule ..|> SceneModule
+CameraControlsModule ..|> SceneModule
+
+KitchenLayoutModule ..> SceneContext : reads >
+KitchenLayoutModule --> KitchenRoomBuilder : build room >
+KitchenLayoutModule --> SceneElementFactory : create EQUIPMENT elements >
+KitchenLayoutModule --> ProceduralShapeFactory : owns (one per build) >
+KitchenLayoutModule --> KitchenMaterialFactory : owns (one per build) >
+KitchenLayoutModule ..> sceneObjectNames
+KitchenLayoutModule ..> ElementBuildError : propagates >
+
+KitchenRoomBuilder ..> RoomObjects : creates >
+KitchenRoomBuilder ..> KitchenMaterialFactory : create(floor / walls) >
+KitchenRoomBuilder ..> sceneObjectNames
+
+SceneElementFactory --> ProceduralShapeFactory : geometry(shape, size) >
+SceneElementFactory --> KitchenMaterialFactory : create / applyOverride >
+SceneElementFactory --> LoadedAssets : model(assetId) >
+SceneElementFactory ..> placementTransform : applyPlacement() >
+SceneElementFactory ..> ElementBuildError : throws >
+AssemblyLineModule --> SceneElementFactory : create ASSEMBLY_LINE elements >
+CameraControlsModule ..> PerspectiveCamera : initial pose + Reset view\n(single owner) >
+
+KitchenRoomBuilder --> PlaneGeometry
+KitchenRoomBuilder --> Mesh
+SceneElementFactory --> Group
+SceneElementFactory --> Mesh
+SceneElementFactory --> SkeletonUtils : clone() >
+ProceduralShapeFactory --> BoxGeometry
+ProceduralShapeFactory --> CylinderGeometry
+ProceduralShapeFactory --> SphereGeometry
+placementTransform --> MathUtils : degToRad() >
+
+
+@enduml

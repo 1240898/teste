@@ -1,0 +1,203 @@
+@startuml LaPrizzaDomainModel
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam classAttributeIconSize 0
+hide methods
+
+title Domain Model Excerpt - VIS01 3D Module Integration (read-only view of WEB06 concepts)
+
+note as N0
+    Every concept below is OWNED by WEB06 (see usWEB06 §2.5),
+    persisted in PostgreSQL (ADR-010; layout stored as JSONB).
+    VIS01 introduces NO domain concept: it only READS the ACTIVE
+    configuration through GET /kitchen-configurations/active and
+    renders it. Only the parts the viewer uses are shown.
+end note
+
+' -----------------------------------------------------------------------------
+' KITCHEN CONFIGURATION AGGREGATE (WEB06) - read only by VIS01
+' -----------------------------------------------------------------------------
+package "Kitchen Configuration Aggregate (WEB06)" <<Rectangle>> {
+
+    class KitchenConfiguration <<entity>> <<aggregateRoot>> {
+        + version : Integer
+        + activatedAt : DateTime
+    }
+    note right of KitchenConfiguration
+        VIS01 renders ONLY the configuration
+        whose status is ACTIVE (WEB06 BR 13).
+        id and version are shown / used unchanged
+        (WEB06 3.4.5 step 7).
+    end note
+
+    class KitchenConfigurationId <<vo>> {
+        + value : String
+    }
+    note right of KitchenConfigurationId
+        Example: "KCF-00002".
+    end note
+
+    class ConfigurationName <<vo>> {
+        + value : String
+    }
+
+    enum ConfigurationStatus <<enum>> {
+        ACTIVE
+        INACTIVE
+    }
+
+    class KitchenLayout <<vo>> {
+        + schemaVersion : Integer = 1
+        + units : String = "meters"
+    }
+    note right of KitchenLayout
+        The "content" of the answer.
+        The viewer accepts only schemaVersion 1
+        (otherwise state "invalid").
+    end note
+
+    class KitchenDimensions <<vo>> {
+        + width : Decimal
+        + depth : Decimal
+        + height : Decimal
+    }
+    note right of KitchenDimensions
+        Metres. The centre of the floor is the
+        scene origin and the initial camera
+        target (VIS01 BR 10, VIS07 AC 1).
+    end note
+
+    class AssemblyLine <<vo>> {
+    }
+
+    enum KitchenWall <<enum>> {
+        NORTH
+        SOUTH
+        EAST
+        WEST
+    }
+
+    class SceneElement <<entity>> {
+        + id : String
+        + name : String [0..1]
+    }
+    note bottom of SceneElement
+        Equipment (VIS02) and assembly-line
+        elements (VIS03). VIS01 forwards them
+        unchanged to the scene modules; the
+        element id is a stable reference for
+        Sprint 3 animation.
+    end note
+
+    enum ElementCategory <<enum>> {
+        EQUIPMENT
+        ASSEMBLY_LINE
+    }
+
+    class ElementType <<vo>> {
+        + value : String
+    }
+
+    class Placement <<vo>> {
+        + position : Vector3
+        + rotation : Vector3
+        + scale : Vector3
+    }
+
+    abstract class ModelReference <<vo>> {
+    }
+
+    class AssetModelReference <<vo>> {
+        + assetId : String
+    }
+
+    class ProceduralModelReference <<vo>> {
+        + shape : String
+        + size : Vector3
+    }
+
+    class MaterialProperties <<vo>> {
+        + color : String [0..1]
+        + roughness : Decimal [0..1]
+        + metalness : Decimal [0..1]
+        + colorMapAssetId : String [0..1]
+        + roughnessMapAssetId : String [0..1]
+        + normalMapAssetId : String [0..1]
+        + bumpMapAssetId : String [0..1]
+    }
+
+    KitchenConfiguration "1" *-- "1" KitchenConfigurationId : identified by >
+    KitchenConfiguration "1" *-- "1" ConfigurationName : has >
+    KitchenConfiguration "1" --> "1" ConfigurationStatus : current status >
+    KitchenConfiguration "1" *-- "1" KitchenLayout : content >
+    KitchenLayout "1" *-- "1" KitchenDimensions : has >
+    KitchenLayout "1" *-- "1" AssemblyLine : has >
+    AssemblyLine "1" --> "1" KitchenWall : placed on >
+    KitchenLayout "1" *-- "9..300" SceneElement : contains >
+    SceneElement "1" --> "1" ElementCategory : belongs to >
+    SceneElement "1" *-- "1" ElementType : is of >
+    SceneElement "1" *-- "1" Placement : placed with >
+    SceneElement "1" *-- "1" ModelReference : represented by >
+    SceneElement "1" *-- "0..1" MaterialProperties : rendered with >
+    ModelReference <|-- AssetModelReference
+    ModelReference <|-- ProceduralModelReference
+}
+
+' -----------------------------------------------------------------------------
+' KITCHEN ASSET CATALOGUE (WEB06) - resolved into URLs in the answer
+' -----------------------------------------------------------------------------
+package "Kitchen Asset Aggregate (WEB06)" <<Rectangle>> {
+
+    class KitchenAsset <<entity>> <<aggregateRoot>> {
+        + format : String
+    }
+    note right of KitchenAsset
+        The answer contains ONLY the referenced
+        assets, as assets[assetId] = { kind, format,
+        url }. VIS01 preloads ALL of them before
+        building the scene (WEB06 3.4.5 step 3).
+    end note
+
+    class KitchenAssetId <<vo>> {
+        + value : String
+    }
+
+    enum AssetKind <<enum>> {
+        MODEL
+        TEXTURE
+    }
+
+    KitchenAsset "1" *-- "1" KitchenAssetId : identified by >
+    KitchenAsset "1" --> "1" AssetKind : is a >
+}
+
+' -----------------------------------------------------------------------------
+' USER AGGREGATE (existing, AA03) - only the part that decides viewer access
+' -----------------------------------------------------------------------------
+package "User Aggregate" <<Rectangle>> {
+
+    class User <<entity>> <<aggregateRoot>> {
+        + active : boolean
+    }
+
+    enum UserRole <<enum>> {
+        ADMINISTRATOR
+        MANAGER
+        EMPLOYEE
+        CUSTOMER
+    }
+    note right of UserRole
+        Table 1 - kitchen viewer:
+        - MANAGER, EMPLOYEE: consult
+        - CUSTOMER, ADMINISTRATOR (alone),
+          Guest: no access
+    end note
+
+    User "1" --> "1..*" UserRole : assigned >
+}
+
+AssetModelReference ..> KitchenAsset : refers to (kind = MODEL) >
+MaterialProperties ..> KitchenAsset : refers to (kind = TEXTURE) >
+User ..> KitchenConfiguration : consults ACTIVE\n(MANAGER / EMPLOYEE) >
+
+@enduml

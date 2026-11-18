@@ -1,0 +1,123 @@
+@startuml sequence_diagram_role_authorization
+skinparam shadowing true
+autonumber
+title AA05 - Role-Based Authorization and Audit Logging
+
+actor "System User" as User
+participant "ProtectedRoute" as ProtectedRoute
+participant "AuthContext" as AuthContext
+participant "AccessDeniedPage" as DeniedPage
+participant "apiClient" as Client
+participant "FeatureRoutes" as Routes
+participant "AuthorizationAuditMiddleware" as AuditMW
+participant "AuthMiddleware" as Auth
+participant "UserService" as UserService
+participant "RoleMiddleware" as RoleMW
+participant "AuthorizationPolicy" as Policy
+participant "FeatureController" as Controller
+participant "ISecurityLogger" as Logger
+
+User -> ProtectedRoute : navigate to protected feature
+activate ProtectedRoute
+activate User
+ProtectedRoute -> AuthContext : checkAccess(requiredRoles)
+activate AuthContext
+AuthContext --> ProtectedRoute : authenticated user and roles
+deactivate AuthContext
+
+alt no required role in local route table
+  ProtectedRoute -> DeniedPage : render AccessDeniedPage
+  activate DeniedPage
+  DeniedPage --> User : show denied view
+  deactivate DeniedPage
+else local role check passes
+  ProtectedRoute -> Client : request(endpoint, options)
+  activate Client
+  Client -> Routes : HTTP request + Authorization header
+  activate Routes
+  Routes -> AuditMW : auditDenials(req, res, next)
+  activate AuditMW
+  AuditMW --> Routes : next()
+
+  Routes -> Auth : verifyToken(request)
+  activate Auth
+  Auth -> UserService : resolveActor(token)
+  activate UserService
+  UserService --> Auth : current Actor with roles / authentication error
+  deactivate UserService
+
+  alt unauthenticated or invalid token
+    Auth --> Routes : 401 Unauthorized
+    Routes --> AuditMW : completed response (401)
+    AuditMW -> Logger : record(UNAUTHENTICATED, statusCode=401, reasonCode=MISSING_OR_INVALID_TOKEN)
+    activate Logger
+    Logger --> AuditMW : recorded
+    deactivate Logger
+    AuditMW --> Client : 401 Unauthorized (no-store)
+  else authenticated actor
+    Auth --> Routes : request.user = Actor
+    deactivate Auth
+    Routes -> RoleMW : requireOperation(operationId)
+    activate RoleMW
+    RoleMW -> Policy : rolesFor(operationId)
+    activate Policy
+    Policy --> RoleMW : allowedRoles[]
+    deactivate Policy
+
+    alt none of the actor's roles is allowed
+      RoleMW --> Routes : 403 Forbidden
+      deactivate RoleMW
+      Routes --> AuditMW : completed response (403)
+      AuditMW -> Logger : record(FORBIDDEN, statusCode=403, reasonCode=ROLE_NOT_ALLOWED)
+      activate Logger
+      Logger --> AuditMW : recorded
+      deactivate Logger
+      AuditMW --> Client : 403 Forbidden (no-store)
+    else at least one actor role is allowed
+      RoleMW --> Routes : next()
+      deactivate RoleMW
+      Routes -> Controller : handleRequest(req, res)
+      activate Controller
+      Controller --> Routes : operation result
+      deactivate Controller
+      Routes --> AuditMW : completed successful response
+      AuditMW --> Client : HTTP success response
+    end
+  end
+
+  deactivate AuditMW
+  deactivate Routes
+  Client --> ProtectedRoute : response
+  deactivate Client
+  alt API response is 401 Unauthorized
+    ProtectedRoute -> AuthContext : handleSessionExpired() (AA04)
+    activate AuthContext
+    AuthContext --> ProtectedRoute : session cleared / renewal completed
+    deactivate AuthContext
+    ProtectedRoute --> User : redirect to login (AA04 session-expiration flow)
+  else API response is 403 Forbidden
+    ProtectedRoute -> DeniedPage : render AccessDeniedPage
+    activate DeniedPage
+    DeniedPage --> User : show denied feedback without protected data
+    deactivate DeniedPage
+  else request succeeds
+    ProtectedRoute --> User : display protected view
+  end
+end
+
+deactivate ProtectedRoute
+deactivate User
+
+note over AuditMW,Logger
+  Audit writes are awaited and retried once for transient persistence failure.
+  If retry fails, report a sanitized requestId through protected operational
+  alerting and preserve the original 401/403 response; never fail open.
+end note
+
+note over RoleMW,Policy
+  A user with multiple roles is authorized when any role is allowed
+  for this operation. This role check does not bypass ownership checks
+  required by customer-data operations; see the ownership SD.
+  The API is authoritative (WEB03).
+end note
+@enduml

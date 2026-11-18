@@ -1,0 +1,181 @@
+@startuml class_diagram
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam linetype ortho
+
+title Class Diagram (Design) - BCK03 Product Category Management
+
+' -----------------------------------------------------------------------------
+' PRESENTATION LAYER (API)
+' -----------------------------------------------------------------------------
+package "Presentation Layer (API)" <<Rectangle>> {
+    class ProductCategoryRoutes {
+        + setupRoutes(): Router
+    }
+
+    class ProductCategoryController {
+        - categoryService: ProductCategoryService
+        + createCategory(req: Request, res: Response): Promise<void>
+        + updateCategory(req: Request, res: Response): Promise<void>
+        + getAllCategories(req: Request, res: Response): Promise<void>
+        + getCategoryById(req: Request, res: Response): Promise<void>
+        + deleteCategory(req: Request, res: Response): Promise<void>
+    }
+
+    class AuthMiddleware {
+        + verifyToken(req: Request, res: Response, next: NextFunction): void
+    }
+
+    class RoleMiddleware {
+        + requireRole(...roles: UserRole[]): Middleware
+    }
+
+    class ValidationMiddleware {
+        + validate(schema: JoiSchema): Middleware
+    }
+}
+
+' -----------------------------------------------------------------------------
+' APPLICATION LAYER
+' -----------------------------------------------------------------------------
+package "Application Layer" <<Rectangle>> {
+    class ProductCategoryService {
+        - categoryRepository: IProductCategoryRepository
+        - categoryMapper: ProductCategoryMapper
+        + createCategory(dto: CreateCategoryDTO): Promise<CategoryResponseDTO>
+        + updateCategory(id: string, dto: UpdateCategoryDTO): Promise<CategoryResponseDTO>
+        + listCategories(filters?: {name?, id?}): Promise<CategoryResponseDTO[]>
+        + getCategoryById(id: string): Promise<CategoryResponseDTO>
+        + deleteCategory(id: string): Promise<void>
+    }
+
+    class ProductCategoryMapper {
+        + toDomain(dto: CreateCategoryDTO, id: CategoryId): ProductCategory
+        + toDTO(category: ProductCategory): CategoryResponseDTO
+        + toDTOList(categories: ProductCategory[]): CategoryResponseDTO[]
+    }
+
+    package "DTOs" <<Rectangle>> {
+        class CreateCategoryDTO <<dto>> {
+            + name: string
+        }
+
+        class UpdateCategoryDTO <<dto>> {
+            + name: string
+        }
+
+        class CategoryResponseDTO <<dto>> {
+            + id: string
+            + name: string
+            + createdAt: string
+            + updatedAt: string
+        }
+    }
+}
+
+' -----------------------------------------------------------------------------
+' DOMAIN LAYER
+' -----------------------------------------------------------------------------
+package "Domain Layer" <<Rectangle>> {
+    class ProductCategory <<entity>> <<aggregateRoot>> {
+        - id: CategoryId
+        - name: CategoryName
+        - createdAt: Date
+        - updatedAt: Date
+        + create(name: CategoryName, id: CategoryId): ProductCategory
+        + restore(state): ProductCategory
+        + updateName(newName: CategoryName): void
+        + getId(): CategoryId
+        + getName(): CategoryName
+    }
+
+    class CategoryId <<vo>> {
+        - value: string
+        + create(id?: string): CategoryId
+        + getValue(): string
+        + equals(other: CategoryId): boolean
+    }
+
+    class CategoryName <<vo>> {
+        - name: string
+        + create(name: string): CategoryName
+        + getValue(): string
+        + equals(other: CategoryName): boolean
+    }
+
+    interface IProductCategoryRepository <<interface>> {
+        + nextId(): Promise<CategoryId>
+        + findById(id: CategoryId): Promise<ProductCategory | null>
+        + findByName(name: CategoryName): Promise<ProductCategory | null>
+        + existsByName(name: CategoryName): Promise<boolean>
+        + save(category: ProductCategory): Promise<ProductCategory>
+        + findAll(filters?: {name?, id?}): Promise<ProductCategory[]>
+        + delete(id: CategoryId): Promise<void>
+        + isReferencedByProducts(id: CategoryId): Promise<boolean>
+    }
+}
+
+' -----------------------------------------------------------------------------
+' INFRASTRUCTURE LAYER
+' -----------------------------------------------------------------------------
+package "Infrastructure Layer" <<Rectangle>> {
+    class ProductCategoryRepository {
+        - database: DatabaseClient
+        + nextId(): Promise<CategoryId>
+        + findById(id: CategoryId): Promise<ProductCategory | null>
+        + findByName(name: CategoryName): Promise<ProductCategory | null>
+        + existsByName(name: CategoryName): Promise<boolean>
+        + save(category: ProductCategory): Promise<ProductCategory>
+        + findAll(filters?: {name?, id?}): Promise<ProductCategory[]>
+        + delete(id: CategoryId): Promise<void>
+        + isReferencedByProducts(id: CategoryId): Promise<boolean>
+    }
+
+    class ProductCategoryRowMapper {
+        + toDomain(row): ProductCategory
+        + toPersistence(category: ProductCategory): row
+    }
+
+    class ProductCategoryPersistenceModel <<PostgreSQL / product_categories>> {
+        + id: string
+        + name: string
+        + createdAt: DateTime
+        + updatedAt: DateTime
+    }
+}
+
+' -----------------------------------------------------------------------------
+' RELATIONSHIPS & DEPENDENCIES
+' -----------------------------------------------------------------------------
+
+' Presentation -> Application
+ProductCategoryRoutes --> ProductCategoryController : dispatches to >
+ProductCategoryRoutes ..> AuthMiddleware : applies >
+ProductCategoryRoutes ..> RoleMiddleware : applies >
+ProductCategoryRoutes ..> ValidationMiddleware : applies >
+ProductCategoryController --> ProductCategoryService : invokes >
+ProductCategoryController ..> CreateCategoryDTO : uses >
+ProductCategoryController ..> UpdateCategoryDTO : uses >
+
+' Application -> Domain
+ProductCategoryService --> IProductCategoryRepository : persists via >
+ProductCategoryService --> ProductCategoryMapper : uses >
+ProductCategoryService ..> ProductCategory : manipulates >
+ProductCategoryService ..> CreateCategoryDTO : receives >
+ProductCategoryService ..> UpdateCategoryDTO : receives >
+ProductCategoryService ..> CategoryResponseDTO : produces >
+ProductCategoryMapper ..> ProductCategory : maps to/from >
+ProductCategoryMapper ..> CategoryResponseDTO : produces >
+
+' Domain structure
+ProductCategory "1" *-- "1" CategoryId : identified by >
+ProductCategory "1" *-- "1" CategoryName : has >
+
+' Infrastructure Implementations
+ProductCategoryRepository ..|> IProductCategoryRepository : implements
+ProductCategoryRepository --> ProductCategoryPersistenceModel : queries/persists
+ProductCategoryRepository --> ProductCategoryRowMapper : maps rows via >
+ProductCategoryRowMapper ..> ProductCategory : restores >
+
+@enduml

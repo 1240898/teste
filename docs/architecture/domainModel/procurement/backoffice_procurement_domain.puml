@@ -1,0 +1,83 @@
+@startuml LaPrizza-Backoffice-Procurement
+title Context Map - Level 2: Backoffice to Procurement concept mappings
+hide empty members
+hide methods
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam nodesep 28
+skinparam ranksep 48
+
+package "Backoffice (Web API)" as Backoffice {
+    class "Customer order (Order)" as CustomerOrder
+    class "Order item (OrderItem)" as OrderItem {
+        Quantity and selected pizza size
+        Preserved composition if personalized
+    }
+    class "Consumption forecast" as Forecast
+    class "Forecast entry" as ForecastEntry {
+        Date, quantity and applicable size
+    }
+    class "Predefined pizza" as PredefinedPizza {
+        Default component selection
+    }
+    class "Component size configuration" as ComponentConfig {
+        Stock units used for the selected size
+    }
+    class "Product" as CatalogueProduct {
+        ProductId and catalogue state
+    }
+    class "Stock information" as StockInformation {
+        Available stock units by product
+    }
+
+    CustomerOrder "1" *-- "1..*" OrderItem : contains
+    Forecast "1" *-- "0..*" ForecastEntry : contains
+    OrderItem "0..*" --> "0..1" CatalogueProduct : catalogue reference
+    ForecastEntry "0..*" --> "1" CatalogueProduct : forecast product
+    StockInformation "0..*" --> "1" CatalogueProduct : tracks
+}
+
+package "Procurement (Prolog)" as Procurement {
+    class "Demand line" as Demand {
+        Product, quantity and date when applicable
+        BOM reference for pizzas
+    }
+    class "Pizza BOM" as Bom {
+        BOM ID, size and component quantities
+    }
+    class "Product" as PlanningProduct {
+        One record per selected planning item
+        Same ProductId for catalogue items
+        Planning classification and stock tracking
+    }
+    class "Stock snapshot" as Snapshot
+    class "Opening stock" as Opening {
+        Available stock units for the product
+    }
+    class "Confirmed supplier scenario" as SupplierScenario
+    class "Supplier offer" as Offer {
+        Product, EUR price and quoted stock units
+        Lead time and optional daily capacity
+    }
+    class Supplier
+    class "Supplier order proposal (AI02)" as Proposal
+
+    Demand "0..*" --> "0..1" Bom : resolves by BOM ID
+    Snapshot "1" *-- "0..*" Opening : captures
+    Opening "0..*" --> "1" PlanningProduct : balance for
+    SupplierScenario "1" *-- "0..*" Offer : provides
+    Offer "0..*" --> "1" Supplier : offered by
+    Offer "0..*" --> "1" PlanningProduct : supplies
+    Proposal ..> SupplierScenario : selects from its offers
+}
+
+OrderItem -[dashed]down-> Demand : pizza and quantity
+ForecastEntry -[dashed]down-> Demand : date and quantity
+PredefinedPizza -[dashed]down-> Bom : component selection
+ComponentConfig -[dashed]down-> Bom : consumption by size
+CatalogueProduct -[dashed]down-> PlanningProduct : keeps selected ProductIds
+StockInformation -[dashed]down-> Opening : opening balance
+
+footer Dashed links between contexts are AI06 mappings.
+@enduml

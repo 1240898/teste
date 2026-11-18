@@ -1,0 +1,182 @@
+@startuml class_diagram
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam linetype ortho
+left to right direction
+
+title BCK06 - Pizza Size Management (Clean Architecture)
+
+' -----------------------------------------------------------------------------
+' PRESENTATION LAYER (API)
+' -----------------------------------------------------------------------------
+package "Presentation Layer (API)" as API {
+    class PizzaSizeRoutes {
+        + setupRoutes(): Router
+    }
+
+    class PizzaSizeController <<controller>> {
+        - pizzaSizeService: PizzaSizeService
+        + create(req, res): Promise<void>
+        + search(req, res): Promise<void>
+        + getById(req, res): Promise<void>
+        + update(req, res): Promise<void>
+        + delete(req, res): Promise<void>
+    }
+
+    class AuthMiddleware <<auth>> {
+        + verifyToken(req, res, next): Promise<void>
+    }
+
+    class RoleMiddleware <<RBAC>> {
+        {static} + requireRole(...roles: string[]): Middleware
+    }
+
+    class ValidationMiddleware <<validator>> {
+        {static} + validate(schema: JoiSchema): Middleware
+    }
+
+    class PizzaSizeSchemas {
+        {static} + create: JoiSchema
+        {static} + update: JoiSchema
+        {static} + search: JoiSchema
+    }
+}
+
+' -----------------------------------------------------------------------------
+' APPLICATION LAYER
+' -----------------------------------------------------------------------------
+package "Application Layer" as APP {
+    class PizzaSizeService <<service>> {
+        - pizzaSizeRepository: IPizzaSizeRepository
+        + create(input: object): Promise<PizzaSizeDTO>
+        + update(id: string, input: object): Promise<PizzaSizeDTO>
+        + delete(id: string): Promise<void>
+        + search(criteria: object): Promise<PizzaSizeDTO[]>
+        + getById(id: string): Promise<PizzaSizeDTO>
+    }
+
+    class PizzaSizeDTO <<dto>> {
+        + id: string
+        + name: string
+        + active: boolean
+    }
+
+    class PizzaSizeResponseMapper <<mapper>> {
+        {static} + toDTO(pizzaSize: PizzaSize): PizzaSizeDTO
+    }
+}
+
+' -----------------------------------------------------------------------------
+' DOMAIN LAYER
+' -----------------------------------------------------------------------------
+package "Domain Layer" as DOMAIN {
+    class PizzaSize <<entity, aggregateRoot>> {
+        - id: PizzaSizeId
+        - name: PizzaSizeName
+        - active: boolean
+        {static} + create(id: PizzaSizeId, name: PizzaSizeName): PizzaSize
+        + updateName(name: PizzaSizeName): void
+        + activate(): void
+        + deactivate(): void
+    }
+
+    class PizzaSizeId <<vo>> {
+        - value: string
+        {static} + create(value: string): PizzaSizeId
+        + getValue(): string
+    }
+
+    class PizzaSizeName <<vo>> {
+        - value: string
+        {static} + create(value: string): PizzaSizeName
+        + getValue(): string
+    }
+
+    class PizzaSizeSearchCriteria <<domain value>> {
+        - criteria: object
+        {static} + create(criteria: object): PizzaSizeSearchCriteria
+        + getValue(): object
+    }
+
+    interface IPizzaSizeRepository <<repository>> {
+        + nextId(): Promise<string>
+        + save(pizzaSize: PizzaSize): Promise<PizzaSize>
+        + findById(id: PizzaSizeId): Promise<PizzaSize | null>
+        + findByName(name: PizzaSizeName): Promise<PizzaSize | null>
+        + search(criteria: PizzaSizeSearchCriteria): Promise<PizzaSize[]>
+        + isReferencedByOtherEntities(id: PizzaSizeId): Promise<boolean>
+        + delete(id: PizzaSizeId): Promise<void>
+    }
+
+}
+
+' -----------------------------------------------------------------------------
+' INFRASTRUCTURE LAYER
+' -----------------------------------------------------------------------------
+package "Infrastructure Layer" as INFRA {
+    class PizzaSizeRepository <<adapter>> {
+        - dbClient: DatabaseClient
+        + nextId(): Promise<string>
+        + save(pizzaSize: PizzaSize): Promise<PizzaSize>
+        + findById(id: PizzaSizeId): Promise<PizzaSize | null>
+        + findByName(name: PizzaSizeName): Promise<PizzaSize | null>
+        + search(criteria: PizzaSizeSearchCriteria): Promise<PizzaSize[]>
+        + isReferencedByOtherEntities(id: PizzaSizeId): Promise<boolean>
+        + delete(id: PizzaSizeId): Promise<void>
+    }
+
+    class PizzaSizePersistenceModel <<PostgreSQL / pizza_sizes>> {
+        + id: string
+        + name: string
+        + active: boolean
+    }
+
+    class PizzaSizeMapper <<mapper>> {
+        {static} + toDomain(raw: PizzaSizePersistenceModel): PizzaSize
+        {static} + toPersistence(pizzaSize: PizzaSize): PizzaSizePersistenceModel
+    }
+}
+
+' -----------------------------------------------------------------------------
+' RELATIONSHIPS & DEPENDENCIES
+' -----------------------------------------------------------------------------
+
+PizzaSizeRoutes --> PizzaSizeController
+PizzaSizeRoutes ..> AuthMiddleware : write routes only
+PizzaSizeRoutes ..> RoleMiddleware : MANAGER on write routes
+PizzaSizeRoutes ..> ValidationMiddleware : validate(schema)
+PizzaSizeRoutes ..> PizzaSizeSchemas
+
+PizzaSizeController --> PizzaSizeService
+PizzaSizeController ..> PizzaSizeDTO
+
+PizzaSizeService --> IPizzaSizeRepository
+PizzaSizeService ..> PizzaSize
+PizzaSizeService ..> PizzaSizeDTO
+PizzaSizeService ..> PizzaSizeResponseMapper
+PizzaSizeService ..> PizzaSizeSearchCriteria
+
+PizzaSizeResponseMapper ..> PizzaSize
+PizzaSizeResponseMapper ..> PizzaSizeDTO
+
+PizzaSize "1" *-- "1" PizzaSizeId : identified by >
+PizzaSize "1" *-- "1" PizzaSizeName : named >
+
+PizzaSizeRepository ..|> IPizzaSizeRepository
+PizzaSizeRepository --> PizzaSizePersistenceModel : queries/persists
+PizzaSizeRepository ..> PizzaSizeMapper
+PizzaSizeMapper ..> PizzaSize
+
+note bottom of ValidationMiddleware
+ Validates request body/query/params against Joi schemas.
+ Strict typing, no hidden coercion.
+end note
+
+note bottom of PizzaSizePersistenceModel
+ BCK06-04 & BCK06-05:
+ - Unique index on LOWER(name) for case-insensitive uniqueness.
+ - Uses sequence 'pizza_size_id_seq' for ID generation (PSIZE-####).
+end note
+
+@enduml

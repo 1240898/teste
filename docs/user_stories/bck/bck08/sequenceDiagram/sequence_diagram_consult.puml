@@ -1,0 +1,93 @@
+@startuml sequence_diagram_consult
+title BCK08 - Consult a component's size configurations
+autonumber
+skinparam maxMessageSize 105
+skinparam shadowing true
+actor Manager
+participant "ComponentConfigurationRoutes" as Routes
+participant "AuthMiddleware" as Auth
+participant "RoleMiddleware" as Roles
+participant "ComponentConfigurationController" as Controller
+participant "ComponentConfigurationService" as Service
+participant "IProductRepository\n: PostgresProductRepository" as Products
+participant "IComponentConfigurationRepository\n: PostgresComponentConfigurationRepository" as Repo
+participant "ComponentConfigurationResponseMapper" as Mapper
+database "PostgreSQL" as DB
+
+Manager -> Routes : GET /api/v1/products/{productId}/component-configurations
+activate Routes
+Routes -> Auth : verifyToken(req, res, next)
+activate Auth
+break Missing / invalid token
+ Auth --> Routes : authentication error
+ Routes --> Manager : 401 Unauthorized (shared error handler)
+end
+Auth --> Routes : identity established
+deactivate Auth
+Routes -> Roles : requireRole('MANAGER')(req, res, next)
+activate Roles
+break Caller lacks Manager role
+ Roles --> Routes : authorization error
+ Routes --> Manager : 403 Forbidden (shared error handler)
+end
+Roles --> Routes : next()
+deactivate Roles
+Routes -> Controller : consult(req, res, next)
+activate Controller
+Controller -> Controller : validatePath(req)
+activate Controller
+Controller --> Controller : valid reference encoding or path error
+deactivate Controller
+break Invalid ProductId path representation
+ Controller --> Manager : 400 Bad Request (shared error handler)
+end
+Controller -> Service : consult(productId)
+activate Service
+Service -> Products : findById(productId)
+activate Products
+Products -> DB : SELECT product
+activate DB
+DB --> Products : row or no row
+deactivate DB
+Products --> Service : product or null
+deactivate Products
+break Product not found
+ Service --> Controller : not-found error
+ Controller --> Manager : 404 Not Found (shared error handler)
+end
+note right of Service
+ Consultation does not add an active/sellable filter.
+ An existing Product with no configurations returns [].
+ BCK05 owns safe changes to component designation.
+end note
+Service -> Repo : findByProduct(productId)
+activate Repo
+Repo -> DB : SELECT configurations joined to Product/Size references
+activate DB
+DB --> Repo : rows (possibly empty)
+deactivate DB
+
+Repo --> Service : configurations or infrastructure / integrity error
+deactivate Repo
+break Read failure
+ Service --> Controller : error
+ Controller --> Manager : 500 Internal Server Error
+end
+loop Each returned configuration
+ Service -> Mapper : toDTO(configuration)
+ activate Mapper
+ Mapper --> Service : response DTO
+ deactivate Mapper
+end
+alt Configurations exist
+ Service --> Controller : ComponentConfigurationResponseDTO[]
+ Controller --> Manager : 200 OK + configurations
+else No configurations for existing Product
+ Service --> Controller : []
+ Controller --> Manager : 200 OK + []
+end
+deactivate Service
+deactivate Controller
+deactivate Routes
+
+@enduml

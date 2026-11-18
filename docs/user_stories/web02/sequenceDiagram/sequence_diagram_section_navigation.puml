@@ -1,0 +1,56 @@
+@startuml sequence_diagram_section_navigation
+title WEB02 - SD 2: Change sections, use history and return to Start
+hide footbox
+skinparam shadowing false
+autonumber
+
+actor "System User" as User
+participant NavigationMenu as Menu
+participant BrowserRouter as Router
+participant AppRoutes as Routes
+participant navigationPolicy as Policy
+participant AuthProvider as Auth
+participant AppLayout as Layout
+participant AppHeader as Hdr
+participant RouteOrientation as Orientation
+participant StartPage as Start
+participant AccountRoute as Account
+
+alt Activate an eligible link with keyboard or pointer
+    User -> Menu : Activate section link
+    Menu -> Router : Navigate to registered internal path
+    Router -> Routes : resolve(new location, current auth)
+else Browser Back or Forward
+    User -> Router : Move through browser history
+    Router -> Routes : resolve(new location, current auth)
+else Current session changes
+    Auth -> Routes : Resolve the same location with new session state
+end
+ref over Routes, Policy : SD 1 - Resolve the route under current WEB03 policy
+Routes -> Policy : getVisibleSections(current auth)
+Policy --> Routes : Eligible items after access settles
+alt Allowed section or allowed nested page
+    Routes -> Routes : publishView(section outcome and parent section ID)
+else Denied, unmatched or redirected
+    Routes -> Routes : publishView(actual outcome without protected section ID)
+end
+Routes -> Layout : render(items, resolved view, content)
+Layout -> Hdr : render(items, currentSectionId)
+Hdr -> Menu : render(items, currentSectionId)
+Menu --> User : Localized links and current-section cue where applicable
+Layout -> Orientation : present(view, locale)
+Orientation --> User : Update title and focus settled main heading
+
+User -> Layout : Activate Start link in shell or recovery view
+Layout -> Router : Navigate to /
+Router -> Routes : resolve(/, current auth)
+Routes -> Policy : getVisibleSections(current auth)
+Policy --> Routes : Currently eligible items
+Routes -> Start : render(items, accountContent)
+Start -> Account : Render existing account content for current status
+Account --> Start : Sign-in, session or account status content
+Start --> Routes : Start content with eligible links
+Routes -> Layout : render(items, Start outcome, content)
+Layout -> Orientation : present(Start view, locale)
+Orientation --> User : Start heading focused, permitted destinations available
+@enduml

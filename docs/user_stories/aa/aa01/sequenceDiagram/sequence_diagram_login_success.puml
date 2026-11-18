@@ -1,0 +1,54 @@
+@startuml sequence_diagram_login_success
+title SD 1 - Successful local login
+hide footbox
+skinparam shadowing false
+
+actor "System user" as User
+box "SPA" #F3F7FD
+  participant LocalSignInForm as Form
+  participant authApi as Client
+  participant App
+  participant "AuthProvider (AA03)" as Provider
+end box
+box "Backend" #F5F8F5
+  participant AuthRoutes as Routes
+  participant AuthController as Controller
+  participant UserService as Service
+  participant UserRepository as Repo
+  participant BcryptPasswordHasher as Hasher
+  participant JwtTokenService as JWT
+end box
+
+User -> Form : submit email and password
+Form -> Client : login(credentials)
+Client -> Routes : POST /api/v1/auth/login
+Routes -> Routes : rate limit and validate request
+Routes -> Controller : login(req, res)
+Controller -> Service : login(LoginDTO)
+Service -> Repo : findByEmail(canonical email)
+Repo --> Service : User with local password hash
+Service -> Hasher : compare(password, hash)
+Hasher --> Service : matches
+Service -> Service : assertCanAccess(user) (AA03)
+Service -> JWT : generateToken(claims)
+JWT --> Service : bearer JWT
+Service --> Controller : AuthTokenDTO
+Controller --> Client : 200 OK
+Client --> Form : authentication result
+Form -> App : onAuthenticated(result)
+App -> Provider : acceptAuthToken(result)
+Provider -> Routes : GET /api/v1/auth/me via AA03 API client
+Routes -> Controller : verify bearer and get current user
+Controller -> Service : getCurrentUser(actor)
+Service -> Repo : read current user and roles
+Repo --> Service : current User
+Service --> Controller : safe user projection
+Controller --> Provider : 200 OK with current roles
+Provider --> App : authenticated state
+App --> User : show session panel
+
+note over Provider
+  The current SPA keeps the token and user in memory.
+  AA04 owns server-side session lifecycle.
+end note
+@enduml

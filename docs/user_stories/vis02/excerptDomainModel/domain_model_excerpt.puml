@@ -1,0 +1,232 @@
+@startuml LaPrizzaDomainModel
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam classAttributeIconSize 0
+hide methods
+
+title Domain Model Excerpt - VIS02 Kitchen Layout and Equipment (read-only view of WEB06 concepts)
+
+note as N0
+    Every concept below is OWNED by WEB06 (see usWEB06 2.5),
+    persisted in PostgreSQL (ADR-010; layout stored as JSONB).
+    VIS02 introduces NO domain concept: it turns the room and the
+    EQUIPMENT elements of the ACTIVE configuration (received through
+    VIS01) into 3D objects. Only the parts VIS02 uses are shown.
+end note
+
+' -----------------------------------------------------------------------------
+' KITCHEN CONFIGURATION AGGREGATE (WEB06) - read only by VIS02
+' -----------------------------------------------------------------------------
+package "Kitchen Configuration Aggregate (WEB06)" <<Rectangle>> {
+
+    class KitchenConfiguration <<entity>> <<aggregateRoot>> {
+        + version : Integer
+    }
+    note right of KitchenConfiguration
+        Only the ACTIVE configuration is drawn
+        (AC 4). id and version are kept on the
+        layout root object (userData).
+    end note
+
+    class KitchenConfigurationId <<vo>> {
+        + value : String
+    }
+
+    enum ConfigurationStatus <<enum>> {
+        ACTIVE
+        INACTIVE
+    }
+
+    class KitchenLayout <<vo>> {
+        + schemaVersion : Integer = 1
+        + units : String = "meters"
+    }
+    note right of KitchenLayout
+        Metres, degrees, Y-up, origin at the
+        centre of the floor, -Z = NORTH
+        (VIS01 BR 10, usVIS02 2.4.1).
+    end note
+
+    class KitchenDimensions <<vo>> {
+        + width : Decimal
+        + depth : Decimal
+        + height : Decimal
+    }
+    note right of KitchenDimensions
+        VIS02 (AC 1): floor width x depth at y = 0,
+        four walls of this height, no ceiling.
+        (The camera pose is VIS07's.)
+    end note
+
+    class AssemblyLine <<vo>> {
+    }
+
+    enum KitchenWall <<enum>> {
+        NORTH
+        SOUTH
+        EAST
+        WEST
+    }
+    note bottom of KitchenWall
+        Names of the four walls of the room.
+        The line itself is drawn by VIS03.
+    end note
+
+    class SceneElement <<entity>> {
+        + id : String
+        + name : String [0..1]
+    }
+    note right of SceneElement
+        VIS02 draws every element of category
+        EQUIPMENT (VIS03: ASSEMBLY_LINE).
+        Exactly one 3D object per element,
+        named with the element id (BR 2, BR 3).
+    end note
+
+    enum ElementCategory <<enum>> {
+        EQUIPMENT
+        ASSEMBLY_LINE
+    }
+
+    class ElementType <<vo>> {
+        + value : String
+    }
+    note bottom of ElementType
+        EQUIPMENT (AC 2): TABLE, COUNTER,
+        WOOD_FIRED_OVEN, DEEP_FRYER, GRIDDLE,
+        GRILL, REFRIGERATOR, DISHWASHER,
+        EXHAUST_HOOD, COOKING_TOOL.
+        Metadata only: the representation comes
+        from the ModelReference (BR 4).
+    end note
+
+    class Placement <<vo>> {
+        + position : Vector3
+        + rotation : Vector3
+        + scale : Vector3
+    }
+    note bottom of Placement
+        AC 1. position = bottom centre of the
+        footprint (m); rotation in degrees,
+        Euler order XYZ; scale per local axis.
+        Applied as T * R * S (BR 6).
+    end note
+
+    abstract class ModelReference <<vo>> {
+        + source : "ASSET" | "PROCEDURAL"
+    }
+
+    class AssetModelReference <<vo>> {
+        + assetId : String
+    }
+    note bottom of AssetModelReference
+        AC 2 / AC 3: imported model, cloned
+        from the file preloaded by VIS01.
+    end note
+
+    class ProceduralModelReference <<vo>> {
+        + shape : "BOX" | "CYLINDER" | "SPHERE" | "DOME"
+        + size : Vector3
+    }
+    note bottom of ProceduralModelReference
+        AC 2: size = bounding box at scale 1,
+        origin at the bottom centre (BR 7).
+    end note
+
+    class MaterialProperties <<vo>> {
+        + color : String [0..1]
+        + roughness : Decimal [0..1]
+        + metalness : Decimal [0..1]
+        + colorMapAssetId : String [0..1]
+        + roughnessMapAssetId : String [0..1]
+        + normalMapAssetId : String [0..1]
+        + bumpMapAssetId : String [0..1]
+    }
+    note right of MaterialProperties
+        Turned into materials by VIS04
+        (KitchenMaterialFactory). Mandatory for
+        procedural objects and for the floor and
+        the walls (content.kitchen.floor / .walls);
+        override for every mesh of an imported
+        model (WEB06 ALN-6).
+    end note
+
+    KitchenConfiguration "1" *-- "1" KitchenConfigurationId : identified by >
+    KitchenConfiguration "1" --> "1" ConfigurationStatus : current status >
+    KitchenConfiguration "1" *-- "1" KitchenLayout : content >
+    KitchenLayout "1" *-- "1" KitchenDimensions : has >
+    KitchenLayout "1" *-- "1" AssemblyLine : has >
+    AssemblyLine "1" --> "1" KitchenWall : placed on >
+    KitchenLayout "1" *-- "2" MaterialProperties : floor / walls\nrendered with >
+    KitchenLayout "1" *-- "9..300" SceneElement : contains >
+    SceneElement "1" --> "1" ElementCategory : belongs to >
+    SceneElement "1" *-- "1" ElementType : is of >
+    SceneElement "1" *-- "1" Placement : placed with >
+    SceneElement "1" *-- "1" ModelReference : represented by >
+    SceneElement "1" *-- "0..1" MaterialProperties : rendered with >
+    ModelReference <|-- AssetModelReference
+    ModelReference <|-- ProceduralModelReference
+}
+
+' -----------------------------------------------------------------------------
+' KITCHEN ASSET CATALOGUE (WEB06) - equipment model files supplied by VIS02
+' -----------------------------------------------------------------------------
+package "Kitchen Asset Aggregate (WEB06)" <<Rectangle>> {
+
+    class KitchenAsset <<entity>> <<aggregateRoot>> {
+        + format : String
+        + size : Vector3 [0..1]
+        + embeddedTextureSet : boolean [0..1]
+    }
+    note right of KitchenAsset
+        VIS02 supplies the equipment MODEL files
+        (glTF / GLB, metres, Y-up, origin at the
+        bottom centre, front facing +Z) and credits
+        them. size is computed from the file
+        (GltfModelInspector), so the viewer uses
+        the file as it is (no re-centring).
+        The URL is resolved by the back end; VIS02
+        only uses the preloaded file (AC 3).
+    end note
+
+    class KitchenAssetId <<vo>> {
+        + value : String
+    }
+
+    enum AssetKind <<enum>> {
+        MODEL
+        TEXTURE
+    }
+
+    KitchenAsset "1" *-- "1" KitchenAssetId : identified by >
+    KitchenAsset "1" --> "1" AssetKind : is a >
+}
+
+' -----------------------------------------------------------------------------
+' USER AGGREGATE (existing, AA03) - who sees the kitchen
+' -----------------------------------------------------------------------------
+package "User Aggregate" <<Rectangle>> {
+
+    class User <<entity>> <<aggregateRoot>> {
+    }
+
+    enum UserRole <<enum>> {
+        ADMINISTRATOR
+        MANAGER
+        EMPLOYEE
+        CUSTOMER
+    }
+    note right of UserRole
+        Table 1 - kitchen viewer (VIS01):
+        MANAGER (requester of VIS02) and
+        EMPLOYEE see the same scene.
+    end note
+
+    User "1" --> "1..*" UserRole : assigned >
+}
+
+AssetModelReference ..> KitchenAsset : refers to (kind = MODEL) >
+MaterialProperties ..> KitchenAsset : refers to (kind = TEXTURE) >
+User ..> KitchenConfiguration : visualizes ACTIVE layout\n(MANAGER / EMPLOYEE) >
+
+@enduml

@@ -1,0 +1,101 @@
+@startuml AI06-Domain-Model-Excerpt
+' Excerpt of Procurement's procurement_domain_model.puml at b81e4b2.
+' Proposed adjustment to Demand–Product multiplicity (AI06 OP07).
+title AI06 - Procurement planning inputs
+hide empty members
+hide methods
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam nodesep 28
+skinparam ranksep 48
+
+package "Scenario and demand (AI06 inputs)" as ScenarioInputs {
+    class "Planning scenario" as Scenario {
+        Scenario identity
+        Demand source and selected period
+    }
+    class "Input provenance" as Provenance {
+        Input dataset
+        Source, version or retrieval time
+        Simulated input
+    }
+    class "Demand line" as Demand {
+        Quantity in sales units
+        Date for daily demand
+        BOM reference for pizza demand
+    }
+    class "Stock snapshot" as Snapshot
+    class "Opening stock" as Opening {
+        Available units for the product
+    }
+    class "Direct-sale consumption" as SalesFactor {
+        Stock units per sold item
+    }
+    class Product {
+        ProductId
+        Terminal item or aggregate
+        Acquisition type and stock tracking status
+    }
+
+    Scenario "1" *-- "1..*" Provenance : identifies inputs
+    Scenario "1" *-- "0..*" Demand : selects
+    Scenario "1" *-- "1" Snapshot : starts with
+    Snapshot "1" *-- "0..*" Opening : captures
+    Opening "0..*" --> "1" Product : balance for
+    Demand "0..*" --> "0..1" Product : requested product when identified
+    Product "1" *-- "0..1" SalesFactor : configured for direct sale
+}
+
+package "Bill of materials and preparation recipes" as BomInputs {
+    class "Pizza BOM" as Bom {
+        Scenario-local BOM ID and size
+        Catalogue pizza when applicable
+    }
+    class "BOM component" as Component {
+        Stock units per pizza
+    }
+    class "Preparation recipe" as Recipe {
+        Output units per batch
+    }
+    class "Recipe ingredient" as Ingredient {
+        Units per batch
+    }
+
+    Bom "1" *-- "1..*" Component : lists
+    Recipe "1" *-- "1..*" Ingredient : contains
+}
+
+package "Supplier scenario inputs" as SupplierInputs {
+    class "Confirmed supplier scenario" as SupplierScenario {
+        Scenario identity and version
+    }
+    class Supplier
+    class "Supplier offer" as Offer {
+        Price in EUR and stock units covered
+        Lead time in whole calendar days
+        Optional daily capacity in stock units
+    }
+
+    SupplierScenario "1" *-- "1..*" Supplier : includes
+    SupplierScenario "1" *-- "0..*" Offer : provides
+    Offer "0..*" --> "1" Supplier : offered by
+}
+
+Scenario "0..*" --> "0..1" SupplierScenario : selected for replenishment
+Demand "0..*" --> "0..1" Bom : resolves by BOM ID for pizzas
+Component "0..*" -up-> "1" Product : requires
+Product "1" *-- "0..1" Recipe : prepared using
+Ingredient "0..*" -up-> "1" Product : refers to
+Offer "0..*" --> "1" Product : supplies
+
+note left of Demand
+    Pizza demand requires a BOM.
+    Direct-sale demand requires a Product.
+end note
+
+note left of Product
+    One record per selected planning item.
+    Catalogue items keep their Backoffice ProductId.
+end note
+@enduml

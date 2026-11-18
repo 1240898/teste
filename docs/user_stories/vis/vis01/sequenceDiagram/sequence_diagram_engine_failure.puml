@@ -1,0 +1,130 @@
+@startuml sequence_diagram_engine_failure
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - VIS01 Engine Failure and Cleanup (renderer creation, module build, frame update/render, context loss)
+
+actor User as "Manager / Restaurant Staff"
+participant Viewer as "KitchenViewer"
+participant Engine as "ViewerEngine"
+participant A as "Module A"
+participant B as "Module B\n(fails)"
+participant C as "Module C"
+participant Three as "three\n(WebGLRenderer / Scene)"
+
+note over User, Three
+    Precondition: configuration valid and EVERY asset preloaded (sequence_diagram_open_viewer D2).
+    Asset download failures never reach the engine: they are the "error / asset-unavailable" state (D1).
+    On failure the engine calls dispose(). The viewer removes the canvas and shows Retry.
+    Cleanup continues after individual errors and can be called again safely.
+end note
+
+== F1. Renderer creation fails ==
+
+Viewer -> Engine : ViewerEngine.create(canvas, container, { onFatalError })
+activate Engine
+Engine -> Three : new WebGLRenderer({ canvas })
+Three --> Engine : throws (context could not be created)
+Engine -> Engine : dispose()  (resources allocated so far)
+Engine --> Viewer : throw ViewerEngineError{ phase: "renderer" }
+deactivate Engine
+Viewer -> Viewer : assets.dispose()\ncanvas.remove()
+Viewer --> User : ViewerStatusMessage("failed") + [Retry]
+note right of Viewer : no module created, loop never started
+
+== F2. A module build fails (sync throw or rejected Promise) ==
+
+Viewer -> Engine : await engine.load(configuration, assets, [makeA, makeB, makeC], signal)
+note right of Engine : load() takes ownership of loadedAssets first
+activate Engine
+Engine -> A : modules.push(A); await A.build(ctx)
+activate A
+A --> Engine : done
+deactivate A
+Engine -> B : modules.push(B)  (registered BEFORE build)\nawait B.build(ctx)
+activate B
+B --> Engine : throws / rejects
+deactivate B
+note right of Engine : C is never created nor built
+Engine -> Engine : dispose()
+group dispose()
+    Engine -> Engine : mark disposed; running = false
+    Engine -> Three : setAnimationLoop(null)
+    Engine -> Engine : abort build controller; disconnect resize observer;\nremove context listener
+    Engine -> B : dispose()  (must be safe after a partial build)
+    activate B
+    B --> Engine : throws
+    deactivate B
+    Engine -> Engine : collect error, CONTINUE
+    Engine -> A : dispose()
+    activate A
+    A --> Engine : ok
+    deactivate A
+    Engine -> Three : traverse scene: dispose remaining\ngeometries / materials / textures (each once)
+    Engine -> Engine : loadedAssets.dispose()
+    Engine -> Three : renderer.dispose(); renderer.forceContextLoss()
+    Engine -> Engine : report collected cleanup errors
+end
+Engine --> Viewer : throw ViewerEngineError{ phase: "build", moduleName: "B" }
+deactivate Engine
+Viewer -> Viewer : engine.dispose()  (already disposed)\ncanvas.remove()
+Viewer --> User : ViewerStatusMessage("failed") + [Retry]\n"The 3D viewer stopped because of an error."
+
+== F3. update() or render() throws during the render loop ==
+
+Viewer -> Engine : start()  (after a successful load of A, B, C)
+activate Engine
+Engine -> Three : render first frame; setAnimationLoop(frame)
+Three -> Engine : frame(t)
+Engine -> A : update(dt)
+Engine -> B : update(dt)
+activate B
+B --> Engine : throws
+deactivate B
+Engine -> Engine : fatal(error) calls dispose()\n(C, B, A disposed in reverse order)
+Engine -> Viewer : onFatalError(ViewerEngineError{ phase: "update", moduleName: "B" })
+deactivate Engine
+note right of Engine : reported ONCE; a frame callback already queued\nsees running == false and returns.\nrender() throwing follows the same path (phase "render").
+Viewer -> Viewer : canvas.remove()
+Viewer --> User : ViewerStatusMessage("failed") + [Retry]
+
+== F4. WebGL context lost (driver reset, GPU memory pressure) ==
+
+Three -> Engine : event "webglcontextlost"
+activate Engine
+Engine -> Engine : preventDefault(); fatal(error) calls dispose()
+Engine -> Viewer : onFatalError(ViewerEngineError{ phase: "context" })
+deactivate Engine
+Viewer -> Viewer : canvas.remove()
+Viewer --> User : ViewerStatusMessage("failed") + [Retry]
+
+== F5. Unmount or reload while a build is still pending ==
+
+note over Viewer, Engine : The effect assigns its local engine variable\nbefore awaiting load().
+Viewer -> Viewer : cleanup calls controller.abort()
+Viewer -> Engine : abort listener calls dispose()
+activate Engine
+Engine -> Engine : stop loop, abort build controller\nand release owned resources
+Engine -> B : build signal aborted
+deactivate Engine
+Viewer -> Engine : engine.dispose()  (already disposed)
+Viewer -> Viewer : canvas.remove()
+note right of B : When a dependency resolves late, the module\nchecks the signal and releases the result.
+B --> Engine : pending build settles
+activate Engine
+Engine -> Engine : sweepScene() releases remaining scene resources
+Engine --> Viewer : load() returns false
+deactivate Engine
+note right of Viewer : The aborted signal prevents the attempt\nfrom starting the engine or updating the UI.
+
+== Retry ==
+
+User -> Viewer : clicks Retry
+Viewer -> Viewer : clean up; set loading; increment attempt
+Viewer -> Viewer : check WebGL; request configuration; preload assets
+Viewer -> Viewer : createElement("canvas"); append to viewport
+Viewer -> Engine : ViewerEngine.create(newCanvas, ...)
+note right of Viewer : a canvas after forceContextLoss() is never reused;\nthe fresh canvas receives a new WebGL context
+
+@enduml

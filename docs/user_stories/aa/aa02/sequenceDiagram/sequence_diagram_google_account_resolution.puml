@@ -1,0 +1,138 @@
+@startuml sequence_diagram_google_account_resolution
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - AA02 Account Resolution for a Verified Google Identity (AA03 / AA06 / AA07 integration)
+
+participant SPA as "SPA (Front-End)\nGoogleCallbackPage"
+participant Controller as "AuthController"
+participant ExtService as "ExternalAuthenticationService"
+participant Repo as "IUserRepository"
+database DB as "Database\n(Persistence)"
+participant UserAgg as "User\n<<aggregateRoot>>"
+participant Service as "UserService"
+
+note over SPA, ExtService
+    Precondition: SD 1 succeeded up to verifyIdentity().
+    ExtService holds verified ExternalIdentityClaims
+    { provider: GOOGLE, subject, email, emailVerified: true, name }.
+    Every error branch ends the interaction: no token is issued.
+end note
+
+activate SPA
+activate Controller
+activate ExtService
+
+ExtService -> Repo : findByExternalIdentity(GOOGLE, subject)
+activate Repo
+Repo -> DB : SELECT users + user_external_identities\nWHERE provider = 'GOOGLE' AND subject = $1
+activate DB
+DB --> Repo : user row + identity rows / no row
+deactivate DB
+Repo --> ExtService : user / null
+deactivate Repo
+
+alt A) Identity already linked (returning user)
+    note right of ExtService
+        Existing account is reused as is (AA03):
+        no re-creation, roles unchanged,
+        revoked CUSTOMER not restored,
+        disabled account not reactivated.
+    end note
+
+    alt A1) user.isActive() == false
+        ExtService --> Controller : throw AppError("Account is not active", 403)
+        Controller --> SPA : 403 Forbidden\n{ error: { message: "Account is not active", status: 403 } }
+        note right of SPA : interaction ends:\nno token is issued
+
+    else A2) user.hasActiveRole() == false
+        ExtService --> Controller : throw AppError("No active role is assigned\nto this account", 403)
+        Controller --> SPA : 403 Forbidden\n{ error: { message: "No active role is assigned\nto this account", status: 403 } }
+        note right of SPA : interaction ends:\nno token is issued
+
+    else A3) Active account with at least one role
+        ExtService -> Service : issueAuthToken(user)
+        activate Service
+        Service --> ExtService : AuthTokenDTO (internal roles)
+        deactivate Service
+        ExtService --> Controller : AuthTokenDTO
+        Controller --> SPA : 200 OK { accessToken, tokenType: "Bearer",\nexpiresIn, user { id, name, email, roles, ... } }
+    end
+
+else B) Identity not linked yet
+    ExtService -> Repo : findByEmail(Email.create(claims.email))
+    activate Repo
+    Repo -> DB : SELECT users + user_external_identities\nWHERE users.email = $1
+    activate DB
+    DB --> Repo : user row / no row
+    deactivate DB
+    Repo --> ExtService : existingUser / null
+    deactivate Repo
+
+    alt B1) An account with the same e-mail already exists
+        note right of ExtService
+            No automatic linking (D3, open question Q3).
+            - Active local account: sign in locally.
+            - Inactive invited account (AA06): linking only
+              through the AA07 activation invitation, which reuses
+              ExternalAuthenticationService.verifyIdentity().
+        end note
+        ExtService --> Controller : throw AppError("This e-mail is already associated\nwith an account. ...", 409)
+        Controller --> SPA : 409 Conflict\n{ error: { message: "This e-mail is already associated with an account.\nSign in with your local credentials or use your activation invitation.", status: 409 } }
+        note right of SPA : interaction ends:\nno token is issued
+
+    else B2) No account: create an active CUSTOMER account (client clarification Q2)
+        ExtService -> Repo : nextId()
+        activate Repo
+        Repo --> ExtService : "USR-00042" (string)
+        deactivate Repo
+        ExtService -> ExtService : id = UserId.create("USR-00042")
+
+        ExtService -> UserAgg : createFromExternalIdentity(id, UserName.create(claims.name | e-mail local part),\nEmail.create(claims.email), ExternalIdentity.create(GOOGLE, subject),\nMarketingConsent.create(false))
+        activate UserAgg
+        UserAgg -> UserAgg : roles = [CUSTOMER]; active = true;\nno local password; consent = false
+        UserAgg --> ExtService : user
+        deactivate UserAgg
+
+        ExtService -> Repo : save(user)
+        activate Repo
+        Repo -> DB : BEGIN;\nINSERT INTO users (..., password_hash = NULL, roles = {CUSTOMER}, active = true);\nINSERT INTO user_external_identities (user_id, 'GOOGLE', subject);\nCOMMIT
+        activate DB
+
+        alt B2a) Concurrent first sign-in: unique constraint violated
+            DB --> Repo : unique violation error (SQLSTATE 23505);\ntransaction rolled back
+            deactivate DB
+            Repo --> ExtService : throw AppError("This e-mail is already associated\nwith an account. ...", 409)
+            deactivate Repo
+            ExtService --> Controller : rethrow AppError (409)
+            Controller --> SPA : 409 Conflict\n{ error: { message: "...", status: 409 } }
+            note right of SPA : interaction ends:\nno partial account,\nno token is issued
+
+        else B2b) Insert committed
+            activate DB
+            DB --> Repo : inserted user and identity rows
+            deactivate DB
+            activate Repo
+            Repo --> ExtService : saved user
+            deactivate Repo
+            ExtService -> Service : issueAuthToken(user)
+            activate Service
+            note right of Service
+                Same token issuance as AA01 local login.
+                Roles come from the internal User
+                ([CUSTOMER]), never from Google claims.
+            end note
+            Service --> ExtService : AuthTokenDTO
+            deactivate Service
+            ExtService --> Controller : AuthTokenDTO
+            Controller --> SPA : 200 OK { accessToken, tokenType: "Bearer",\nexpiresIn, user { id, roles: ["CUSTOMER"], active: true, ... } }
+        end
+    end
+end
+
+deactivate ExtService
+deactivate Controller
+deactivate SPA
+
+@enduml

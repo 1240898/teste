@@ -1,0 +1,112 @@
+@startuml sequence_diagram_create_category
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - BCK03 Create Product Category (POST /api/v1/categories)
+
+actor Client as "Manager / Client"
+participant Routes as "ProductCategoryRoutes"
+participant AuthMW as "AuthMiddleware"
+participant RoleMW as "RoleMiddleware"
+participant Validator as "ValidationMiddleware\n(Joi)"
+participant Controller as "ProductCategoryController"
+participant Service as "ProductCategoryService"
+participant Repo as "IProductCategoryRepository"
+database DB as "Database\n(Persistence)"
+participant Mapper as "ProductCategoryMapper"
+
+Client -> Routes : POST /api/v1/categories\n{ name: "Beverages" }
+activate Routes
+
+' Validations & Middlewares
+Routes -> AuthMW : verifyToken(req, res, next)
+activate AuthMW
+alt Invalid or Missing Token
+    AuthMW --> Client : 401 Unauthorized\n{ error: { message: "No token provided" } }
+else Token Valid
+    AuthMW --> Routes : next()
+    deactivate AuthMW
+
+    Routes -> RoleMW : requireRole("MANAGER")
+    activate RoleMW
+    alt Lacks MANAGER Role
+        RoleMW --> Client : 403 Forbidden\n{ error: { message: "Forbidden: insufficient permissions" } }
+    else Has MANAGER Role
+        RoleMW --> Routes : next()
+        deactivate RoleMW
+
+        Routes -> Validator : validate(req.body, createCategorySchema)
+        activate Validator
+        alt Malformed body (missing / unknown fields, non-string name)
+            Validator --> Client : 400 Bad Request\n{ error: { message: "Invalid request body" } }
+        else Validation Success
+            Validator --> Routes : next()
+            deactivate Validator
+
+            ' Controller & Application Service Logic
+            Routes -> Controller : createCategory(req, res)
+            activate Controller
+
+            Controller -> Service : createCategory(createCategoryDTO)
+            activate Service
+
+            Service -> Service : CategoryName.create(dto.name)
+            alt Blank or too long name (domain invariant)
+                Service --> Controller : throw AppError(400, "Category name cannot be empty")
+                Controller --> Client : 400 Bad Request
+            end
+
+            Service -> Repo : existsByName(categoryName)
+            activate Repo
+            Repo -> DB : SELECT EXISTS(... WHERE lower(name) = lower($1))
+            activate DB
+            DB --> Repo : exists (boolean)
+            deactivate DB
+            Repo --> Service : exists (boolean)
+            deactivate Repo
+
+            alt Category Name Already Exists (or DB Unique Violation)
+                Service --> Controller : throw AppError(409, "Category name already exists")
+                Controller --> Client : 409 Conflict\n{ error: { message: "Category name already exists" } }
+            else Unique Name Confirmed
+                Service -> Repo : nextId()
+                activate Repo
+                Repo -> DB : nextval('product_category_id_seq')
+                activate DB
+                DB --> Repo : "CAT-00001"
+                deactivate DB
+                Repo --> Service : categoryId
+                deactivate Repo
+
+                Service -> Mapper : toDomain(createCategoryDTO, categoryId)
+                activate Mapper
+                Mapper --> Service : productCategory
+                deactivate Mapper
+
+                Service -> Repo : save(productCategory)
+                activate Repo
+                Repo -> DB : INSERT INTO product_categories ...
+                activate DB
+                DB --> Repo : savedEntity
+                deactivate DB
+                Repo --> Service : savedCategory
+                deactivate Repo
+
+                Service -> Mapper : toDTO(savedCategory)
+                activate Mapper
+                Mapper --> Service : categoryResponseDTO
+                deactivate Mapper
+
+                Service --> Controller : categoryResponseDTO
+                deactivate Service
+
+                Controller --> Client : 201 Created\n{ id, name, createdAt, updatedAt }
+                deactivate Controller
+            end
+        end
+    end
+end
+deactivate Routes
+
+@enduml

@@ -1,0 +1,131 @@
+@startuml VIS04DomainModelExcerpt
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam classAttributeIconSize 0
+hide methods
+
+title Domain Model Excerpt - VIS04 Textures and Materials (read-only view of WEB06 concepts)
+
+note as N0
+    Every concept below is OWNED by WEB06 (persisted in PostgreSQL; layout stored as JSONB).
+    VIS04 introduces NO new domain concept: it reads the ACTIVE configuration through
+    GET /kitchen-configurations/active and maps MaterialProperties and resolved KitchenAssets
+    to 3D rendering materials. Only the concepts relevant to materials and textures are shown.
+end note
+
+' -----------------------------------------------------------------------------
+' KITCHEN CONFIGURATION AGGREGATE (WEB06) - Material & Texture perspective
+' -----------------------------------------------------------------------------
+package "Kitchen Configuration Aggregate (WEB06)" <<Rectangle>> {
+
+    class KitchenConfiguration <<entity>> <<aggregateRoot>> {
+        + version : Integer
+    }
+    note right of KitchenConfiguration
+        VIS04 consumes ONLY the configuration
+        with status = ACTIVE (BR 5).
+    end note
+
+    class KitchenConfigurationId <<vo>> {
+        + value : String
+    }
+
+    enum ConfigurationStatus <<enum>> {
+        ACTIVE
+        INACTIVE
+    }
+
+    class KitchenLayout <<vo>> {
+        + schemaVersion : Integer = 1
+    }
+
+    class SceneElement <<entity>> {
+        + id : String
+        + name : String [0..1]
+    }
+    note bottom of SceneElement
+        Each scene object (VIS02 equipment or VIS03
+        assembly-line part) is rendered with distinct
+        textures and materials (AC 1, BR 1).
+        Separate meshes keep separate materials
+        to preserve Sprint 3 animation (BR 12).
+    end note
+
+    enum ElementCategory <<enum>> {
+        EQUIPMENT
+        ASSEMBLY_LINE
+    }
+
+    abstract class ModelReference <<vo>> {
+    }
+
+    class ProceduralModelReference <<vo>> {
+        + shape : String
+        + size : Vector3
+    }
+
+    class AssetModelReference <<vo>> {
+        + assetId : String
+    }
+
+    class MaterialProperties <<vo>> {
+        + color : String [0..1]
+        + roughness : Decimal [0..1]
+        + metalness : Decimal [0..1]
+        + colorMapAssetId : String
+        + roughnessMapAssetId : String [0..1]
+        + normalMapAssetId : String [0..1]
+        + bumpMapAssetId : String [0..1]
+    }
+    note right of MaterialProperties
+        **VIS04 Invariants (AC 2, AC 3, BR 2, BR 3):**
+        - Mandatory for ProceduralModelReference (JSON-driven).
+        - Must include colorMapAssetId (sRGB) AND at least
+          one of roughnessMapAssetId, normalMapAssetId,
+          or bumpMapAssetId (linear data, BR 18).
+        - Invalid/incomplete sets are rejected as errors (BR 6, BR 15).
+    end note
+
+    KitchenConfiguration "1" *-- "1" KitchenConfigurationId : identified by >
+    KitchenConfiguration "1" --> "1" ConfigurationStatus : current status >
+    KitchenConfiguration "1" *-- "1" KitchenLayout : content >
+    KitchenLayout "1" *-- "2..300" SceneElement : contains >
+    SceneElement "1" --> "1" ElementCategory : belongs to >
+    SceneElement "1" *-- "1" ModelReference : represented by >
+    SceneElement "1" *-- "0..1" MaterialProperties : rendered with >
+    ModelReference <|-- ProceduralModelReference
+    ModelReference <|-- AssetModelReference
+}
+
+' -----------------------------------------------------------------------------
+' KITCHEN ASSET AGGREGATE (WEB06) - Texture assets resolved into URLs
+' -----------------------------------------------------------------------------
+package "Kitchen Asset Aggregate (WEB06)" <<Rectangle>> {
+
+    class KitchenAsset <<entity>> <<aggregateRoot>> {
+        + format : String
+        + url : String
+    }
+    note right of KitchenAsset
+        Resolved in the response map as
+        assets[assetId] = { kind, format, url }.
+        Validated by WEB06 prior to activation (BR 6).
+    end note
+
+    class KitchenAssetId <<vo>> {
+        + value : String
+    }
+
+    enum AssetKind <<enum>> {
+        MODEL
+        TEXTURE
+    }
+
+    KitchenAsset "1" *-- "1" KitchenAssetId : identified by >
+    KitchenAsset "1" --> "1" AssetKind : is a >
+}
+
+MaterialProperties ..> KitchenAsset : resolves texture maps\n(kind = TEXTURE) >
+AssetModelReference ..> KitchenAsset : resolves 3D model\n(kind = MODEL) >
+
+@enduml

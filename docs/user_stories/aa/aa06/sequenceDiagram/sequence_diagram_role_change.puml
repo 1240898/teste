@@ -1,0 +1,256 @@
+@startuml sequence_diagram_role_change
+skinparam shadowing true
+title AA06 - Administrator Role and Account Status Change
+autonumber
+actor Administrator as Admin
+participant "AdminUserManagementPage" as AdminUI
+participant "AuthContext" as AuthContext
+participant "UserAdministrationApi" as UserAPI
+participant "apiClient" as ApiClient
+participant "UserRoutes" as Routes
+participant "AuthMiddleware" as Auth
+participant "RoleMiddleware" as RoleGuard
+participant "ValidationMiddleware" as Validation
+participant "UserController" as Controller
+participant "UserService" as Service
+participant "PostgresUnitOfWork" as UoW
+participant "UserRepository" as Users
+participant "User aggregate" as User
+participant "RoleChangeRecordRepository" as Audit
+participant "RoleChangeRecord" as Record
+
+activate Admin
+Admin -> AdminUI : change roles, deactivate, or reactivate selected account
+activate AdminUI
+AdminUI -> AuthContext : hasRole(ADMINISTRATOR)
+activate AuthContext
+AuthContext --> AdminUI : show authorized controls
+deactivate AuthContext
+AdminUI -> UserAPI : updateRoles(...) / deactivateUser(...) / reactivateUser(...)
+activate UserAPI
+UserAPI -> ApiClient : request(method, path, body, auth context)
+activate ApiClient
+ApiClient -> Routes : protected HTTP request
+activate Routes
+Routes -> Auth : verifyToken(request)
+activate Auth
+Auth -> Service : resolveActor(userId from verified JWT claims)
+activate Service
+Service -> Users : findById(userId)
+activate Users
+Users --> Service : active User with current roles
+deactivate Users
+Service --> Auth : ActorContext
+deactivate Service
+Auth --> Routes : request.user = current ActorContext
+deactivate Auth
+Routes -> RoleGuard : requireRole(ADMINISTRATOR)
+activate RoleGuard
+alt unauthenticated or inactive account
+  Auth --> Routes : 401 Unauthorized
+  Routes --> ApiClient : 401
+  deactivate Routes
+  ApiClient --> UserAPI : error
+  deactivate ApiClient
+  UserAPI --> AdminUI : error feedback
+  deactivate UserAPI
+else authenticated but not Administrator
+  RoleGuard --> Routes : 403 Forbidden
+  deactivate RoleGuard
+  Routes --> ApiClient : 403
+  deactivate Routes
+  ApiClient --> UserAPI : error
+  deactivate ApiClient
+  UserAPI --> AdminUI : error feedback
+  deactivate UserAPI
+else authorized Administrator
+  activate RoleGuard
+  RoleGuard --> Routes : authorized
+  activate Routes
+  deactivate RoleGuard
+  Routes -> Validation : validate role request, if PATCH
+  activate Validation
+  alt role payload invalid or unsupported
+    Validation --> Routes : 400 Bad Request
+    deactivate Validation
+    Routes --> ApiClient : 400
+    deactivate Routes
+    ApiClient --> UserAPI : validation error
+    deactivate ApiClient
+    UserAPI --> AdminUI : show validation feedback
+    deactivate UserAPI
+  else request valid
+    activate Validation
+    Validation --> Routes : valid
+    deactivate Validation
+    activate Routes
+    Routes -> Controller : updateRoles(...) / deactivate(...) / reactivate(...)
+    activate Controller
+    Controller -> Service : corresponding application operation
+    activate Service
+    Service -> UoW : withTransaction(work)
+    activate UoW
+    UoW --> Service : transaction context
+    deactivate UoW
+    Service -> Users : lockAdministratorRoster(transaction)
+    activate Users
+    Users --> Service : roster lock acquired
+    deactivate Users
+    Service -> Users : findById(actor.userId, transaction)
+    activate Users
+    Users --> Service : current actor User, active status, current roles
+    deactivate Users
+    alt actor is inactive or no longer an Administrator
+      Service --> UoW : rollback (authorization changed while waiting for the lock)
+      activate UoW
+      UoW --> Service : transaction rolled back
+      deactivate UoW
+      Service --> Controller : 403 Forbidden
+      deactivate Service
+      Controller --> Routes : 403
+      deactivate Controller
+      Routes --> ApiClient : 403
+      deactivate Routes
+      ApiClient --> UserAPI : authorization error
+      deactivate ApiClient
+      UserAPI --> AdminUI : show authorization feedback
+      deactivate UserAPI
+    else actor remains active Administrator
+      Service -> Users : findById(targetId, transaction)
+      activate Users
+    
+    alt target account not found
+      Users --> Service : none
+      deactivate Users
+      Service --> UoW : not-found error
+      activate UoW
+      UoW --> Service : rollback / 404
+      deactivate UoW
+      Service --> Controller : 404 Not Found
+      deactivate Service
+      Controller --> Routes : 404
+      deactivate Controller
+      Routes --> ApiClient : 404
+      deactivate Routes
+      ApiClient --> UserAPI : error
+      deactivate ApiClient
+      UserAPI --> AdminUI : show not-found feedback
+      deactivate UserAPI
+    else target account found
+      Users --> Service : target User, active status, roles, everActivated
+      deactivate Users
+      alt role removal or deactivation would leave zero active Administrators
+      activate Service
+        Service -> Users : count active Administrators in transaction
+        activate Users
+        Users --> Service : count
+        deactivate Users
+        Service --> UoW : invariant violation
+        activate UoW
+        UoW --> Service : rollback / conflict
+        deactivate UoW
+        Service --> Controller : 409 Conflict
+        deactivate Service
+        Controller --> Routes : 409
+        deactivate Controller
+        Routes --> ApiClient : 409
+        deactivate Routes
+        ApiClient --> UserAPI : error
+        deactivate ApiClient
+        UserAPI --> AdminUI : show invariant feedback
+        deactivate UserAPI
+      else invariant preserved
+        alt role set changed
+          activate Service
+          Service -> User : setRoles(nextRoles)
+          activate User
+          User --> Service : updated roles
+          deactivate User
+          Service -> Record : create(targetId, priorRoles, nextRoles, Admin, now)
+          activate Record
+          Record --> Service : new RoleChangeRecord
+          deactivate Record
+          Service -> Users : save(target, transaction)
+          activate Users
+          Users --> Service : committed target User
+          deactivate Users
+          Service -> Audit : save(RoleChangeRecord, transaction)
+          activate Audit
+          Audit --> Service : committed RoleChangeRecord
+          deactivate Audit
+          note right of User
+            Adding a role to an existing account changes its role set only.
+            It does not trigger activation; the account's activation state
+            remains unchanged and activate() is not called.
+          end note
+        else Administrator deactivates the account
+          Service -> User : deactivate()
+          activate User
+          User --> Service : updated active status
+          note right of User
+            active: true -> false
+          end note
+          deactivate User
+          Service -> Users : save(target, transaction)
+          activate Users
+          Users --> Service : committed target User
+          deactivate Users
+        else Administrator requests reactivation
+          alt everActivated == false
+            Service --> Controller : 409 Conflict (invitation activation still required)
+            deactivate Service
+            Controller --> Routes : 409
+            deactivate Controller
+            Routes --> ApiClient : 409
+            deactivate Routes
+            ApiClient --> UserAPI : error
+            deactivate ApiClient
+            UserAPI --> AdminUI : show activation-required feedback
+            deactivate UserAPI
+          else everActivated == true and account is inactive
+            activate Service
+            Service -> User : activate()
+            activate User
+            User --> Service : updated active status
+            note right of User
+              active: false -> true
+              No invitation is issued.
+            end note
+            deactivate User
+            Service -> Users : save(target, transaction)
+            activate Users
+            Users --> Service : committed target User
+            deactivate Users
+            activate UoW
+          else account is already active
+            Service --> UoW : no state change
+          end
+        else status unchanged
+          Service --> UoW : no state change
+        end
+        UoW --> Service : committed state
+        deactivate UoW
+        Service --> Controller : UserResponseDTO / no content
+        deactivate Service
+        Controller --> Routes : 200 / 204 response
+        deactivate Controller
+        Routes --> ApiClient : response
+        deactivate Routes
+        ApiClient --> UserAPI : result
+        deactivate ApiClient
+        UserAPI --> AdminUI : update selected account/status
+        deactivate UserAPI
+        AdminUI --> Admin : show result
+      end
+    end
+    end
+  end
+end
+deactivate AdminUI
+deactivate Admin
+
+note over User,Service
+  Activation is required when a new local account is created, before it becomes
+  active. Adding another role to an existing account does not trigger activation.
+end note
+@enduml

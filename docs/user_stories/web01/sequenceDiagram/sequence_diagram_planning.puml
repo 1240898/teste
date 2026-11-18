@@ -1,0 +1,71 @@
+@startuml sequence_diagram_planning
+autonumber
+title WEB01 - UC4: execute a forecast and consult its result
+hide footbox
+
+actor "LaPrizza Manager" as User
+participant "Planning page (WEB07)" as Page
+participant "planningApi (WEB07)" as Adapter
+participant ModuleRequest as Request
+participant apiClient as Client
+participant "API Gateway" as Gateway
+participant "Procurement planning API" as Procurement
+participant "Backoffice API" as Backoffice
+
+ref over User, Gateway : SD3 - Open planning in the shared shell
+User -> Page : Execute a saved forecast
+Page -> Page : Generate execution ID and keep the selection
+Page --> User : Show progress and disable repeat submission
+Page -> Adapter : execute(request with execution ID)
+Adapter -> Request : request(POST, execution path, options)
+Request -> Client : request with current access bearer
+Client -> Gateway : POST selected forecast with execution ID
+Gateway -> Procurement : Route planning request
+Procurement -> Backoffice : Check current Manager access (AA04)
+Backoffice --> Procurement : Actor ID, 401, 403 or failure
+alt Authorised
+    ref over Procurement, Backoffice : AI01 execution flow\nClaim attempt, load inputs, save outcome atomically
+    Procurement --> Gateway : Stored state or diagnostic
+else Denied or authority unavailable
+    Procurement --> Gateway : Access error or service error
+end
+alt Response received
+    Gateway --> Client : Response
+    Client --> Request : Stored state or ApiError
+    Request --> Adapter : Stored state or ApiError
+    Adapter --> Page : Stored state or ApiError
+    Page --> User : Show result or feedback
+else Response lost
+    Gateway -x Client : Response lost or timed out
+    Client --> Request : Unconfirmed request outcome
+    Request --> Adapter : Unconfirmed request outcome
+    Adapter --> Page : Look up original execution ID
+end
+
+opt Recover after a lost response or open a saved result
+    Page -> Adapter : getResult(executionId)
+    Adapter -> Request : request(GET, result path, options)
+    Request -> Client : request with current access bearer
+    Client -> Gateway : GET status or result by execution ID
+    Gateway -> Procurement : Route result read
+    Procurement -> Backoffice : Check current Manager access again (AA04)
+    alt Authorised
+        Backoffice --> Procurement : Actor ID
+        Procurement -> Backoffice : Read execution state (private records API)
+        Backoffice --> Procurement : Stored state or lookup diagnostic
+        Procurement --> Gateway : Status, result or lookup diagnostic
+    else Denied or authority unavailable
+        Backoffice --> Procurement : 401, 403 or failure
+        Procurement --> Gateway : Access error or service error
+    end
+    Gateway --> Client : Response
+    Client --> Request : Stored state or ApiError
+    Request --> Adapter : Stored state or ApiError
+    Adapter --> Page : Stored state or ApiError
+    Page --> User : Show result, progress or diagnostic
+    opt Lookup permits retry and Manager chooses it
+        Page -> Adapter : execute(same ID and selection)
+        ref over Adapter, Backoffice : Repeat the start flow for the same execution
+    end
+end
+@enduml

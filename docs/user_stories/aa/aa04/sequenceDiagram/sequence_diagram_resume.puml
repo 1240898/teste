@@ -1,0 +1,96 @@
+@startuml sequence_diagram_resume
+skinparam shadowing true
+autonumber
+title AA04 - Restore Session After Page Reload
+actor "System User" as User
+participant "Browser" as Browser
+participant "AuthProvider" as Provider
+participant "authApi" as API
+participant "AuthController" as Controller
+participant "UserService" as Users
+participant "SessionCredentialService" as Credentials
+participant "PostgresApplicationSessionRepository" as Sessions
+participant "UserRepository" as Accounts
+database PostgreSQL as DB
+participant "JwtTokenService" as JWT
+
+User -> Browser: reload application page
+activate Browser
+Browser -> Provider: mount; in-memory JWT and CSRF are empty
+activate Provider
+Provider -> API: resumeSession() with credentials included
+activate API
+API -> Controller: POST /api/v1/auth/resume\nCookie: HttpOnly lap_session\nOrigin: configured frontend origin
+activate Controller
+Controller -> Controller: require exact allowed Origin; read cookie
+alt missing cookie or rejected Origin
+ Controller --> API: 401 / 403 (no-store)
+else cookie and Origin present
+ Controller -> Users: resume(cookieCredential)
+ activate Users
+ Users -> Credentials: parse(cookieCredential)
+ activate Credentials
+ Credentials --> Users: session id, credential hash / invalid
+ deactivate Credentials
+ alt invalid cookie
+  Users -> Users: reject (401)
+ else parsed cookie
+  Users -> Sessions: findResumable(id, hash)
+  activate Sessions
+  Sessions -> DB: SELECT unrevoked session before database idle deadline
+  activate DB
+  DB --> Sessions: active record / null / error
+  deactivate DB
+  Sessions --> Users: record / null / error
+  deactivate Sessions
+  alt missing, revoked or expired session
+   Users -> Users: reject (401)
+  else active session
+   Users -> Accounts: findById(session.user_id)
+   activate Accounts
+   Accounts -> DB: SELECT current User
+   activate DB
+   DB --> Accounts: current User / missing / error
+   deactivate DB
+   Accounts --> Users: User / null / error
+   deactivate Accounts
+   alt missing or inactive User
+    Users -> Users: reject (401 / 403)
+   else active User with current role
+    Users -> JWT: generateToken({sub, sid})
+    activate JWT
+    JWT --> Users: fresh access JWT
+    deactivate JWT
+    Users --> Controller: AuthTokenDTO\n(new JWT, CSRF token, existing idle deadline)
+   end
+  end
+ end
+ deactivate Users
+end
+Controller --> API: JSON without session credential\nSet-Cookie refresh / error (no-store)
+deactivate Controller
+API --> Provider: AuthTokenDTO / error
+deactivate API
+alt resume rejected or unavailable
+ Provider -> Provider: keep anonymous; hide protected UI
+else resume succeeded
+ Provider -> API: GET /api/v1/auth/me\nAuthorization: Bearer fresh access JWT
+ activate API
+ API --> Provider: current User and roles / error
+ deactivate API
+ alt current user confirmed
+  Provider -> Provider: restore authenticated state and timing window
+ else token, account or role check failed
+  Provider -> Provider: fail closed; clear authenticated state
+ end
+end
+Provider --> Browser: anonymous or restored session
+deactivate Provider
+Browser --> User: show public page or authenticated UI
+deactivate Browser
+note over Sessions,DB
+Resume reads the session but does not update last_activity_at
+or idle_expires_at. Normal activity-driven renewal is a
+separate request and requires X-CSRF-Token.
+end note
+@enduml

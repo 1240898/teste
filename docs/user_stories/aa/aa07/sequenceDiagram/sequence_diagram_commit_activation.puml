@@ -1,0 +1,71 @@
+@startuml
+participant ActivationService as App
+participant "IUnitOfWork\n(PostgresUnitOfWork adapter)" as UoW
+participant IActivationLock as Lock
+participant IActivationRepository as Repo
+participant User
+database PostgreSQL as DB
+note over App : commitActivation(binding, credential)
+App -> UoW : withTransaction(work)
+group Transaction callback
+ App -> Lock : acquireMembershipLock(tx)
+ Lock -> DB : Acquire same transaction advisory lock as AA06
+ App -> Repo : loadCurrentForUpdate(binding, tx)
+ Repo -> DB : Lock target User, then reload account and current invitation
+ note right of DB
+  AA06 replacement takes the same User lock.
+  Concurrent submissions wait and reload.
+ end note
+ alt Unknown account or missing current invitation
+  Repo --> App : Invitation unavailable
+ else Current aggregate loaded
+  Repo --> App : User
+  note right of App
+   Extract tokenHash and intendedUserId from the binding.
+   Read server time after acquiring the locks.
+  end note
+  App -> User : redeemInvitation(tokenHash, intendedUserId, credential, now)
+  User -> User : assertRedeemable(tokenHash, intendedUserId, credential.method, now)
+  alt Expired, used, replaced, wrong account or method, active or everActivated
+   User --> App : Invitation unavailable
+  else First activation with current, pending and unexpired invitation
+   alt Local activation has neither stored password nor supplied credential
+    User --> App : Password is required to activate this account. (400)
+   else Local activation supplies a password when one already exists
+    User --> App : Credential conflict (409)
+   else Verified email differs from invitation recipient or account email
+    User --> App : External verification rejected before linking
+   else Conflicting external identity for the same provider
+    User --> App : Identity conflict (409)
+   else All domain preconditions satisfied
+    note right of User
+     Apply the transition inside redeemInvitation:
+     preserve the local password, establish the first password,
+     or attach the verified external identity.
+     set active and everActivated to true,
+     and mark the current invitation USED.
+    end note
+    User --> App : Activated aggregate
+    App -> Repo : saveActivation(user, tx)
+    Repo -> DB : Persist both flags, credential if added, and conditional consumption
+    alt Identity uniqueness conflict
+     DB --> Repo : Constraint violation
+     Repo --> App : Identity conflict (409)
+    else Consumption affects zero rows
+     DB --> Repo : Invitation no longer redeemable
+     Repo --> App : Invitation unavailable (400)
+    else All writes accepted
+     DB --> Repo : Saved
+    end
+   end
+  end
+ end
+end
+alt Rejection or persistence failure
+ UoW -> DB : Roll back
+ UoW --> App : Rejection or failure
+else All writes succeeded
+ UoW -> DB : Commit
+ UoW --> App : Success
+end
+@enduml

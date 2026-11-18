@@ -1,0 +1,156 @@
+@startuml sequence_diagram_create_product
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - BCK05 Create Product (POST /api/v1/products)
+
+actor Manager
+participant Routes as "ProductRoutes"
+participant AuthMW as "AuthMiddleware"
+participant RoleMW as "RoleMiddleware"
+participant Validator as "ValidationMiddleware"
+participant Controller as "ProductController"
+participant Service as "ProductService"
+participant UoW as "IUnitOfWork"
+participant Repo as "IProductRepository"
+participant RefReader as "IProductReferenceReader"
+participant Product as "Product\n<<aggregateRoot>>"
+participant StockPort as "IStockProvisioning\n(BCK09)"
+participant Mapper as "ProductMapper"
+database DB as "PostgreSQL"
+
+Manager -> Routes : POST /api/v1/products\n{ name, description, categoryId, isSellable,\n  isPizzaComponent, isStockControlled, initialUnits?,\n  pizzaComponentTypeId, allergenIds, basePrice }
+activate Routes
+activate Manager
+
+Routes -> AuthMW : verifyToken(req, res, next)
+activate AuthMW
+alt Missing / invalid token
+    AuthMW --> Manager : 401 Unauthorized
+end
+AuthMW --> Routes : next()
+deactivate AuthMW
+
+Routes -> RoleMW : requireRole("MANAGER")
+activate RoleMW
+alt Caller is not MANAGER
+    RoleMW --> Manager : 403 Forbidden
+end
+RoleMW --> Routes : next()
+deactivate RoleMW
+
+Routes -> Validator : validate(createProductSchema)
+activate Validator
+alt Malformed payload (types, required fields, unknown fields)
+    Validator --> Manager : 400 Bad Request
+end
+Validator --> Routes : next()
+deactivate Validator
+
+Routes -> Controller : createProduct(req, res, next)
+activate Controller
+Controller -> Service : createProduct(createProductDTO)
+activate Service
+
+Service -> Mapper : toProps(dto)
+activate Mapper
+Mapper --> Service : props (value objects)
+deactivate Mapper
+opt invalid field value (empty name, bad id format, price with 3 decimals...)
+    Service --> Controller : throw AppError(400, ...)
+    Controller --> Manager : 400 Bad Request
+end
+Service -> Product : validateProps(props)
+activate Product
+note right of Product
+  Domain invariants, checked BEFORE any DB access:
+  at least one type; component <=> exactly one type;
+  basePrice only for sellable; no repeated allergens.
+end note
+alt invariant violated
+    Product --> Service : throw AppError(400, ...)
+    Service --> Controller : error
+    Controller --> Manager : 400 Bad Request
+end
+Product --> Service : valid
+deactivate Product
+
+Service -> UoW : withTransaction(work)
+activate UoW
+UoW -> DB : BEGIN
+UoW -> Service : work(tx)
+
+Service -> RefReader : categoryExists / componentTypeExists /\nfindMissingAllergens(..., tx)
+activate RefReader
+RefReader -> DB : SELECT referenced categories / types / allergens
+RefReader --> Service : references found
+deactivate RefReader
+opt a referenced category / component type / allergen does not exist
+    Service --> UoW : throw AppError(404, "<reference> not found")
+end
+
+Service -> Repo : nextId(tx)
+activate Repo
+Repo -> DB : SELECT nextval('product_id_seq')
+Repo --> Service : ProductId ("PROD-00123")
+deactivate Repo
+
+Service -> Product : create(productId, props)
+activate Product
+Product --> Service : product (isActive = true)
+deactivate Product
+
+Service -> Repo : save(product, tx)
+activate Repo
+Repo -> DB : INSERT INTO products ...\nINSERT INTO product_allergens ...
+Repo --> Service : savedProduct
+deactivate Repo
+
+opt product.hasStockControl() = true
+    Service -> StockPort : initializeForProduct(productId, tx, initialUnits?)
+    activate StockPort
+    note right of StockPort
+      BCK05 forwards the optional Manager-supplied quantity.
+      BCK09 defaults it to 0 and validates it as a
+      non-negative integer before creating StockInformation.
+    end note
+    StockPort -> DB : INSERT INTO stock_information\n(product_id, available_units = initialUnits ?? 0)
+    alt stock record already exists / persistence error
+        StockPort --> Service : throw AppError(409, ...)
+        Service --> UoW : rethrow
+    else created
+        StockPort --> Service : initialized
+    end
+    deactivate StockPort
+end
+
+alt work completed
+    Service --> UoW : savedProduct
+    UoW -> DB : COMMIT
+    UoW --> Service : savedProduct
+else any error thrown inside work(tx)
+    UoW -> DB : ROLLBACK
+    note right of UoW
+      Product row AND stock row are discarded
+      together: no product without stock record,
+      no stock record without product.
+    end note
+    UoW --> Service : rethrow error
+    Service --> Controller : error
+    Controller --> Manager : 400 / 404 / 409\n(via shared errorHandler)
+end
+deactivate UoW
+
+Service -> Mapper : toDTO(savedProduct)
+activate Mapper
+Mapper --> Service : productResponseDTO
+deactivate Mapper
+Service --> Controller : productResponseDTO
+deactivate Service
+Controller --> Manager : 201 Created\n{ id, ..., isStockControlled, isActive: true }
+deactivate Controller
+deactivate Routes
+deactivate Manager
+
+@enduml

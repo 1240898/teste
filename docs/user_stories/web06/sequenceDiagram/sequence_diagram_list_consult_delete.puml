@@ -1,0 +1,164 @@
+@startuml sequence_diagram_list_consult_delete
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - WEB06 List, Consult and Delete Kitchen Configurations
+
+actor Manager as "LaPrizza Manager"
+participant List as "KitchenConfigurationListPage"
+participant Detail as "KitchenConfigurationDetailPage"
+participant Api as "kitchenConfigurationApi"
+participant Req as "ModuleRequest\n(WEB01) + apiClient"
+participant Routes as "KitchenConfigurationRoutes\n(AuthMiddleware -> RoleMiddleware)"
+participant Service as "KitchenConfigurationService"
+participant Repo as "IKitchenConfigurationRepository"
+database PG as "PostgreSQL"
+
+ref over Manager, Req : WEB03 / WEB01 SD 3 - section "kitchen-configurations" (MANAGER) allowed and module mounted
+
+== List (AC 1) ==
+Manager -> List : opens /kitchen/configurations
+activate List
+List --> Manager : LoadingIndicator (WEB04)
+List -> Api : list(signal)
+activate Api
+Api -> Req : request("GET", "/kitchen-configurations")
+activate Req
+Req -> Routes : GET /api/v1/kitchen-configurations (Bearer)
+activate Routes
+Routes -> Service : listConfigurations()
+activate Service
+Service -> Repo : findAllSummaries()
+activate Repo
+Repo -> PG : SELECT id, name, status, version, element_count, updated_at, activated_at\nFROM kitchen_configurations ORDER BY (status = 'ACTIVE') DESC, lower(name)
+note right of PG : element_count is stored on write,\nso the list never reads the JSONB content
+PG --> Repo : rows
+Repo --> Service : configurations
+deactivate Repo
+Service --> Routes : KitchenConfigurationSummaryDTO[]
+deactivate Service
+Routes --> Req : 200 [ { id, name, status, version, elementCount, updatedAt, activatedAt } ]
+deactivate Routes
+Req --> Api : summaries
+deactivate Req
+Api --> List : summaries
+deactivate Api
+alt list empty
+    List --> Manager : "No kitchen configurations yet. Create or import one."\n+ warning "No configuration is active: the viewer has nothing to show"
+else at least one, none ACTIVE
+    List --> Manager : table + warning "No configuration is active"
+else one ACTIVE
+    List --> Manager : table (ACTIVE badge) + ActiveConfigurationBanner
+end
+
+== Consult (AC 1) ==
+Manager -> List : clicks "KCF-00001"
+List --> Manager : navigate("/kitchen/configurations/KCF-00001")
+Manager -> Detail : page mounted
+activate Detail
+Detail -> Api : getById("KCF-00001", signal)
+activate Api
+Api -> Req : request("GET", "/kitchen-configurations/KCF-00001")
+activate Req
+Req -> Routes : GET /api/v1/kitchen-configurations/KCF-00001 (Bearer)
+activate Routes
+Routes -> Routes : id matches ^KCF-[0-9]{5,}$ ? (else 400)
+Routes -> Service : getConfiguration("KCF-00001")
+activate Service
+Service -> Repo : findById("KCF-00001")
+activate Repo
+Repo -> PG : SELECT ... FROM kitchen_configurations WHERE id = $1
+PG --> Repo : row / none
+Repo --> Service : configuration / null
+deactivate Repo
+alt not found
+    Service --> Routes : throw AppError("Kitchen configuration not found", 404)
+else found
+    Service --> Routes : KitchenConfigurationDetailDTO
+end
+deactivate Service
+Routes --> Req : 200 { id, name, status, version, content, ... } / 404
+deactivate Routes
+Req --> Api : DTO / ApiError
+deactivate Req
+Api --> Detail : DTO / ApiError
+deactivate Api
+alt 200
+    Detail --> Manager : name, id, status, version, dates and the\nformatted JSON (read-only JsonContentEditor)\n+ actions Edit / Activate / Delete / Download JSON
+else 404
+    Detail --> Manager : "This configuration does not exist" + link to the list
+end
+deactivate Detail
+
+== Delete (AC 1, AC 6) ==
+Manager -> List : clicks "Delete" on a row
+alt row is ACTIVE
+    List --> Manager : Delete disabled - tooltip "Activate another\nconfiguration before deleting this one"
+else row is INACTIVE
+    List --> Manager : DeleteConfirmDialog "Delete 'Compact kitchen' (KCF-00001)?\nThis cannot be undone."
+    alt cancelled
+        Manager -> List : Cancel
+    else confirmed
+        Manager -> List : Confirm
+        List -> Api : remove("KCF-00001")
+        activate Api
+        Api -> Req : request("DELETE", "/kitchen-configurations/KCF-00001")
+        activate Req
+        Req -> Routes : DELETE /api/v1/kitchen-configurations/KCF-00001 (Bearer)
+        activate Routes
+        Routes -> Service : deleteConfiguration("KCF-00001")
+        activate Service
+        Service -> Repo : findById("KCF-00001")
+        activate Repo
+        Repo --> Service : configuration / null
+        deactivate Repo
+        alt not found
+            Service --> Routes : throw AppError("Kitchen configuration not found", 404)
+        else found
+            Service -> Service : configuration.assertDeletable()
+            alt ACTIVE (activated meanwhile by another Manager)
+                Service --> Routes : throw ActiveConfigurationDeletionError (409)\n"The active kitchen configuration cannot be deleted.\nActivate another configuration first."
+            else INACTIVE
+                Service -> Repo : deleteIfInactive("KCF-00001")
+                activate Repo
+                Repo -> PG : DELETE FROM kitchen_configurations\nWHERE id = $1 AND status = 'INACTIVE'
+                note right of PG
+                    Conditional, atomic: if an activation
+                    committed after the check, the row no
+                    longer matches and nothing is deleted.
+                    kitchen_configuration_assets rows are
+                    removed by ON DELETE CASCADE.
+                end note
+                PG --> Repo : rowCount
+                Repo --> Service : rowCount = 1 ?
+                deactivate Repo
+                alt rowCount = 0
+                    Service --> Routes : throw ActiveConfigurationDeletionError (409)
+                else rowCount = 1
+                    Service --> Routes : done
+                end
+            end
+        end
+        deactivate Service
+        Routes --> Req : 204 / 404 / 409
+        deactivate Routes
+        Req --> Api : null / ApiError
+        deactivate Req
+        Api --> List : null / ApiError
+        deactivate Api
+        alt 204
+            List -> List : reload list (BR 14 WEB01)
+            List --> Manager : "Configuration deleted"
+        else 409
+            List -> List : reload list
+            List --> Manager : the 409 message (configuration kept)
+        else 404
+            List -> List : reload list
+            List --> Manager : "This configuration no longer exists"
+        end
+    end
+end
+deactivate List
+
+@enduml

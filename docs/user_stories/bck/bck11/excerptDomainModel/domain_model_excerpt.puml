@@ -1,0 +1,321 @@
+@startuml domain_model_excerpt.puml
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam classAttributeIconSize 0
+hide methods
+
+package "Product Aggregate" <<Rectangle>> {
+
+    class Product <<entity>> <<aggregateRoot>> {
+        + categoryId : CategoryId
+        + allergenIds : List<AllergenId>
+        + pizzaComponentTypeId : ComponentTypeId | null
+        + pricingMode : PricingMode | null
+        + isActive : boolean
+        + isSellable : boolean
+        + isStockControlled : boolean
+        + isPizzaComponent : boolean
+    }
+
+    enum PricingMode {
+        FIXED
+        COMPONENT_BASED
+    }
+
+    class ProductId <<vo>> {
+        + value : string
+    }
+    note right of ProductId
+        - ProductId is a unique identifier for a product.
+        - Must be a string representing the product ID.
+        - Example: "PROD-00123".
+    end note
+
+    class ProductName <<vo>> {
+        + name : String
+    }
+
+    class ProductDescription <<vo>> {
+        + text : String
+    }
+
+    class "Money" as BCK05Money <<vo>> {
+        + cents : int
+        + currency : String
+        + getAmount() : number
+    }
+
+    Product "1" *-- "1" ProductId : identified by >
+    Product "1" *-- "1" ProductName : named >
+    Product "1" *-- "1" ProductDescription : described by >
+    Product "1" *-- "0..1" BCK05Money : basePrice >
+
+    note right of Product
+    Business rules:
+    - Sellable and Pizza Component are Product types.
+    - Stock-controlled is an independent characteristic.
+    - A Product MUST have at least one type:
+        • Sellable, or
+        • Pizza Component, or
+        • both.
+    - Invalid combinations (must be rejected):
+        • No type (neither Sellable nor Pizza Component)
+        • Exclusively stock-controlled
+    - Any Product (regardless of type) may or may not
+        be subject to stock control.
+    - A Pizza Component must be associated with
+        exactly one PizzaComponentType.
+    - For pizzas, the selling price is determined
+        by their components.
+    end note
+}
+
+package "Product Category Aggregate" <<Rectangle>> {
+
+    class ProductCategory <<entity>> <<aggregateRoot>> {
+    }
+
+    class CategoryId <<vo>> {
+        + value : string
+    }
+
+    note right of CategoryId
+        - CategoryId is a unique identifier for a product category.
+        - Must be a string representing the category ID.
+        - Example: "CAT-00123".
+    end note
+
+    class CategoryName <<vo>> {
+        + name : String
+    }
+
+    ProductCategory "1" *-- "1" CategoryId
+    ProductCategory "1" *-- "1" CategoryName
+}
+
+package "Allergen Aggregate" <<Rectangle>> {
+
+    class Allergen <<entity>> <<aggregateRoot>> {
+    }
+
+    class AllergenId <<vo>> {
+        + value : integer
+    }
+
+    note right of AllergenId
+        - AllergenId is a unique identifier for an allergen.
+        - Must be an integer between 1 and 14 (inclusive),
+          corresponding to the official EU Regulation No. 1169/2011.
+    end note
+
+    enum EUAllergenType <<enum>> {
+        1 : GLUTEN
+        2 : CRUSTACEANS
+        3 : EGGS
+        4 : FISH
+        5 : PEANUTS
+        6 : SOYBEANS
+        7 : MILK
+        8 : NUTS
+        9 : CELERY
+        10 : MUSTARD
+        11 : SESAME
+        12 : SULPHITES
+        13 : LUPIN
+        14 : MOLLUSCS
+    }
+
+    AllergenId ..> EUAllergenType : bounded by >
+
+    class AllergenName <<vo>> {
+        + name : String
+    }
+
+    Allergen "1" *-- "1" AllergenId
+    Allergen "1" *-- "1" AllergenName
+
+    note right of Allergen
+        An Allergen represents a food
+        allergen that may be associated
+        with Products and DietaryRestrictions.
+    end note
+}
+
+package "Pizza Size Aggregate" <<Rectangle>> {
+
+    class PizzaSize <<entity>> <<aggregateRoot>> {
+        + isActive : boolean
+    }
+
+    class PizzaSizeId <<vo>> {
+        + id : string
+    }
+
+    class PizzaSizeName <<vo>> {
+        + name : String
+    }
+
+    PizzaSize "1" *-- "1" PizzaSizeId : identified by >
+    PizzaSize "1" *-- "1" PizzaSizeName : named >
+}
+
+package "Pizza Component Type Aggregate" <<Rectangle>> {
+
+    class PizzaComponentType <<entity>> <<aggregateRoot>> {
+        + assemblyOrder : int
+        + minQuantity : int
+        + maxQuantity : Integer
+    }
+
+    class ComponentTypeId <<vo>> {
+        + value : string
+    }
+
+    note right of ComponentTypeId
+        - ComponentTypeId is a unique identifier for a pizza component type.
+        - Must be a string representing the component type ID.
+        - Example: "COMP-00123".
+    end note
+
+    class ComponentTypeName <<vo>> {
+        + name : String
+    }
+
+    PizzaComponentType "1" *-- "1" ComponentTypeId
+    PizzaComponentType "1" *-- "1" ComponentTypeName
+
+    note right of PizzaComponentType
+    Business rules:
+        - minQuantity >= 0
+        - maxQuantity >= minQuantity
+        - assemblyOrder determines
+          the component type order
+          during pizza assembly.
+    end note
+}
+
+package "Component Size Configuration Aggregate" <<Rectangle>> {
+
+    class ComponentSizeConfiguration <<entity>> <<aggregateRoot>> {
+    }
+
+    class StockUnitsConsumed <<vo>> {
+        + units : int
+    }
+
+    class "Money" as BCK08Money <<vo>> {
+        + amount : string
+        + currency : String
+    }
+
+    ComponentSizeConfiguration "1" *-- "1" BCK08Money : price >
+    ComponentSizeConfiguration "1" *-- "0..1" StockUnitsConsumed : consumes >
+
+    note right of ComponentSizeConfiguration
+    Business rules:
+        - A Product must be a Pizza Component.
+        - A Pizza Component + Pizza Size
+          pair identifies at most one
+          configuration.
+        - Price must be valid.
+        - Stock-controlled Products require non-negative consumption.
+        - Non-stock-controlled Products have no consumption value.
+        - A pizza size is available only when
+        stock is sufficient to cover the
+        configured StockUnitsConsumed.
+        - BCK11 evaluates each size independently
+          and retains inactive configured sizes
+          as unavailable.
+    end note
+}
+
+package "Predefined Pizza Aggregate" <<Rectangle>> {
+
+    class PredefinedPizza <<entity>> <<aggregateRoot>> {
+    }
+
+    class PredefinedPizzaId <<vo>> {
+        + value : string
+    }
+    note right of PredefinedPizzaId
+        - PredefinedPizzaId is a unique identifier for a predefined pizza.
+        - Must be a string representing the pizza ID.
+        - Example: "PIZZA-00123".
+    end note
+
+    class PizzaConfiguration <<vo>> {
+        + componentIds : List<string>
+    }
+
+    PredefinedPizza "1" *-- "1" PredefinedPizzaId
+    PredefinedPizza "1" *-- "1" PizzaConfiguration : default configuration >
+
+    note right of PredefinedPizza
+        ComponentIds identify Products designated as Pizza Components. 
+        The price of a pizza is recalculated from its final component configuration.
+        A pizza remains visible in the catalogue even when unavailable.
+        Availability is determined per size.
+    end note
+}
+
+package "Stock Aggregate" <<Rectangle>> {
+
+    class StockInformation <<entity>> <<aggregateRoot>> {
+        + trackingStatus : TrackingStatus
+    }
+
+    enum TrackingStatus {
+        CURRENT
+        HISTORICAL
+    }
+
+    class StockId <<vo>> {
+        + value : string
+    }
+
+    note right of StockId
+        - StockId is a unique identifier for a stock item.
+        - Must be a string representing the stock ID.
+        - Example: "STOCK-00123".
+    end note
+
+    class AbstractStockQuantity <<vo>> {
+        + availableUnits : int
+    }
+
+    StockInformation "1" *-- "1" StockId
+    StockInformation "1" *-- "1" AbstractStockQuantity : maintains >
+
+    note right of StockInformation
+    Business rules:
+        - Only stock-controlled Products
+          may have StockInformation.
+        - availableUnits >= 0.
+        - Stock consumption cannot result
+          in negative stock.
+        - BCK11 availability reads CURRENT
+          records only.
+    end note
+}
+
+Product ..> CategoryId : stores categoryId >
+Product ..> AllergenId : stores allergenIds >
+Product ..> ComponentTypeId : stores pizzaComponentTypeId >
+ComponentSizeConfiguration "0..*" --> "1" Product : applies to component >
+ComponentSizeConfiguration "0..*" --> "1" PizzaSize : for size >
+PredefinedPizza "0..1" --> "1" Product : represented by sellable >
+StockInformation "0..1" --> "1" Product : tracks stock for >
+
+note bottom of PizzaConfiguration
+  componentIds reference Products designated as Pizza Components.
+  Catalogue pizza allergens derive from these components.
+end note
+
+note bottom of Product
+  Product stores category/allergen identifiers, not Category or Allergen objects.
+  BCK11 loads those aggregates by ID to provide category and allergen names.
+  FIXED uses basePrice; COMPONENT_BASED requires a PredefinedPizza.
+  A component-based Product without one is invalid catalogue data.
+end note
+
+@enduml

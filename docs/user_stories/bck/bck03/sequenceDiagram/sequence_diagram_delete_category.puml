@@ -1,0 +1,91 @@
+@startuml sequence_diagram_delete_category
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - BCK03 Delete Product Category (DELETE /api/v1/categories/:id)
+
+actor Client as "Manager / Client"
+participant Routes as "ProductCategoryRoutes"
+participant AuthMW as "AuthMiddleware"
+participant RoleMW as "RoleMiddleware"
+participant Controller as "ProductCategoryController"
+participant Service as "ProductCategoryService"
+participant Repo as "IProductCategoryRepository"
+database DB as "Database\n(Persistence)"
+
+Client -> Routes : DELETE /api/v1/categories/:id
+activate Routes
+
+' Security Middlewares
+Routes -> AuthMW : verifyToken(req, res, next)
+activate AuthMW
+alt Invalid or Missing Token
+    AuthMW --> Client : 401 Unauthorized\n{ error: "Unauthorized" }
+else Token Valid
+    AuthMW --> Routes : next()
+    deactivate AuthMW
+
+    Routes -> RoleMW : requireRole("MANAGER")
+    activate RoleMW
+    alt Lacks MANAGER Role
+        RoleMW --> Client : 403 Forbidden\n{ error: "Forbidden: Access denied" }
+    else Has MANAGER Role
+        RoleMW --> Routes : next()
+        deactivate RoleMW
+
+        ' Controller & Application Logic
+        Routes -> Controller : deleteCategory(req, res)
+        activate Controller
+
+        Controller -> Service : deleteCategory(id)
+        activate Service
+
+        Service -> Repo : findById(categoryId)
+        activate Repo
+        Repo -> DB : findById(id)
+        activate DB
+        DB --> Repo : category / null
+        deactivate DB
+        Repo --> Service : category / null
+        deactivate Repo
+
+        alt Category Not Found
+            Service --> Controller : throw NotFoundError("Category not found")
+            Controller --> Client : 404 Not Found\n{ error: "Category not found" }
+        else Category Exists
+            ' Invariant & Integrity Check (AC 5 / BR 3)
+            Service -> Repo : isReferencedByProducts(categoryId)
+            activate Repo
+            Repo -> DB : COUNT(products WHERE category_id = id)
+            activate DB
+            DB --> Repo : isReferenced (boolean)
+            deactivate DB
+            Repo --> Service : isReferenced (boolean)
+            deactivate Repo
+
+            alt Referenced by Existing Products (AC 5 or DB FK Violation)
+                Service --> Controller : throw ConflictError("Cannot remove category referenced by products")
+                Controller --> Client : 409 Conflict\n{ error: "Product category referenced by existing products cannot be removed" }
+            else Safe to Delete
+                Service -> Repo : delete(categoryId)
+                activate Repo
+                Repo -> DB : DELETE FROM product_categories WHERE id = id
+                activate DB
+                DB --> Repo : success
+                deactivate DB
+                Repo --> Service : void
+                deactivate Repo
+
+                Service --> Controller : void
+                deactivate Service
+
+                Controller --> Client : 204 No Content
+                deactivate Controller
+            end
+        end
+    end
+end
+deactivate Routes
+
+@enduml

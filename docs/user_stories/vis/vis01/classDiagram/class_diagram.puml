@@ -1,0 +1,396 @@
+@startuml class_diagram
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam linetype ortho
+
+title Class Diagram (Design) - VIS01 3D Module Integration
+
+' -----------------------------------------------------------------------------
+' SPA SHELL - existing / owned by other stories (only the VIS01 touch points)
+' -----------------------------------------------------------------------------
+package "Front-End (SPA) - shell (WEB01 / WEB03 / AA03 / AA04)" <<Rectangle>> {
+
+    class main <<composition root>> {
+    }
+    note right of main
+        Extended by VIS01 (WEB01 D7):
+        <App modules={{ kitchenViewer:
+          () => import('./visualization/KitchenViewerPage.jsx') }} />
+        WEB03 enables the existing "kitchenViewer" section
+        (/kitchen/viewer, [EMPLOYEE, MANAGER]) when
+        isSectionEnabled() finds the registered loader.
+    end note
+
+    class ModulePage <<component>> {
+        + roles: UserRole[]
+        + load: ModuleLoader
+    }
+    note bottom of ModulePage
+        WEB01 module slot (existing): ProtectedRoute ->
+        ConfirmedModule (refresh() before mounting) ->
+        LazyModule (React.lazy + Suspense +
+        ModuleErrorBoundary). Passes the session-bound
+        "request" function to the page. Render / import
+        errors are contained inside the shell.
+    end note
+
+    interface ModuleRequest <<function contract>> {
+        + request(method, path, options?: { body, query, signal }): Promise<JSON | null>
+    }
+    note right of ModuleRequest
+        WEB01 + WEB03 Table B (single owner of 401 / 403):
+        - 401: AuthProvider.handleAuthFailure -> clear(),
+          guest, redirect /login?returnTo. Terminal.
+        - 403: refresh() once (single flight); re-evaluate
+          current route against refreshed roles. If no
+          required role remains -> AccessDeniedPage;
+          if access remains (any-of roles) or roles are
+          unchanged -> the PAGE shows the WEB04 permission error.
+        The original ApiError is then thrown to the caller.
+    end note
+
+    class ApiError <<error>> {
+        + status: number
+        + kind: "http" | "network" | "timeout" | "aborted" | "invalid-response"
+        + message: string
+        + details: Issue[] | undefined
+    }
+    note bottom of ApiError
+        details added by WEB06 ALN-2:
+        array of { path, code, message }
+        copied from a 4xx body.
+    end note
+}
+
+' -----------------------------------------------------------------------------
+' VISUALIZATION FEATURE - frontend/src/visualization (VIS01)
+' -----------------------------------------------------------------------------
+package "Front-End (SPA) - visualization (VIS01)" <<Rectangle>> {
+
+    class KitchenViewerPage <<page, default export>> {
+        + request: ModuleRequest
+        + render(): ReactNode
+    }
+    note right of KitchenViewerPage
+        Module loaded by the slot. Renders <KitchenViewer>
+        with the default scene modules and the request.
+        No auth handling, no 3D code.
+    end note
+
+    class kitchenViewerApi <<feature REST adapter>> {
+        + getActive(request: ModuleRequest, signal: AbortSignal): Promise<ActiveKitchenConfigurationDTO>
+    }
+    note right of kitchenViewerApi
+        request("GET", "/kitchen-configurations/active", { signal })
+        Own adapter of the visualization feature: WEB01 BR 2
+        forbids importing kitchen/kitchenConfigurationApi
+        (WEB06). Same endpoint, same contract (WEB06 3.4.2).
+    end note
+
+    package "viewer (React + loading rules)" <<Rectangle>> {
+        class KitchenViewer <<component>> {
+            + request: ModuleRequest
+            + modules: SceneModuleFactory[]
+            - attempt: number
+            - viewport: Ref<HTMLDivElement>
+            - currentRequest: Ref<ModuleRequest>
+            - stopAttempt: Ref<Function>
+            - state: ViewerState
+            - restart(): void
+            + render(): ReactNode
+        }
+        note bottom of KitchenViewer
+            Each effect owns local engine, canvas and assets variables.
+            Check WebGL, load the configuration and preload all assets.
+            Then createElement("canvas"), append it to the viewport
+            and assign engine = ViewerEngine.create(...).
+            Transfer the assets to load(cfg, assets, modules, signal).
+            Start rendering when load() succeeds.
+            Cleanup aborts the attempt, disposes the engine and any
+            assets still held by the effect, then calls canvas.remove().
+            Reload and Retry run cleanup and increment attempt.
+            "expired": renders nothing (WEB03 redirects).
+        end note
+
+        class ViewerStatusMessage <<component>> {
+            + state: ViewerState
+            + onRetry(): void
+            + render(): ReactNode
+        }
+        note bottom of ViewerStatusMessage
+            Uses WEB04 feedback (loading indicator,
+            error with Retry) and WEB02 i18n (PT / EN).
+            No internal details in the text.
+        end note
+
+        class kitchenViewerLoader <<module>> {
+            + loadActiveKitchen(request, signal): Promise<ViewerState>
+        }
+        note right of kitchenViewerLoader
+            Pure (no React, no Three.js). Fail closed:
+            200 + valid body                       -> "loading-assets"
+            200 + invalid body (status, schemaVersion,
+                  unresolved asset, bad URL)       -> "invalid"
+            404 + details[].code ===
+                  "NO_ACTIVE_CONFIGURATION"         -> "empty"
+            404 other / 5xx / network / timeout /
+                  invalid-response                 -> "error" (request)
+            403                                    -> "denied"
+            401                                    -> "expired"
+            aborted                                -> "cancelled"
+            Never logs out, refreshes or navigates.
+        end note
+
+        class activeConfigurationParser <<module>> {
+            + parseActiveConfiguration(body: unknown): ActiveKitchenConfigurationDTO
+        }
+        note bottom of activeConfigurationParser
+            WEB06 3.4.5 step 2: status === "ACTIVE" and
+            content.schemaVersion === 1. Plus what the viewer
+            needs to build safely: units "meters"; dimensions
+            finite > 0; elements[] array; every model.assetId /
+            *MapAssetId (elements, floor, walls) present in
+            assets with the right kind; every url http(s).
+            Throws otherwise. Unknown fields ignored.
+        end note
+
+        class ViewerState <<DTO>> {
+            + status: "loading" | "loading-assets" | "ready" | "empty" | "invalid" | "denied" | "expired" | "error" | "unsupported" | "failed" | "cancelled"
+            + reason: "request" | "asset-unavailable" | null
+            + assetId: string | null
+            + configuration: ActiveKitchenConfigurationDTO | null
+        }
+
+        class ActiveKitchenConfigurationDTO <<DTO>> {
+            + id: string
+            + name: string
+            + status: "ACTIVE"
+            + version: number
+            + activatedAt: string
+            + content: KitchenLayoutDTO
+            + assets: Map<assetId, { kind, format, url }>
+        }
+    }
+
+    package "scene (Three.js, no React)" <<Rectangle>> {
+        class SceneAssetLoader {
+            + SceneAssetLoader(loadAsset = downloadAsset)
+            + preloadAll(assets, options?: { signal?, timeoutMs = 30000 }): Promise<LoadedAssets>
+        }
+        note right of SceneAssetLoader
+            WEB06 3.4.5 steps 3-4: every entry loaded in
+            parallel (GLTFLoader for MODEL, TextureLoader for
+            TEXTURE) with ONE overall timeout. All-or-nothing:
+            A failed file or timeout cancels other downloads,
+            releases loaded resources and throws AssetLoadError.
+            Caller cancellation propagates the abort reason.
+            Runs BEFORE any renderer exists.
+        end note
+
+        class LoadedAssets {
+            - entries: Map<assetId, { kind, resource }>
+            + getModel(id): GLTF | undefined
+            + getTexture(id): Texture | undefined
+            + dispose(release?): void
+        }
+        note bottom of LoadedAssets
+            Owns the geometries, materials and textures
+            of the loaded files and disposes each of them
+            once. Modules clone models per element and
+            dispose only what they create themselves.
+        end note
+
+        class AssetLoadError <<error>> {
+            + assetId: string
+            + cause: "not-found" | "decode" | "timeout"
+        }
+
+        class ViewerEngine {
+            - renderer: WebGLRenderer | null
+            - scene: Scene | null
+            - camera: PerspectiveCamera | null
+            - modules: SceneModule[]
+            - assets: LoadedAssets | null
+            - buildController: AbortController
+            - resizeObserver: ResizeObserver | null
+            - onFatalError: (error: ViewerEngineError) => void
+            - running: boolean
+            - disposed: boolean
+            + {static} create(canvas, container, options?): ViewerEngine
+            + load(configuration, assets: LoadedAssets, factories: SceneModuleFactory[], signal: AbortSignal): Promise<boolean>
+            + start(): boolean
+            + resize(width: number, height: number): void
+            + dispose(): void
+            - frame(timeMs: number): void
+            - fatal(error: ViewerEngineError): void
+            - sweepScene(): void
+        }
+        note bottom of ViewerEngine
+            create() and load() dispose the engine before throwing.
+            load() takes ownership of assets and registers each module
+            before awaiting build(). On abort it returns false and sweeps
+            the scene when the pending build settles.
+            Frame errors and context loss go through fatal(error),
+            which calls dispose() before notifying the viewer.
+            dispose() stops the loop, aborts the build and disconnects
+            the observer and listener. It disposes modules in reverse
+            order, then releases scene resources, assets and renderer.
+            It also releases the WebGL context. Cleanup continues after
+            individual errors and tracks resources already released.
+        end note
+
+        class ViewerEngineError <<error>> {
+            + phase: "renderer" | "build" | "update" | "render" | "context"
+            + moduleName: string | null
+            + cause: unknown
+        }
+
+        interface SceneModule {
+            + name: string
+            + build(context: SceneContext): void | Promise<void>
+            + update(deltaSeconds: number): void
+            + dispose(): void
+        }
+        note right of SceneModule
+            Extension point for VIS02-VIS07:
+            VIS02 kitchen layout, VIS03 assembly line,
+            VIS04 materials (ALN-6: a material override of an
+            ASSET element applies to EVERY mesh of the model),
+            VIS05 lighting, VIS06 light controls (lil-gui),
+            VIS07 camera controls (OrbitControls).
+            Contract: build() receives context.signal, checks it before
+            and after every await, and releases any late result if aborted.
+            It must settle on abort; dispose() is safe/idempotent during
+            a partial or pending build. update() allocates nothing per frame.
+        end note
+
+        class SceneContext <<DTO>> {
+            + scene: Scene
+            + camera: PerspectiveCamera
+            + renderer: WebGLRenderer
+            + domElement: HTMLCanvasElement
+            + configuration: ActiveKitchenConfigurationDTO
+            + assets: LoadedAssets
+            + signal: AbortSignal
+            + disposeResource(resource): void
+        }
+
+        class KitchenFloorModule {
+            - floor: Mesh | null
+            + build(context: SceneContext): void
+            + update(deltaSeconds: number): void
+            + dispose(): void
+        }
+        note bottom of KitchenFloorModule
+            VIS01 baseline: floor of width x depth,
+            centred at the origin, with the floor
+            texture set of content.kitchen.floor.
+            Replaced / extended by VIS02.
+        end note
+
+        class BaseLightingModule {
+            - ambient: AmbientLight | null
+            + build(context: SceneContext): void
+            + update(deltaSeconds: number): void
+            + dispose(): void
+        }
+        note bottom of BaseLightingModule
+            VIS01 baseline: one ambient light.
+            Replaced by VIS05.
+        end note
+
+        class webglSupport <<module>> {
+            + isWebGLAvailable(createCanvas?: Function): boolean
+        }
+    }
+}
+
+' -----------------------------------------------------------------------------
+' THIRD-PARTY LIBRARY
+' -----------------------------------------------------------------------------
+package "three (npm)" <<Rectangle>> {
+    class WebGLRenderer
+    class Scene
+    class PerspectiveCamera
+    class GLTFLoader
+    class TextureLoader
+    class Mesh
+    class AmbientLight
+}
+
+' -----------------------------------------------------------------------------
+' BACK-END API - owned by WEB06 (reference only, usWEB06 3.4)
+' -----------------------------------------------------------------------------
+package "Back-End API (WEB06 - reference)" <<Rectangle>> {
+    class KitchenConfigurationRoutes {
+        + setupRoutes(): Router
+    }
+    note right of KitchenConfigurationRoutes
+        GET /kitchen-configurations/active
+        AuthMiddleware -> requireRole(MANAGER, EMPLOYEE)
+        -> 200 { id, name, status, version, activatedAt,
+                 content, assets } (Cache-Control: no-store)
+        -> 404 none active: VIS01 asks (VIS-ALN-1) for
+           details: [{ path: "", code:
+           "NO_ACTIVE_CONFIGURATION", message }]
+           using AppError.details (WEB06 ALN-1).
+    end note
+
+    class KitchenAssetFiles <<static>> {
+        GET /kitchen-assets/files/{path}
+    }
+    note bottom of KitchenAssetFiles
+        Public, read-only; absolute URLs built from
+        KITCHEN_ASSETS_PUBLIC_URL; CORS for the SPA
+        origin (app.js cors(config.corsOrigin)).
+    end note
+}
+
+' -----------------------------------------------------------------------------
+' RELATIONSHIPS
+' -----------------------------------------------------------------------------
+main ..> KitchenViewerPage : registers loader "kitchenViewer" >
+ModulePage ..> KitchenViewerPage : lazy(load), passes request >
+ModulePage ..> ModuleRequest : provides >
+
+KitchenViewerPage --> KitchenViewer : renders >
+KitchenViewer --> webglSupport : isWebGLAvailable() >
+KitchenViewer --> kitchenViewerLoader : loadActiveKitchen() >
+KitchenViewer --> SceneAssetLoader : preloadAll() >
+KitchenViewer --> ViewerEngine : create / load / start / dispose >
+KitchenViewer --> ViewerStatusMessage : non-ready states >
+KitchenViewer ..> ViewerState
+KitchenViewer ..> AssetLoadError : handles >
+KitchenViewer ..> ViewerEngineError : handles >
+
+kitchenViewerLoader --> kitchenViewerApi : getActive() >
+kitchenViewerLoader --> activeConfigurationParser : parse body >
+kitchenViewerLoader ..> ViewerState : returns >
+kitchenViewerLoader ..> ApiError : maps >
+activeConfigurationParser ..> ActiveKitchenConfigurationDTO : creates >
+
+kitchenViewerApi ..> ModuleRequest : calls injected function >
+ModuleRequest ..> ApiError : throws >
+ModuleRequest ..> KitchenConfigurationRoutes : HTTPS / JSON (Bearer)
+
+SceneAssetLoader --> GLTFLoader
+SceneAssetLoader --> TextureLoader
+SceneAssetLoader ..> KitchenAssetFiles : GET url (public)
+SceneAssetLoader ..> LoadedAssets : creates >
+SceneAssetLoader ..> AssetLoadError : throws >
+
+ViewerEngine "1" o-- "0..*" SceneModule : registers, builds, updates, disposes >
+ViewerEngine "1" o-- "0..1" LoadedAssets : owns after load() >
+ViewerEngine ..> SceneContext : creates >
+ViewerEngine ..> ViewerEngineError : throws / reports >
+KitchenFloorModule ..|> SceneModule
+BaseLightingModule ..|> SceneModule
+
+ViewerEngine --> WebGLRenderer
+ViewerEngine --> Scene
+ViewerEngine --> PerspectiveCamera
+KitchenFloorModule --> Mesh
+BaseLightingModule --> AmbientLight
+
+@enduml

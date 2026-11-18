@@ -1,0 +1,127 @@
+@startuml domain-model-excerpt
+skinparam packageStyle rectangle
+skinparam backgroundColor White
+skinparam classAttributeIconSize 0
+hide empty methods
+
+title VIS05 - Scene Lighting\nLaPrizza domain model excerpt
+
+' Source: origin/arc/domain-model-sprint-2 at a5a622a15cda51400a56d630533e5383cc05281a
+' docs/architecture/domainModel/domainmodel.puml
+
+package "User Aggregate" <<Rectangle>> {
+    class User <<entity>> <<aggregateRoot>> {
+        + active : boolean
+    }
+    enum UserRole <<enum>> {
+        ADMINISTRATOR
+        MANAGER
+        EMPLOYEE
+        CUSTOMER
+    }
+    User "1" --> "0..*" UserRole : assigned >
+}
+
+package "Kitchen Configuration Aggregate" <<Rectangle>> {
+
+    class KitchenConfiguration <<entity>> <<aggregateRoot>> {
+        + version : Integer
+        + createdAt : DateTime
+        + updatedAt : DateTime
+        + activatedAt : DateTime [0..1]
+    }
+    class KitchenConfigurationId <<vo>> {
+        + value : String
+    }
+
+    class ConfigurationName <<vo>> {
+        + value : String
+    }
+
+    enum ConfigurationStatus <<enum>> {
+        ACTIVE
+        INACTIVE
+    }
+
+    class KitchenLayout <<vo>> {
+    }
+
+    class KitchenDimensions <<vo>> {
+        + width : Decimal
+        + depth : Decimal
+        + height : Decimal
+    }
+
+    class AssemblyLine <<vo>> {
+        + wall : KitchenWall
+    }
+
+    enum KitchenWall <<enum>> {
+        NORTH
+        SOUTH
+        EAST
+        WEST
+    }
+
+    class SceneElement <<entity>> {
+        + elementId : String
+        + name : String [0..1]
+    }
+
+    enum ElementCategory <<enum>> {
+        EQUIPMENT
+        ASSEMBLY_LINE
+    }
+
+    class ElementType <<vo>> {
+        + value : String
+    }
+
+    class Placement <<vo>> {
+        + position : Vector3
+        + rotation : Vector3
+        + scale : Vector3
+    }
+
+    abstract class ModelReference <<vo>> {
+        + source : "ASSET" | "PROCEDURAL"
+    }
+
+    class AssetModelReference <<vo>> {
+        + assetId : KitchenAssetId
+    }
+
+    class ProceduralModelReference <<vo>> {
+        + shape : "BOX" | "CYLINDER" | "SPHERE" | "DOME"
+        + size : Vector3
+    }
+
+    class MaterialProperties <<vo>> {
+        + color 
+        + roughness 
+        + metalness 
+        + colorMapAssetId 
+        + roughnessMapAssetId 
+        + normalMapAssetId 
+        + bumpMapAssetId 
+    }
+
+    KitchenConfiguration "1" *-- "1" KitchenConfigurationId : identified by >
+    KitchenConfiguration "1" *-- "1" ConfigurationName : has >
+    KitchenConfiguration "1" --> "1" ConfigurationStatus : current status >
+    KitchenConfiguration "1" *-- "1" KitchenLayout : content >
+    KitchenLayout "1" *-- "1" KitchenDimensions : has >
+    KitchenLayout "1" *-- "1" AssemblyLine : has >
+    AssemblyLine "1" --> "1" KitchenWall : placed on >
+    KitchenLayout "1" *-- "2..300" SceneElement : contains >
+    SceneElement "1" --> "1" ElementCategory : belongs to >
+    SceneElement "1" *-- "1" ElementType : is of >
+    SceneElement "1" *-- "1" Placement : placed with >
+    SceneElement "1" *-- "1" ModelReference : represented by >
+    SceneElement "1" *-- "0..1" MaterialProperties : rendered with >
+    ModelReference <|-- AssetModelReference
+    ModelReference <|-- ProceduralModelReference
+}
+
+User ..> KitchenConfiguration : consults \n(MANAGER / EMPLOYEE) >
+@enduml

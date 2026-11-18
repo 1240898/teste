@@ -1,0 +1,117 @@
+@startuml domain-model-excerpt
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam classAttributeIconSize 0
+hide methods
+
+title Domain Model Excerpt - AA06 Role Assignment and Activation Invitation
+
+package "User Aggregate" <<Rectangle>> {
+    class User <<entity>> <<aggregateRoot>> {
+        + active : boolean
+        + everActivated : boolean
+    }
+
+    class UserId <<vo>> {
+        + value : string
+    }
+
+    class Email <<vo>> {
+        + emailAddress : String
+    }
+
+    enum UserRole <<enum>> {
+        ADMINISTRATOR
+        MANAGER
+        EMPLOYEE
+        CUSTOMER
+    }
+
+    class ExternalIdentity <<vo>> {
+        + provider : IdentityProvider
+        + subject : String
+        + linkedAt : DateTime
+    }
+
+    enum IdentityProvider <<enum>> {
+        GOOGLE
+    }
+
+    class ActivationInvitation <<entity>> {
+        + intendedEmail : Email
+        + expiresAt : DateTime
+        + activationMethod : ActivationMethod
+    }
+
+    enum ActivationMethod <<AA06-AA07 integration>> {
+        LOCAL
+        EXTERNAL
+    }
+
+    enum InvitationStatus <<enum>> {
+        PENDING
+        USED
+        EXPIRED
+        INVALIDATED
+    }
+
+    User "1" *-- "1" UserId : identified by >
+    User "1" *-- "1" Email : has >
+    User "1" --> "0..*" UserRole : assigned >
+    User "1" *-- "0..*" ExternalIdentity : authenticated through >
+    ExternalIdentity "0..*" --> "1" IdentityProvider : issued by >
+    User "1" *-- "0..1" ActivationInvitation : current activation invitation >
+    ActivationInvitation "1" --> "1" ActivationMethod : permits >
+    ActivationInvitation "1" --> "1" InvitationStatus : has >
+
+note right of ActivationInvitation
+    Owned by User so account activation and invitation
+    replacement follow the aggregate's lifecycle.
+    The method is stored per invitation and retained
+    when a replacement is issued.
+    A replacement invitation immediately invalidates
+    the previous invitation. Successful activation
+    makes the invitation unusable. The exact validity
+    duration is configurable.
+end note
+}
+
+' -----------------------------------------------------------------------------
+' Role Change Record AGGREGATE.
+' -----------------------------------------------------------------------------
+package "Role Change Record Aggregate" <<Rectangle>> {
+    class RoleChangeRecord <<entity>> <<aggregateRoot>> {
+        + changedAt : DateTime
+        + previousRoles : Set<UserRole>
+        + newRoles : Set<UserRole>
+    }
+    class RoleChangeRecordId <<vo>> {
+        + value : string
+    }
+
+    class ChangeActor <<vo>> {
+    + type : ActorType
+    + userId : UserId        
+    + processName : SystemProcess 
+    }
+
+    enum ActorType <<enum>> {
+        ADMINISTRATOR
+        SYSTEM_PROCESS
+    }
+
+    enum SystemProcess <<enum>> {
+        INITIAL_CUSTOMER_ASSIGNMENT
+    }
+
+    RoleChangeRecord "1" *-- "1" RoleChangeRecordId : identified by >
+    RoleChangeRecord "1" *-- "1" ChangeActor : performed by >
+
+     ChangeActor --> ActorType
+    ChangeActor --> SystemProcess
+    ChangeActor ..> UserId
+}
+
+RoleChangeRecord "0..*" --> "1" User : concerns >
+
+@enduml

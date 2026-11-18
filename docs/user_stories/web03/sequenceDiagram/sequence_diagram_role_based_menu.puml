@@ -1,0 +1,138 @@
+@startuml sequence_diagram_role_based_menu
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - WEB03 Role-Based Menu (menu built from the current roles after login or page reload)
+
+actor User as "Client / User"
+participant Shell as "SPA Shell\n(WEB01 / WEB02 layout)"
+participant Auth as "AuthProvider\n(AA03, extended)"
+participant Menu as "NavigationMenu"
+participant Policy as "navigationPolicy"
+participant API as "authApi / apiClient"
+participant Routes as "AuthRoutes\nGET /auth/me"
+participant AuthMW as "AuthMiddleware"
+participant Service as "UserService"
+database DB as "Database\n(Persistence)"
+
+note over User, DB
+    Starts after a successful local (AA01) or Google (AA02) login, or when the SPA is
+    (re)loaded and a token is stored (AA04). Roles are NEVER decoded from the JWT and
+    NEVER chosen by the user: the only source is GET /api/v1/auth/me (AA03).
+    While roles are not confirmed, only PUBLIC sections are shown (fail closed).
+end note
+
+User -> Shell : opens / reloads the SPA (or login succeeded)
+activate Shell
+Shell -> Auth : loadCurrentUser()
+activate Auth
+Auth -> Auth : status = "loading"; currentUser = null
+
+Shell -> Menu : render()
+activate Menu
+Menu -> Policy : getVisibleSections({ status: "loading" })
+activate Policy
+Policy --> Menu : PUBLIC sections only\n(catalogue, privacy notice, login)
+deactivate Policy
+Menu --> User : public menu (no protected option yet)
+deactivate Menu
+
+alt A) No token stored
+    Auth -> Auth : status = "guest"
+    note right of Auth : Guest navigation; interaction ends
+
+else B) Token stored
+    Auth -> API : getCurrentUser()
+    activate API
+    API -> Routes : GET /api/v1/auth/me\nAuthorization: Bearer <token>\n(skipAuthFailureHandler = true)
+    activate Routes
+    Routes -> AuthMW : verifyToken(req, res, next)
+    activate AuthMW
+    AuthMW -> Service : resolveActor(token)
+    activate Service
+    Service -> DB : SELECT ... FROM users WHERE id = $1
+    activate DB
+    DB --> Service : row (roles, active)
+    deactivate DB
+    note right of Service : token, account and roles checks\ndetailed in AA03 (SD 2 / SD 3)
+    note over API, Auth
+        /auth/me answers are mapped by AuthProvider directly (table A, 3.4):
+        the global 401/403 handler is NOT invoked, so no branch below
+        can start another /auth/me request (BR 13). Every error branch ends here.
+    end note
+
+    alt B1) Token invalid / user deleted (401) or roles not confirmable (5xx, network error)
+        Service --> AuthMW : throw AppError (401 / 500)
+        AuthMW --> API : 401 / 500 { error: { message, status } }
+        API --> Auth : error
+        Auth -> Auth : clear(): discard token (AA04);\nstatus = "guest"
+        Auth -> Menu : state changed
+        activate Menu
+        Menu -> Policy : getVisibleSections({ status: "guest" })
+        Policy --> Menu : PUBLIC sections only
+        Menu --> User : public menu + "Please sign in again."
+        deactivate Menu
+
+    else B2) Account inactive or without any role (403, AA03)
+        Service --> AuthMW : throw AppError (403)
+        AuthMW --> API : 403 { error: { message: "Account is not active" |\n"No active role is assigned to this account", status: 403 } }
+        API --> Auth : error 403
+        Auth -> Auth : clear(): discard token;\nstatus = "denied"; deniedMessage = error.message
+        Auth -> Menu : state changed
+        activate Menu
+        Menu -> Policy : getVisibleSections({ status: "denied" })
+        Policy --> Menu : PUBLIC sections only
+        Menu --> User : public menu + AccessDeniedPage(deniedMessage)
+        deactivate Menu
+
+    else B3) Active account with roles (200)
+        Service --> AuthMW : AuthenticatedActor { sub, email, roles }
+        AuthMW -> Routes : next() (req.user = actor)
+        Routes -> Service : getCurrentUser(req.user)
+        Service --> Routes : UserResponseDTO
+        Routes --> API : 200 OK { id, name, email,\nroles: ["CUSTOMER", "MANAGER"], active: true, ... }
+        API -> API : parseCurrentUser(body) (AA03 D10)
+        API --> Auth : UserResponseDTO
+        Auth -> Auth : currentUser = user;\nstatus = "authenticated"
+        Auth -> Menu : state changed
+        activate Menu
+        Menu -> Policy : getVisibleSections(auth)
+        activate Policy
+        loop for each section in SECTIONS
+            alt section.access == "public"
+                Policy -> Policy : keep
+            else section.access == "guestOnly" (login)
+                Policy -> Policy : drop (already authenticated)
+            else section.access == "protected"
+                Policy -> Auth : hasAnyRole(...section.roles)
+                Auth --> Policy : true / false
+                Policy -> Policy : keep only if true
+            end
+        end
+        Policy --> Menu : visible sections
+        deactivate Policy
+        Menu -> Menu : group by SectionGroup;\nskip empty groups; i18n labels (WEB02)
+        Menu --> User : role-based menu
+        deactivate Menu
+        note right of User
+            Example [CUSTOMER, MANAGER] = UNION of both roles:
+            Catalogue, Privacy notice, My privacy & consents,
+            Restaurant management (customers, products, categories,
+            allergens, pizza sizes, component types, predefined
+            pizzas, stock), Kitchen (viewer, configurations),
+            Planning. No Administration group.
+            Example [EMPLOYEE]: Catalogue, Privacy notice,
+            Products (read-only), Kitchen viewer.
+        end note
+    end
+    deactivate Service
+    deactivate AuthMW
+    deactivate Routes
+    deactivate API
+end
+
+deactivate Auth
+deactivate Shell
+
+@enduml

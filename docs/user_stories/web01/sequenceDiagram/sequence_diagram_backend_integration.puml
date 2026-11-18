@@ -1,0 +1,71 @@
+@startuml sequence_diagram_backend_integration
+autonumber
+title WEB01 - UC2: read and update a product through REST
+
+actor "LaPrizza Manager" as User
+participant "Product page (WEB05)" as Page
+participant "productApi (WEB05)" as Adapter
+participant "ModuleRequest" as Request
+participant apiClient as Client
+participant "Back-End API (BCK05)" as API
+
+note over Page, API
+Proposed WEB05 integration using the existing BCK05 REST contract.
+The product ID comes from the API and is reused for read, write and refresh.
+The API checks the caller's permissions on every request.
+end note
+
+User -> Page : Open the product selected from the list
+Page -> Adapter : getById(productId)
+Adapter -> Request : request(GET, /products/{encoded productId})
+Request -> Client : request(GET, path, { accessToken })
+Client -> API : GET /api/v1/products/PROD-00001 (Bearer)
+alt Read succeeds
+  API --> Client : 200 ProductResponseDTO
+  Client --> Request : Parsed DTO
+  Request --> Adapter : DTO
+  Adapter --> Page : DTO
+  Page --> User : Display the product and edit form
+else Not found, denied or unavailable
+  opt API sent an error response
+    API --> Client : HTTP error
+  end
+  Client --> Request : ApiError
+  ref over Request, API : Recheck current roles on 401 / 403; no replay (SD3)
+  Request --> Adapter : Original ApiError
+  Adapter --> Page : ApiError
+  Page --> User : Explain failure and do not open the edit form
+end
+
+opt Product loaded and manager submits a valid form
+  User -> Page : Save edited product
+  Page -> Adapter : update(product.id, updateBody)
+  note right of Adapter : PUT uses the complete writable BCK05 body.\nThe ID remains in the path.
+  Adapter -> Request : request(PUT, /products/{encoded productId}, { body })
+  Request -> Client : request(PUT, path, { body, accessToken })
+  Client -> API : PUT /api/v1/products/PROD-00001 (Bearer + JSON)
+  alt Write succeeds
+    API --> Client : 200 ProductResponseDTO
+    Client --> Request : Parsed DTO
+    Request --> Adapter : DTO
+    Adapter --> Page : Confirmed save
+    ref over Page, API : Re-read the saved product by the same ID\nusing the GET chain above
+    Page --> User : Show saved data, or explain if the refresh failed
+  else Write rejected or response unavailable
+    opt API sent an error response
+      API --> Client : HTTP error
+    end
+    Client --> Request : ApiError with status and kind
+    ref over Request, API : Recheck current roles on 401 / 403; no replay (SD3)
+    Request --> Adapter : Original ApiError
+    Adapter --> Page : ApiError
+    alt Business or validation rejection (e.g. 400 / 409)
+      Page --> User : Show reason and keep unsaved input where appropriate
+    else Access no longer valid
+      Page --> User : Hide protected content as required
+    else Outcome unconfirmed (timeout, network or 5xx)
+      Page --> User : Re-read saved data before any manual retry
+    end
+  end
+end
+@enduml

@@ -1,0 +1,31 @@
+@startuml LaPrizza-C4-Component-AI-Planning
+!include <C4/C4_Component>
+
+title Component Diagram - Procurement (AI Planning Service, Sprint 2)
+
+Container(gateway, "API Gateway", "HTTP reverse proxy", "Routes the SPA's planning requests to Procurement.")
+Container(backend, "Back-End API (Backoffice)", "REST API", "Checks current session and role through AA04, serves consistent operational inputs and stores planning records through private endpoints.")
+
+Container_Boundary(aiService, "Procurement") {
+    Component(planningApi, "Planning REST API (AI05)", "Prolog / HTTP / JSON", "Validates authorised calculation requests, dispatches them to the Prolog modules and returns results or diagnostics.")
+    Component(inputAdapter, "Planning Input Adapter (AI06)", "Prolog / HTTP client / JSON mapper", "Reads an execution's versioned inputs and builds its Prolog knowledge base with original IDs, abstract stock units and provenance.")
+    Component(planningRecords, "Planning Scenarios and Results", "Server-side planning API", "Confirms and serves supplier scenarios and manages saved planning results and execution input references.")
+    Component(bom, "Bill of Materials (AI01)", "Prolog module", "Expands pizza and internal preparation recipes, applies available stock and returns material requirements and replenishment quantities.")
+    Component(requirements, "Requirements Planning (AI02)", "Prolog module", "Plans by day and proposes suppliers and deliveries using hypothetical balances, offers, costs, capacity and lead times.")
+}
+
+Rel_D(gateway, planningApi, "Routes calculation requests", "HTTP / JSON")
+Rel_D(gateway, planningRecords, "Routes supplier scenario and saved-result requests", "HTTP / JSON")
+Rel(planningApi, backend, "Checks current Manager access for each execution or replay", "AA04 / Private HTTPS")
+Rel_U(inputAdapter, backend, "Reads selected operational inputs", "Authorised HTTP / JSON")
+Rel_R(planningApi, inputAdapter, "Loads the selected scenario", "Prolog predicates")
+Rel(inputAdapter, planningRecords, "Reads confirmed offers and retained planning inputs when needed", "Authorised planning interface")
+Rel(planningApi, planningRecords, "Records outcomes and exact input references", "Planning interface")
+Rel(planningRecords, backend, "Checks Manager access for public reads and writes. Persists planning records through private routes.", "AA04 and service credentials / HTTPS")
+Rel_D(planningApi, bom, "Calculates material requirements for the selected demand", "Prolog predicates")
+Rel_D(planningApi, requirements, "Calculates the daily replenishment plan", "Prolog predicates")
+Rel_L(requirements, bom, "Reuses material requirements calculation for daily pizza demand", "Prolog predicates")
+
+Lay_R(bom, requirements)
+SHOW_LEGEND()
+@enduml

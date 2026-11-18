@@ -1,0 +1,44 @@
+@startuml sequence_diagram_responsive_keyboard
+title WEB02 - SD 3: Use primary navigation and forms at narrow widths
+hide footbox
+skinparam shadowing false
+autonumber
+
+actor "System User" as User
+participant "Browser" as Browser
+participant AppHeader as Hdr
+participant NavigationMenu as Menu
+participant RouteOrientation as Orientation
+participant FeatureForm as Form
+participant FeedbackView as Feedback
+
+User -> Browser : Resize or zoom with a section open
+Browser -> Hdr : Reflow sticky shell using available width
+Hdr -> Hdr : measureHeight()
+Hdr --> Browser : Reserve scroll and focus clearance
+Hdr -> Menu : Render the same links in the available space
+alt Links overflow
+    Menu --> User : Visible primary nav strip and named scroll buttons
+    opt User activates a scroll button
+        User -> Menu : scrollSections(direction)
+        Menu --> User : Scroll list and retain focus on the button
+    end
+else Links fit
+    Menu --> User : All primary links fit in the header
+end
+User -> Browser : Tab or Shift+Tab
+alt Activate the visible-on-focus skip link
+    User -> Orientation : skipToMain()
+    Orientation --> Browser : Focus main and keep it below the header
+else Tab to a navigation link
+    Browser -> Menu : Bring focused link into view
+    Menu --> User : Clear name and visible focus
+    opt Activate link with Enter
+        ref over User, Menu : SD 2 - Follow link and orient to the resolved page
+    end
+end
+User -> Form : Edit and submit using labeled keyboard controls
+Form -> Form : Keep entered values in the form draft
+Form -> Feedback : render(messageKey, values)
+Feedback --> User : Show and announce feedback using WEB04 conventions
+@enduml

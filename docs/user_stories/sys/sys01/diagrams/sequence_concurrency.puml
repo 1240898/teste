@@ -1,0 +1,47 @@
+@startuml
+title SYS01 - Queueing deploy, rollback and automatic recovery
+
+actor Scheduler
+actor Operator
+participant "Deployment workflow (deploy.yml)" as Workflow
+participant "DEI VM deploy agent" as Deploy
+database "Shared DEI PostgreSQL 18" as DEIDB
+participant "GitHub artifacts" as Artifacts
+
+Scheduler -> Workflow: Scheduled deploy run A
+Workflow -> Workflow: Enter `dei-release` queue; acquire exclusive slot
+Workflow -> Deploy: Deploy candidate under VM lock
+Deploy -> DEIDB: Candidate app uses current schema
+DEIDB --> Deploy: Connection succeeds
+Deploy --> Workflow: Post-deploy smoke test fails
+Workflow -> Deploy: Automatic recovery to previous release
+Deploy -> DEIDB: Previous app compatibility smoke check
+DEIDB --> Deploy: Previous release is restored and verified
+
+Operator -> Workflow: Manual rollback run B arrives during recovery
+Workflow -> Workflow: Queue run B; it cannot acquire slot yet
+Workflow -> Artifacts: Archive run A failure and recovery evidence
+Workflow -> Workflow: Finish run A; release `dei-release` slot
+
+Workflow -> Workflow: Start run B; acquire same exclusive slot
+Workflow -> Deploy: Re-read active manifest/schema; run rollback eligibility checks
+alt Requested release remains retained and schema-compatible
+  Deploy --> Workflow: Eligibility confirmed
+  Workflow -> Deploy: Activate requested release under VM lock
+  Deploy --> Workflow: Smoke checks pass
+  Workflow -> Artifacts: Archive run B recovery evidence
+  Workflow --> Operator: Rollback complete; release queue slot
+else Requested release is not schema-compatible
+  Deploy --> Workflow: Reject before changing VM
+  Workflow -> Artifacts: Archive sanitized rejection
+  Workflow --> Operator: No activation; release queue slot
+end
+
+note over Workflow,Deploy
+  Workflow concurrency is `group: dei-release`, `queue: max`,
+  so up to 100 runs wait rather than replacing a pending run.
+  Only one operation mutates the VM at a time. Automatic recovery
+  remains inside run A and holds its slot. A VM-side lock is a second guard.
+  The independent main.yml CI workflow does not touch this queue or VM.
+end note
+@enduml

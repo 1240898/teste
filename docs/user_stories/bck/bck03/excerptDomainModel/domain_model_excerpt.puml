@@ -1,0 +1,102 @@
+@startuml LaPrizzaDomainModelExcerptProductCategoryManagement
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam classAttributeIconSize 0
+hide methods
+
+
+
+' -----------------------------------------------------------------------------
+' PRODUCT AGGREGATE.
+' -----------------------------------------------------------------------------
+package "Product Aggregate" <<Rectangle>> {
+
+    class Product <<entity>> <<aggregateRoot>> {
+        + isActive : boolean
+        + isSellable : boolean
+        + isStockControlled : boolean
+        + isPizzaComponent : boolean
+    }
+
+    class ProductId <<vo>> {
+        + value : string
+    }
+    note right of ProductId
+        - ProductId is a unique identifier for a product.
+        - Must be a string representing the product ID.
+        - Example: "PROD-00123".
+    end note
+
+    class ProductName <<vo>> {
+        + name : String
+    }
+
+    class ProductDescription <<vo>> {
+        + text : String
+    }
+
+    class Money <<vo>> {
+        + amount : BigDecimal
+        + currency : String
+    }
+
+    Product "1" *-- "1" ProductId : identified by >
+    Product "1" *-- "1" ProductName : named >
+    Product "1" *-- "1" ProductDescription : described by >
+    Product "1" *-- "0..1" Money : basePrice >
+
+    note right of Product
+    Business rules:
+    - Sellable and Pizza Component are Product types.
+    - Stock-controlled is an independent characteristic.
+    - A Product MUST have at least one type:
+        • Sellable, or
+        • Pizza Component, or
+        • both.
+    - Invalid combinations (must be rejected):
+        • No type (neither Sellable nor Pizza Component)
+        • Exclusively stock-controlled
+    - Any Product (regardless of type) may or may not
+        be subject to stock control.
+    - A Pizza Component must be associated with
+        exactly one PizzaComponentType.
+    - For pizzas, the selling price is determined
+        by their components.
+    end note
+}
+
+' -----------------------------------------------------------------------------
+' PRODUCT CATEGORY AGGREGATE.
+' -----------------------------------------------------------------------------
+package "Product Category Aggregate" <<Rectangle>> {
+
+    class ProductCategory <<entity>> <<aggregateRoot>> {
+    }
+
+    class CategoryId <<vo>> {
+        + value : string
+    }
+
+    note right of CategoryId
+        - CategoryId is a unique identifier for a product category.
+        - Must be a string representing the category ID.
+        - Example: "CAT-00123".
+    end note
+
+    class CategoryName <<vo>> {
+        + name : String
+    }
+
+    ProductCategory "1" *-- "1" CategoryId
+    ProductCategory "1" *-- "1" CategoryName
+}
+
+' -----------------------------------------------------------------------------
+' CROSS-AGGREGATE LINKS.
+' -----------------------------------------------------------------------------
+
+Product "0..*" --> "1" ProductCategory : categorized by >
+
+
+@enduml
+

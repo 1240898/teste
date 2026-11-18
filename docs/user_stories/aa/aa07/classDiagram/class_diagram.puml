@@ -1,0 +1,194 @@
+@startuml
+skinparam classAttributeIconSize 0
+package "SPA" {
+ class AppRouter <<proposed route integration>>
+ class ActivationPage <<new>>
+ class GoogleCallbackPage <<existing, extended>> {
+  +handleRedirect(query)
+ }
+ class ActivationForm <<new>>
+ class ActivationStatus <<new>>
+ class ActivationApi <<new>> {
+  +inspect(token): InvitationMethodDTO
+  +local(token, password?): ActivationResult
+  +startExternal(token): ExternalAuthorizationDTO
+  +completeExternal(code, state): ExternalActivationResponse
+ }
+}
+package "API" {
+ class ActivationController <<new>> {
+  +inspect(token): InvitationMethodDTO
+  +local(token, password?): ActivationResult
+  +startExternal(token): ExternalAuthorizationDTO
+  +completeExternal(code, state): ExternalActivationResponse
+ }
+}
+package "Application" {
+ class ActivationService <<new>> {
+  +inspect(token): InvitationMethodDTO
+  +activateLocal(token, password?): ActivationResult
+  +startExternal(token): ExternalAuthorizationDTO
+  +completeExternal(code, state): ExternalActivationResult
+  -commitActivation(binding: InvitationBinding, credential: ActivationCredential): UserId
+ }
+ class ActivationResult <<new>> {
+  +nextSignIn: LOCAL
+ }
+ class InvitationMethodDTO <<new>> {
+  +method: ActivationMethod
+ }
+ class ExternalActivationResult <<new>> {
+  +status: SIGNED_IN or ACTIVATED
+  +session: AuthTokenDTO [0..1]
+ }
+ class UserService <<existing>> {
+  +assertCanAccess(user)
+  +issueAuthToken(user): AuthTokenDTO
+ }
+ class ExternalAuthenticationService <<AA02 extension>> {
+  +startAuthorization(purpose, binding): ExternalAuthorizationDTO
+  +verifyIdentity(code, state, purpose): VerifiedAuthorization
+ }
+ interface IOAuthStateStore <<AA02 extension>> {
+  +save(state, pending)
+  +consume(state, expectedPurpose): PendingAuthorization
+ }
+ class VerifiedAuthorization <<new>> {
+  +claims: ExternalIdentityClaims
+  +binding: InvitationBinding
+ }
+ class InvitationBinding <<new>> {
+  +tokenHash: bytes
+  +userId: UserId
+  +method: ActivationMethod
+ }
+ class ExternalIdentityClaims <<existing AA02 DTO>> {
+  +provider: IdentityProvider
+  +subject: String
+  +email: String
+  +emailVerified: boolean
+ }
+ interface IActivationRepository <<new>> {
+  +findBinding(tokenHash): InvitationBinding
+  +findEligibleBinding(tokenHash, now): InvitationBinding
+  +loadCurrentForUpdate(binding, tx): User
+  +saveActivation(user, tx)
+ }
+ interface IUnitOfWork <<application port>> {
+  +withTransaction(work)
+ }
+ interface IPasswordHasher <<existing application port>> {
+  +hash(plainText): Promise<String>
+ }
+ interface IActivationLock <<application port, new>> {
+  +acquireMembershipLock(tx)
+ }
+ interface IExternalIdentityProvider <<AA02 application port>> {
+  +createAuthorizationRequest(): AuthorizationRequest
+  +exchangeAndVerify(code, codeVerifier, nonce): ExternalIdentityClaims
+ }
+}
+package "Domain" {
+ interface IUserRepository <<existing domain repository>> {
+  +findById(id): User
+ }
+ class Password <<existing value object>> {
+  +passwordHash: String
+  {static} +createFromHash(hash: String): Password
+ }
+ class Email <<existing value object>> {
+  {static} +create(email: String): Email
+ }
+ class ExternalIdentity <<existing value object>> {
+  {static} +create(provider: IdentityProvider, subject: String): ExternalIdentity
+ }
+ class ActivationCredential <<new domain value object>> {
+  +method: ActivationMethod
+  -password: Password [0..1]
+  -identity: ExternalIdentity [0..1]
+  -verifiedEmail: Email [0..1]
+  {static} +local(password?: Password): ActivationCredential
+  {static} +external(identity: ExternalIdentity, verifiedEmail: Email): ActivationCredential
+ }
+ class User <<existing, extended>> {
+  -active: boolean
+  -everActivated: boolean
+  +redeemInvitation(tokenHash: bytes, intendedUserId: UserId, credential: ActivationCredential, now: DateTime): void
+  -assertRedeemable(tokenHash: bytes, intendedUserId: UserId, method: ActivationMethod, now: DateTime): void
+ }
+ class ActivationInvitation <<AA06 proposed>> {
+  +tokenHash: bytes
+  +intendedEmail: Email
+  +expiresAt: DateTime
+  +status: InvitationStatus
+  +method: ActivationMethod
+  +markUsed()
+ }
+ enum ActivationMethod {
+  LOCAL
+  EXTERNAL
+ }
+}
+package "Infrastructure" {
+ class PostgresUnitOfWork <<existing>> {
+  +withTransaction(work)
+ }
+ class PostgresActivationRepository <<new>>
+ class PostgresActivationLock <<new>>
+ class BcryptPasswordHasher <<existing>>
+ class GoogleOidcProvider <<existing>> {
+  +createAuthorizationRequest(): AuthorizationRequest
+  +exchangeAndVerify(code, codeVerifier, nonce): ExternalIdentityClaims
+ }
+}
+AppRouter --> ActivationPage : /activate
+AppRouter --> GoogleCallbackPage : /auth/callback/google
+ActivationPage --> ActivationForm : props and callbacks
+ActivationPage --> ActivationStatus : view state
+ActivationPage --> ActivationApi
+GoogleCallbackPage --> ActivationApi : activation callback
+ActivationApi --> ActivationController : REST / JSON
+ActivationController --> ActivationService
+ActivationService ..> ActivationResult
+ActivationService ..> InvitationMethodDTO
+ActivationService ..> ExternalActivationResult
+ActivationService --> IUserRepository : reload after commit
+ActivationService --> UserService : access and session after commit
+ActivationService --> ExternalAuthenticationService
+ExternalAuthenticationService --> IOAuthStateStore
+ExternalAuthenticationService --> IExternalIdentityProvider
+GoogleOidcProvider ..|> IExternalIdentityProvider
+ExternalAuthenticationService ..> VerifiedAuthorization
+VerifiedAuthorization --> "1" InvitationBinding
+VerifiedAuthorization --> "1" ExternalIdentityClaims
+ActivationService --> IActivationRepository
+ActivationService --> IUnitOfWork
+PostgresUnitOfWork ..|> IUnitOfWork
+ActivationService --> IPasswordHasher
+BcryptPasswordHasher ..|> IPasswordHasher
+ActivationService ..> User
+ActivationService ..> ActivationCredential : builds from domain values
+ActivationService --> IActivationLock
+PostgresActivationLock ..|> IActivationLock
+User "1" *-- "0..1" ActivationInvitation : current
+ActivationInvitation --> ActivationMethod
+User "1" *-- "0..1" Password : stored local credential
+User "1" *-- "0..*" ExternalIdentity : linked credentials
+User ..> ActivationCredential : redemption input
+PostgresActivationRepository ..|> IActivationRepository
+note right of PostgresUnitOfWork
+  Runs the callback within one transaction.
+  The callback locks, redeems and persists
+  the User and invitation together.
+end note
+note right of User
+  redeemInvitation is the AA07 entry point.
+  It validates all preconditions before mutation
+  and applies the complete first activation.
+end note
+note bottom of ActivationCredential
+  LOCAL carries an optional first password.
+  EXTERNAL carries both identity and verified email.
+  Factories enforce those two shapes.
+end note
+@enduml

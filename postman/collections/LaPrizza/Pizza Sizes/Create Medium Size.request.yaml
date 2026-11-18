@@ -1,0 +1,10 @@
+$kind: http-request
+url: http://localhost:8080/api/v1/pizza-sizes
+method: POST
+body:
+  type: json
+  content: |-
+    { 
+        "name": "Medium" 
+    }
+order: 1000

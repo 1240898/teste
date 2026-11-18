@@ -1,0 +1,549 @@
+@startuml class_diagram
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam linetype ortho
+
+title Class Diagram (Design) - WEB06 Kitchen Configuration Management (Back-End API)
+
+' -----------------------------------------------------------------------------
+' NEW MODULE: backend/src/modules/kitchen-configuration-management
+' Layers follow the existing modules (api / application / domain / infrastructure).
+' -----------------------------------------------------------------------------
+package "kitchen-configuration-management (WEB06)" <<Rectangle>> {
+
+    package "api" <<Rectangle>> {
+
+        class KitchenConfigurationRoutes {
+            - controller : KitchenConfigurationController
+            - authMiddleware : AuthMiddleware
+            + setupRoutes() : Router
+        }
+        note right of KitchenConfigurationRoutes
+            Mounted under /api/v1/kitchen-configurations
+            GET    /              -> MANAGER
+            GET    /active        -> MANAGER, EMPLOYEE
+            POST   /validation    -> MANAGER
+            GET    /:id           -> MANAGER
+            POST   /              -> MANAGER
+            PUT    /:id           -> MANAGER
+            DELETE /:id           -> MANAGER
+            POST   /:id/activation -> MANAGER
+            Every route: verifyToken -> requireRole(...)
+            -> joi envelope schema -> controller.
+        end note
+
+        class KitchenAssetRoutes {
+            - controller : KitchenAssetController
+            - authMiddleware : AuthMiddleware
+            + setupRoutes() : Router
+        }
+        note right of KitchenAssetRoutes
+            GET /api/v1/kitchen-assets -> MANAGER
+            GET /api/v1/kitchen-assets/files/*
+              -> static, read-only, no business data
+        end note
+
+        class KitchenConfigurationController {
+            + listConfigurations(req, res)
+            + getConfiguration(req, res)
+            + getActiveConfiguration(req, res)
+            + createConfiguration(req, res)
+            + updateConfiguration(req, res)
+            + deleteConfiguration(req, res)
+            + activateConfiguration(req, res)
+            + validateContent(req, res)
+        }
+
+        class KitchenAssetController {
+            + listAssets(req, res)
+        }
+
+        class schemas <<module>> {
+            + id : Joi (^KCF-[0-9]{5,}$)
+            + create : Joi { name, content: object }
+            + update : Joi { name, content: object, version: int >= 1 }
+            + validate : Joi { content: object }
+        }
+        note bottom of schemas
+            Only the ENVELOPE is checked here (400).
+            The JSON content is validated by the
+            domain (KitchenLayoutValidator -> 422),
+            so every issue is reported, not only the first.
+        end note
+    }
+
+    package "application" <<Rectangle>> {
+
+        class KitchenConfigurationService {
+            - repository : IKitchenConfigurationRepository
+            - assetCatalogue : IKitchenAssetCatalogue
+            - assetFiles : IKitchenAssetFileStore
+            - unitOfWork : IUnitOfWork
+            - validator : KitchenLayoutValidator
+            + listConfigurations() : KitchenConfigurationSummaryDTO[]
+            + getConfiguration(id) : KitchenConfigurationDetailDTO
+            + getActiveConfiguration() : ActiveKitchenConfigurationDTO
+            + createConfiguration(dto, actor) : KitchenConfigurationDetailDTO
+            + updateConfiguration(id, dto, actor) : KitchenConfigurationDetailDTO
+            + deleteConfiguration(id) : void
+            + activateConfiguration(id, actor) : ActivationResultDTO
+            + validateContent(content) : ValidationReportDTO
+            - validateOrThrow(content) : KitchenLayout
+            - loadAssetContext(content, tx?) : Map<string, AssetCheck>
+        }
+        note left of KitchenConfigurationService
+            loadAssetContext(): catalogue rows of the
+            referenced ids + assetFiles.exists(path)
+            -> { asset, fileAvailable } per id, passed
+            to the (pure) validator on create, edit,
+            validation dry run and activation.
+        end note
+        note right of KitchenConfigurationService
+            activateConfiguration runs in ONE PostgreSQL
+            transaction (unitOfWork.withTransaction):
+            0. lockActivation(tx) - serialises activations
+            1. findByIdForUpdate(target, tx) (404)
+            2. re-validate its layout against the current
+               asset catalogue AND asset files
+               (422, nothing changed - also when the
+               target is already ACTIVE)
+            3. target already ACTIVE -> return (idempotent)
+            4. current ACTIVE -> INACTIVE
+            5. target -> ACTIVE
+            Any failure -> ROLLBACK of both updates.
+        end note
+
+        class KitchenAssetService {
+            - assetCatalogue : IKitchenAssetCatalogue
+            + listAssets() : KitchenAssetDTO[]
+        }
+
+        class KitchenConfigurationMapper {
+            + toSummary(configuration) : KitchenConfigurationSummaryDTO
+            + toDetail(configuration) : KitchenConfigurationDetailDTO
+            + toActive(configuration, assets) : ActiveKitchenConfigurationDTO
+        }
+
+        class CreateKitchenConfigurationDTO <<dto>> {
+            + name : string
+            + content : object
+        }
+        class UpdateKitchenConfigurationDTO <<dto>> {
+            + name : string
+            + content : object
+            + version : number
+        }
+        class KitchenConfigurationSummaryDTO <<dto>> {
+            + id : string
+            + name : string
+            + status : string
+            + version : number
+            + elementCount : number
+            + updatedAt : string
+            + activatedAt : string | null
+        }
+        class KitchenConfigurationDetailDTO <<dto>> {
+            + id : string
+            + name : string
+            + status : string
+            + version : number
+            + content : object
+            + createdAt : string
+            + updatedAt : string
+            + activatedAt : string | null
+        }
+        class ActiveKitchenConfigurationDTO <<dto>> {
+            + id : string
+            + name : string
+            + status : "ACTIVE"
+            + version : number
+            + activatedAt : string
+            + content : object
+            + assets : Map<string, ResolvedAssetDTO>
+        }
+        class ActivationResultDTO <<dto>> {
+            + activeConfiguration : KitchenConfigurationSummaryDTO
+            + previousActiveConfigurationId : string | null
+        }
+        class ValidationReportDTO <<dto>> {
+            + valid : boolean
+            + issues : ValidationIssue[]
+        }
+
+        interface IKitchenAssetCatalogue <<port>> {
+            + findByIds(ids : string[], tx?) : Map<string, KitchenAsset>
+            + findAll() : KitchenAsset[]
+        }
+        interface IKitchenAssetFileStore <<port>> {
+            + exists(path : string) : boolean
+        }
+        note bottom of IKitchenAssetFileStore
+            A catalogue row does not prove that the
+            file can be downloaded (BR 19).
+        end note
+        interface IUnitOfWork <<port, existing pattern>> {
+            + withTransaction(work : (tx) => Promise) : Promise
+        }
+        note bottom of IUnitOfWork
+            Same port as product-management (BCK05/BCK09),
+            implemented by the shared PostgresUnitOfWork.
+        end note
+    }
+
+    package "domain" <<Rectangle>> {
+
+        class KitchenConfiguration <<aggregateRoot>> {
+            - id : KitchenConfigurationId
+            - name : ConfigurationName
+            - status : ConfigurationStatus
+            - layout : KitchenLayout
+            - version : number
+            - createdAt / createdBy
+            - updatedAt / updatedBy
+            - activatedAt / activatedBy
+            + {static} create(id, name, layout, actor, now) : KitchenConfiguration
+            + edit(name, layout, expectedVersion, actor, now) : void
+            + activate(actor, now) : void
+            + deactivate(now) : void
+            + assertDeletable() : void
+            + isActive() : boolean
+        }
+        note right of KitchenConfiguration
+            create(): status = INACTIVE, version = 1.
+            edit(): expectedVersion != version
+              -> ConcurrencyConflictError (409);
+              receives an ALREADY VALID layout.
+            assertDeletable(): ACTIVE ->
+              ActiveConfigurationDeletionError (409).
+        end note
+
+        class KitchenConfigurationId <<vo>>
+        class ConfigurationName <<vo>> {
+            + value : string
+            + key : string
+        }
+        enum ConfigurationStatus {
+            ACTIVE
+            INACTIVE
+        }
+
+        class KitchenLayout <<vo>> {
+            + schemaVersion : 1
+            + dimensions : KitchenDimensions
+            + assemblyLine : AssemblyLine
+            + elements : SceneElement[]
+            + referencedAssetIds() : string[]
+            + toJSON() : object
+        }
+
+        class KitchenLayoutValidator <<domainService>> {
+            + validate(raw : unknown, assets : Map<string, AssetCheck>) : LayoutValidationResult
+            - checkStructure(raw, issues)
+            - checkDimensions(raw, issues)
+            - checkElements(raw, dimensions, issues)
+            - checkUniqueElementIds(raw, issues)
+            - checkAssemblyLine(raw, dimensions, issues)
+            - checkMaterials(raw, issues)
+            - checkAssetReferences(raw, assets, issues)
+        }
+        note bottom of KitchenLayoutValidator
+            Collects ALL issues (not fail-fast).
+            Pure: no I/O; assets and file availability
+            are loaded by the service first.
+            Rejects unknown properties (typos and
+            arbitrary keys are never stored in JSONB).
+            checkAssemblyLine (VIS03, BR 17, 2.4.3):
+              LINE_COMPOSITION, LINE_NOT_AT_WALL, LINE_ORDER,
+              LINE_ALIGNMENT, LINE_BELT_DISCONNECTED
+              (footprints: model.size or asset.size x scale)
+            checkMaterials (VIS04, BR 18):
+              INCOMPLETE_TEXTURE_SET, MATERIAL_REQUIRED,
+              MODEL_TEXTURES_MISSING (ASSET model with
+              embeddedTextureSet = false and no override)
+            checkAssetReferences: UNKNOWN_ASSET,
+              ASSET_KIND_MISMATCH, ASSET_FILE_MISSING
+        end note
+
+        class AssemblyLineFrame <<domainService>> {
+            + {static} of(wall, dimensions) : AssemblyLineFrame
+            + u(position) : number
+            + d(position) : number
+            + span(element, size) : FootprintSpan
+            + isAlongWall(rotationY) : boolean
+            + {static} GAP_TOLERANCE = 0.05
+            + {static} LEVEL_TOLERANCE = 0.15
+        }
+        note bottom of AssemblyLineFrame
+            Wall coordinates seen from inside the
+            kitchen facing the wall (2.4.2):
+            u = left -> right along the wall,
+            d = distance from the wall.
+            NORTH: u = x,  d = z + depth/2
+            SOUTH: u = -x, d = depth/2 - z
+            EAST:  u = z,  d = width/2 - x
+            WEST:  u = -z, d = x + width/2
+            span(): U = [u - lenU/2, u + lenU/2],
+            D = [d - lenD/2, d + lenD/2], top = y + size.y
+            (lenU = size.x if +X runs along the wall,
+            else size.z) - 2.4.3
+        end note
+
+        class FootprintSpan <<vo>> {
+            + uMin : number
+            + uMax : number
+            + dMin : number
+            + dMax : number
+            + top : number
+        }
+
+        class AssetCheck <<vo>> {
+            + asset : KitchenAsset
+            + fileAvailable : boolean
+        }
+        note bottom of AssetCheck
+            asset carries size and embeddedTextureSet
+            for models (computed at seed time).
+        end note
+
+        class LayoutValidationResult <<vo>> {
+            + layout : KitchenLayout | null
+            + issues : ValidationIssue[]
+            + isValid() : boolean
+        }
+
+        class ValidationIssue <<vo>> {
+            + path : string
+            + code : string
+            + message : string
+        }
+        note bottom of ValidationIssue
+            path = JSON Pointer (RFC 6901),
+            e.g. "/elements/3/placement/scale/x".
+        end note
+
+        class KitchenDimensions <<vo>>
+        class AssemblyLine <<vo>>
+        class SceneElement <<entity>>
+        class Placement <<vo>>
+        class ModelReference <<vo>>
+        class MaterialProperties <<vo>>
+
+        class KitchenAsset <<aggregateRoot>> {
+            + id : string
+            + kind : "MODEL" | "TEXTURE"
+            + format : string
+            + path : string
+            + size : { x, y, z } | null
+            + embeddedTextureSet : boolean | null
+        }
+        note bottom of KitchenAsset
+            MODEL: format glb / gltf; size (metres, scale 1)
+            and embeddedTextureSet are NOT NULL.
+            TEXTURE: both null.
+        end note
+
+        interface IKitchenConfigurationRepository <<repository>> {
+            + nextId(tx) : KitchenConfigurationId
+            + findAllSummaries() : KitchenConfigurationSummary[]
+            + findById(id, tx?) : KitchenConfiguration | null
+            + findByIdForUpdate(id, tx) : KitchenConfiguration | null
+            + findActive(tx?) : KitchenConfiguration | null
+            + existsByName(name, excludeId?, tx?) : boolean
+            + insert(configuration, tx) : void
+            + replace(configuration, expectedVersion, tx) : boolean
+            + lockActivation(tx) : void
+            + deactivateCurrent(exceptId, tx) : KitchenConfigurationId | null
+            + markActive(configuration, tx) : boolean
+            + deleteIfInactive(id) : boolean
+        }
+
+        class KitchenConfigurationValidationError <<error>> {
+            + status = 422
+            + details : ValidationIssue[]
+        }
+        class ConcurrencyConflictError <<error>> {
+            + status = 409
+        }
+        class ActiveConfigurationDeletionError <<error>> {
+            + status = 409
+        }
+    }
+
+    package "infrastructure" <<Rectangle>> {
+
+        class KitchenConfigurationRepository {
+            - database : Database
+            + nextId(tx) : KitchenConfigurationId
+            + ...IKitchenConfigurationRepository
+        }
+        note right of KitchenConfigurationRepository
+            PostgreSQL adapter, parameterised queries only.
+            Tables: kitchen_configurations (content JSONB),
+            kitchen_configuration_assets (FK -> kitchen_assets).
+            Constraints (migration 0025):
+            - UNIQUE INDEX (lower(name))
+            - UNIQUE INDEX (status) WHERE status = 'ACTIVE'
+              -> at most ONE active (DB-level guard)
+            nextId(): nextval('kitchen_configuration_id_seq')
+              -> 'KCF-' || lpad(n, GREATEST(5, len), '0')
+            replace(): UPDATE ... SET version = version + 1
+              WHERE id = $1 AND version = $2  (0 rows -> 409)
+              + rewrite of kitchen_configuration_assets
+            lockActivation(): pg_advisory_xact_lock(<key>)
+            deleteIfInactive(): DELETE ... WHERE id = $1
+              AND status = 'INACTIVE'  (0 rows -> 409 / 404)
+            SQLSTATE 23505 -> 409 (name / active),
+            23503 -> 422 UNKNOWN_ASSET.
+        end note
+
+        class KitchenConfigurationRowMapper {
+            + toDomain(row) : KitchenConfiguration
+            + toSummary(row) : KitchenConfigurationSummary
+            + toParams(configuration) : any[]
+        }
+
+        class KitchenAssetCatalogue {
+            - database : Database
+        }
+        note bottom of KitchenAssetCatalogue
+            SELECT ... FROM kitchen_assets
+            WHERE id = ANY($1::varchar[])
+            Rows seeded by seedKitchenAssets
+            (INSERT ... ON CONFLICT (id) DO UPDATE).
+        end note
+
+        class LocalKitchenAssetFileStore {
+            - rootDirectory : string
+            + exists(path) : boolean
+        }
+        note bottom of LocalKitchenAssetFileStore
+            fs.access under backend/assets/kitchen/files;
+            rejects paths that leave the root ("..").
+        end note
+
+        class seedKitchenAssets <<module>> {
+            + seedKitchenAssets(tx, manifest, files) : { inserted, updated }
+        }
+        note bottom of seedKitchenAssets
+            Fails (nothing committed) if a manifest
+            entry has no file in the asset store or a
+            model is not glTF / GLB. Stores size and
+            embeddedTextureSet from GltfModelInspector.
+        end note
+
+        class GltfModelInspector {
+            + inspect(path) : { size, embeddedTextureSet }
+        }
+        note bottom of GltfModelInspector
+            Reads only the glTF JSON (GLB JSON chunk).
+            size = scene bounding box (POSITION min / max,
+            node transforms applied).
+            embeddedTextureSet = every mesh primitive has a
+            material with baseColorTexture AND
+            (metallicRoughnessTexture OR normalTexture),
+            and every referenced image is present.
+        end note
+    }
+}
+
+' -----------------------------------------------------------------------------
+' EXISTING / SHARED ELEMENTS (reused or extended)
+' -----------------------------------------------------------------------------
+package "shared + user-authentication-management (existing)" <<Rectangle>> {
+
+    class AuthMiddleware <<existing>> {
+        + verifyToken(req, res, next)
+    }
+    class RoleMiddleware <<existing>> {
+        + {static} requireRole(...roles)
+    }
+    class AppError <<extended>> {
+        + status : number
+        + details : ValidationIssue[] | undefined
+    }
+    class errorHandler <<extended>> {
+        + errorHandler(err, req, res, next)
+    }
+    note bottom of errorHandler
+        ALN-1: adds "details" to
+        { error: { message, status, details } }
+        only when the error carries a details array
+        (4xx only; 500 stays generic).
+    end note
+    class PostgresUnitOfWork <<existing>> {
+        + withTransaction(work) : Promise
+    }
+    class Database <<existing>> {
+        + query(text, values)
+        + withTransaction(work)
+    }
+    note bottom of Database
+        shared/persistence/postgres (createDatabase).
+        BEGIN / COMMIT / ROLLBACK handled here.
+    end note
+}
+
+KitchenConfigurationRoutes --> KitchenConfigurationController
+KitchenConfigurationRoutes ..> AuthMiddleware : uses
+KitchenConfigurationRoutes ..> RoleMiddleware : uses
+KitchenConfigurationRoutes ..> schemas : uses
+KitchenAssetRoutes --> KitchenAssetController
+KitchenAssetController --> KitchenAssetService
+KitchenConfigurationController --> KitchenConfigurationService
+KitchenConfigurationController ..> CreateKitchenConfigurationDTO
+KitchenConfigurationController ..> UpdateKitchenConfigurationDTO
+
+KitchenConfigurationService --> IKitchenConfigurationRepository
+KitchenConfigurationService --> IKitchenAssetCatalogue
+KitchenConfigurationService --> IUnitOfWork
+KitchenConfigurationService --> IKitchenAssetFileStore
+KitchenConfigurationService --> KitchenLayoutValidator
+KitchenConfigurationService --> KitchenConfigurationMapper
+KitchenConfigurationService ..> KitchenConfiguration : creates / changes
+KitchenConfigurationService ..> KitchenConfigurationValidationError : throws
+KitchenAssetService --> IKitchenAssetCatalogue
+seedKitchenAssets ..> GltfModelInspector : uses
+AssemblyLineFrame ..> FootprintSpan : creates
+
+KitchenConfigurationMapper ..> KitchenConfigurationSummaryDTO
+KitchenConfigurationMapper ..> KitchenConfigurationDetailDTO
+KitchenConfigurationMapper ..> ActiveKitchenConfigurationDTO
+KitchenConfigurationService ..> ActivationResultDTO
+KitchenConfigurationService ..> ValidationReportDTO
+
+KitchenConfiguration *-- KitchenConfigurationId
+KitchenConfiguration *-- ConfigurationName
+KitchenConfiguration --> ConfigurationStatus
+KitchenConfiguration *-- KitchenLayout
+KitchenLayout *-- KitchenDimensions
+KitchenLayout *-- AssemblyLine
+KitchenLayout *-- "9..300" SceneElement
+SceneElement *-- Placement
+SceneElement *-- ModelReference
+SceneElement *-- "0..1" MaterialProperties
+KitchenLayoutValidator ..> LayoutValidationResult : returns
+LayoutValidationResult *-- "0..*" ValidationIssue
+LayoutValidationResult o-- "0..1" KitchenLayout
+KitchenLayoutValidator ..> AssetCheck : checks kind / file
+AssetCheck --> KitchenAsset
+KitchenLayoutValidator ..> AssemblyLineFrame : VIS03 rules
+KitchenConfiguration ..> ConcurrencyConflictError : throws
+KitchenConfiguration ..> ActiveConfigurationDeletionError : throws
+KitchenConfigurationValidationError --|> AppError
+ConcurrencyConflictError --|> AppError
+ActiveConfigurationDeletionError --|> AppError
+
+KitchenConfigurationRepository ..|> IKitchenConfigurationRepository
+KitchenConfigurationRepository --> KitchenConfigurationRowMapper
+KitchenAssetCatalogue ..|> IKitchenAssetCatalogue
+LocalKitchenAssetFileStore ..|> IKitchenAssetFileStore
+seedKitchenAssets ..> IKitchenAssetFileStore : checks files
+PostgresUnitOfWork ..|> IUnitOfWork
+KitchenConfigurationRepository --> Database
+KitchenAssetCatalogue --> Database
+PostgresUnitOfWork --> Database
+seedKitchenAssets ..> Database
+AppError <.. errorHandler : serialises
+
+@enduml

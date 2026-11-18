@@ -1,0 +1,101 @@
+@startuml class_diagram_localization
+title WEB02 - Class Diagram: Localization, Forms and Allergen Display
+
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing false
+skinparam ranksep 32
+skinparam nodesep 16
+skinparam linetype polyline
+
+package "Shell consumers" {
+    class App <<WEB01>> {
+        + render()
+    }
+    class AppHeader <<WEB02>> {
+        + render(items, currentSectionId)
+    }
+    class LanguageSelector <<WEB02>> {
+        + render(locale)
+        + changeLocale(locale)
+    }
+    class RouteOrientation <<WEB02>> {
+        + present(view, locale)
+    }
+}
+
+package "Localization (WEB02)" {
+    class LocaleProvider <<component>> {
+        - locale: "pt-PT" or "en-GB"
+        + initialize()
+        + setLocale(locale)
+        + t(key, values)
+    }
+    class LocaleStorage <<module>> {
+        + read()
+        + write(locale)
+    }
+    class MessageCatalog <<module>> {
+        + translate(locale, key, values)
+    }
+}
+
+package "Feature and feedback consumers" {
+    class FeatureView <<feature owner>> {
+        + render()
+    }
+    class FeatureForm <<feature owner>> {
+        - draft
+        + updateDraft(field, value)
+        + render()
+    }
+    class FeedbackView <<WEB04>> {
+        + render(messageKey, values)
+    }
+    class AllergenLabel <<WEB05>> {
+        + render(allergen: AllergenNames)
+    }
+    class AllergenNames <<record>> {
+        + id: integer
+        + sourceName: string
+        + labels: partial locale to text map
+    }
+    interface AllergenNameSource <<WEB05 / Q4>> {
+        + loadFor(allergenIds): locale labels by ID
+    }
+}
+
+package "Existing business transport" {
+    class apiClient <<WEB01>> {
+        + get(path, options)
+    }
+    class BackEndAPI <<external container>> {
+        + readCatalogueProduct(id)
+        + listAllergens()
+    }
+}
+
+App *-- "1" LocaleProvider : mounts above routing
+AppHeader *-- "1" LanguageSelector : contains
+AppHeader ..> LocaleProvider : localizes labels
+LanguageSelector --> LocaleProvider : changes locale
+RouteOrientation --> LocaleProvider : updates page text
+LocaleProvider --> LocaleStorage : persists preference
+LocaleProvider --> MessageCatalog : resolves UI messages
+FeatureView o-- "0..*" FeatureForm : hosts
+FeatureView o-- "0..*" FeedbackView : hosts
+FeatureView o-- "0..*" AllergenLabel : displays
+FeatureView ..> LocaleProvider : localizes page
+FeatureForm ..> LocaleProvider : localizes field labels
+FeatureForm ..> FeedbackView : passes message keys
+FeedbackView ..> LocaleProvider : resolves messages
+FeatureView --> apiClient : reads business DTOs
+apiClient ..> BackEndAPI : HTTPS / JSON
+FeatureView --> AllergenNameSource : requests approved labels
+AllergenNameSource ..> apiClient : reads labels under proposed Q4 contract
+FeatureView ..> AllergenNames : assembles display data
+AllergenLabel --> AllergenNames : reads display data
+AllergenLabel ..> LocaleProvider : selects language
+AllergenLabel ..> FeedbackView : reports missing labels
+
+@enduml

@@ -1,0 +1,19 @@
+$kind: http-request
+url: http://localhost:8080/api/v1/auth/me
+method: GET
+auth:
+  type: inherit
+  credentials:
+    id: ba444714-3e66-475d-9e4a-832b0e471d08
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("Authenticated user request succeeds", () => pm.response.to.have.status(200));
+
+      const body = pm.response.json();
+      pm.test("Response contains an active user with roles", () => {
+        pm.expect(body.active).to.eql(true);
+        pm.expect(body.roles).to.be.an("array").that.is.not.empty;
+      });
+    language: text/javascript
+order: 7000

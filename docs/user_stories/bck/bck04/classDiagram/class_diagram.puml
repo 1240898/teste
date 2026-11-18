@@ -1,0 +1,206 @@
+@startuml class_diagram
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam linetype ortho
+
+title Class Diagram (Design) - BCK04 Allergen Management
+
+' -----------------------------------------------------------------------------
+' PRESENTATION LAYER (API)
+' -----------------------------------------------------------------------------
+package "Presentation Layer (API)" <<Rectangle>> {
+    class AllergenRoutes {
+        - allergenController: AllergenController
+        - authMiddleware: AuthMiddleware
+        + setupRoutes(): Router
+    }
+
+    class AllergenController {
+        - allergenService: AllergenService
+        + createAllergen(req: Request, res: Response): Promise<void>
+        + updateAllergen(req: Request, res: Response): Promise<void>
+        + getAllAllergens(req: Request, res: Response): Promise<void>
+        + getAllergenById(req: Request, res: Response): Promise<void>
+        + deleteAllergen(req: Request, res: Response): Promise<void>
+    }
+
+    class AuthMiddleware {
+        + verifyToken(req: Request, res: Response, next: NextFunction): void
+    }
+
+    class RoleMiddleware {
+        + requireRole(...roles: UserRole[]): Middleware
+    }
+
+    class ValidationMiddleware {
+        + validate(schema: JoiSchema): Middleware
+    }
+}
+
+' -----------------------------------------------------------------------------
+' APPLICATION LAYER
+' -----------------------------------------------------------------------------
+package "Application Layer" <<Rectangle>> {
+    class AllergenService {
+        - allergenRepository: IAllergenRepository
+        - allergenMapper: AllergenMapper
+        + createAllergen(dto: RegisterAllergenDTO): Promise<AllergenResponseDTO>
+        + updateAllergen(id: number | string, dto: UpdateAllergenDTO): Promise<AllergenResponseDTO>
+        + listAllergens(filters?: {name?, id?}): Promise<AllergenResponseDTO[]>
+        + getAllergenById(id: number | string): Promise<AllergenResponseDTO>
+        + deleteAllergen(id: number | string): Promise<void>
+    }
+
+    class AllergenMapper {
+        + toDomain(dto: RegisterAllergenDTO): Allergen
+        + toDTO(allergen: Allergen): AllergenResponseDTO
+        + toDTOList(allergens: Allergen[]): AllergenResponseDTO[]
+    }
+
+    package "DTOs" <<Rectangle>> {
+        class RegisterAllergenDTO <<dto>> {
+            + id: number
+            + name: string
+        }
+
+        class UpdateAllergenDTO <<dto>> {
+            + name: string
+        }
+
+        class AllergenResponseDTO <<dto>> {
+            + id: number
+            + name: string
+            + createdAt: string
+            + updatedAt: string
+        }
+    }
+}
+
+' -----------------------------------------------------------------------------
+' DOMAIN LAYER
+' -----------------------------------------------------------------------------
+package "Domain Layer" <<Rectangle>> {
+    class Allergen <<entity>> <<aggregateRoot>> {
+        - id: AllergenId
+        - name: AllergenName
+        - createdAt: Date
+        - updatedAt: Date
+        + create(name: AllergenName, id: AllergenId): Allergen
+        + restore(state): Allergen
+        + updateName(newName: AllergenName): void
+        + getId(): AllergenId
+        + getName(): AllergenName
+    }
+
+    class AllergenId <<vo>> {
+        - value: integer
+        + create(id: number | string): AllergenId
+        + getValue(): number
+        + equals(other: AllergenId): boolean
+    }
+
+    class AllergenName <<vo>> {
+        - name: string
+        + create(name: string): AllergenName
+        + getValue(): string
+        + equals(other: AllergenName): boolean
+    }
+
+    enum EUAllergenType <<enum>> {
+        1 : GLUTEN
+        2 : CRUSTACEANS
+        3 : EGGS
+        4 : FISH
+        5 : PEANUTS
+        6 : SOYBEANS
+        7 : MILK
+        8 : NUTS
+        9 : CELERY
+        10 : MUSTARD
+        11 : SESAME
+        12 : SULPHITES
+        13 : LUPIN
+        14 : MOLLUSCS
+    }
+
+    interface IAllergenRepository <<interface>> {
+        + findById(id: AllergenId): Promise<Allergen | null>
+        + findByName(name: AllergenName): Promise<Allergen | null>
+        + existsByName(name: AllergenName): Promise<boolean>
+        + save(allergen: Allergen): Promise<Allergen>
+        + findAll(filters?: {name?, id?}): Promise<Allergen[]>
+        + delete(id: AllergenId): Promise<void>
+        + isReferenced(id: AllergenId): Promise<boolean>
+    }
+}
+
+' -----------------------------------------------------------------------------
+' INFRASTRUCTURE LAYER
+' -----------------------------------------------------------------------------
+package "Infrastructure Layer" <<Rectangle>> {
+    class AllergenRepository {
+        - database: DatabaseClient
+        + findById(id: AllergenId): Promise<Allergen | null>
+        + findByName(name: AllergenName): Promise<Allergen | null>
+        + existsByName(name: AllergenName): Promise<boolean>
+        + save(allergen: Allergen): Promise<Allergen>
+        + findAll(filters?: {name?, id?}): Promise<Allergen[]>
+        + delete(id: AllergenId): Promise<void>
+        + isReferenced(id: AllergenId): Promise<boolean>
+    }
+
+    class AllergenRowMapper {
+        + toDomain(row): Allergen
+        + toPersistence(allergen: Allergen): row
+    }
+
+    class AllergenPersistenceModel <<PostgreSQL / allergens>> {
+        + id: integer
+        + name: string
+        + createdAt: DateTime
+        + updatedAt: DateTime
+    }
+
+    note bottom of AllergenRepository
+        isReferenced() checks the referencing tables
+        (product_allergens, customer_dietary_restriction_allergens)
+        that already exist in the schema.
+    end note
+}
+
+' -----------------------------------------------------------------------------
+' RELATIONSHIPS & DEPENDENCIES
+' -----------------------------------------------------------------------------
+
+' Presentation -> Application
+AllergenRoutes --> AllergenController : dispatches to >
+AllergenRoutes ..> AuthMiddleware : applies >
+AllergenRoutes ..> RoleMiddleware : applies >
+AllergenRoutes ..> ValidationMiddleware : applies >
+AllergenController --> AllergenService : invokes >
+AllergenController ..> RegisterAllergenDTO : uses >
+AllergenController ..> UpdateAllergenDTO : uses >
+
+' Application -> Domain
+AllergenService --> IAllergenRepository : persists via >
+AllergenService --> AllergenMapper : uses >
+AllergenService ..> Allergen : manipulates >
+AllergenService ..> RegisterAllergenDTO : receives >
+AllergenService ..> UpdateAllergenDTO : receives >
+AllergenService ..> AllergenResponseDTO : produces >
+AllergenMapper ..> Allergen : maps to/from >
+AllergenMapper ..> AllergenResponseDTO : produces >
+
+' Domain structure
+Allergen "1" *-- "1" AllergenId : identified by >
+Allergen "1" *-- "1" AllergenName : has >
+AllergenId ..> EUAllergenType : bounded by >
+
+' Infrastructure Implementations
+AllergenRepository ..|> IAllergenRepository : implements
+AllergenRepository --> AllergenPersistenceModel : queries/persists
+AllergenRepository --> AllergenRowMapper : maps rows via >
+AllergenRowMapper ..> Allergen : restores >
+
+@enduml

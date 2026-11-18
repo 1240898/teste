@@ -1,0 +1,11 @@
+$kind: collection
+variables:
+  - key: accessToken
+    secret: true
+    disabled: false
+auth:
+  - id: ba444714-3e66-475d-9e4a-832b0e471d08
+    type: bearer
+    name: Bearer Token
+    credentials:
+      token: "{{accessToken}}"

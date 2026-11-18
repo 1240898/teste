@@ -1,0 +1,106 @@
+@startuml LaPrizzaDomainModel
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam classAttributeIconSize 0
+hide methods
+
+title Domain Model Excerpt - AA02 External Authentication
+
+' -----------------------------------------------------------------------------
+' USER AGGREGATE.
+' -----------------------------------------------------------------------------
+package "User Aggregate" <<Rectangle>> {
+
+    class User <<entity>> <<aggregateRoot>> {
+        + active : boolean
+    }
+
+    class UserId <<vo>> {
+        + value : string
+    }
+    note right of UserId
+        - UserId is a unique identifier for a user.
+        - Must be a string representing the user ID.
+        - Example: "USR-00123".
+    end note
+
+    class Email <<vo>> {
+        + emailAddress : String
+    }
+
+    class Password <<vo>> {
+        + passwordHash : String
+    }
+
+    class UserName <<vo>> {
+        + name : String
+    }
+
+    class MarketingConsent <<vo>> {
+        + consentGiven : boolean
+        + timestamp : DateTime
+    }
+
+    enum UserRole <<enum>> {
+        ADMINISTRATOR
+        MANAGER
+        EMPLOYEE
+        CUSTOMER
+    }
+    note right of UserRole
+        Table 1 website roles.
+        ADMINISTRATOR and the 0..* multiplicity
+        (a user may be left with no role) are
+        introduced by AA06 / AA03.
+        AA02 only ever assigns CUSTOMER.
+    end note
+
+    class ExternalIdentity <<vo>> {
+        + provider : IdentityProvider
+        + subject : String
+        + linkedAt : DateTime
+    }
+    note right of ExternalIdentity
+        - subject is the provider's stable user identifier
+          (OpenID Connect "sub" claim), not the e-mail.
+        - (provider, subject) is globally unique: one external
+          identity belongs to exactly one User.
+        - At most one ExternalIdentity per IdentityProvider.
+        - No external password or provider token is stored.
+    end note
+
+    enum IdentityProvider <<enum>> {
+        GOOGLE
+    }
+
+    User "1" *-- "1" MarketingConsent : manages >
+    User "1" *-- "1" UserId : identified by >
+    User "1" *-- "1" Email : has >
+    User "1" *-- "0..1" Password : has local credential >
+    User "1" *-- "1" UserName : has >
+    User "1" --> "0..*" UserRole : assigned >
+    User "1" *-- "0..*" ExternalIdentity : authenticated through >
+    ExternalIdentity "0..*" --> "1" IdentityProvider : issued by >
+
+    note bottom of User
+        <b>Credentials and activation</b>
+        - An <i>active</i> User has at least one credential:
+          a local Password and/or an ExternalIdentity.
+        - An inactive invited account (AA06) may have no
+          credential until it is activated (AA07);
+          activation is rejected while it has none.
+        <b>Accounts created by external sign-in</b>
+        - The first successful external sign-in of an unknown
+          identity creates an ACTIVE User with only CUSTOMER
+          and MarketingConsent = false (client clarification Q2).
+        <b>Roles</b>
+        - Roles are always internal; provider claims never
+          grant roles.
+        - Login never re-creates, changes the roles of,
+          or reactivates an existing User.
+        - An inactive User, or a User with no role,
+          cannot start a session (AA03).
+    end note
+}
+
+@enduml

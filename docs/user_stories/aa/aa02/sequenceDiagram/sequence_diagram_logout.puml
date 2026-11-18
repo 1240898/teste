@@ -1,0 +1,50 @@
+@startuml sequence_diagram_logout
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - AA02 Logout of an Externally Authenticated User (session mechanism owned by AA04)
+
+actor User as "Authenticated User\n(signed in with Google)"
+participant SPA as "SPA (Front-End)"
+participant Routes as "AuthRoutes"
+participant AuthFilter as "AuthMiddleware\n(verifyToken)"
+participant Controller as "AuthController"
+participant Session as "Session invalidation\n(AA04 - to be designed)"
+participant Google as "Google Identity Services\n(OIDC Provider)"
+
+User -> SPA : clicks "Log out"
+activate SPA
+SPA -> Routes : POST /api/v1/auth/logout\nAuthorization: Bearer <jwt>
+activate Routes
+Routes -> AuthFilter : verifyToken(req, res, next)
+activate AuthFilter
+AuthFilter --> Routes : next()  (req.user resolved)
+deactivate AuthFilter
+Routes -> Controller : logout(req, res)
+activate Controller
+Controller -> Session : end the current application session
+activate Session
+note right of Session
+    Defined by AA04 (e.g. token revocation /
+    server-side session removal), so the ended
+    session cannot be reused. The flow is identical
+    for local (AA01) and Google (AA02) sessions.
+end note
+Session --> Controller : ok
+deactivate Session
+Controller --> SPA : 204 No Content
+deactivate Controller
+deactivate Routes
+
+SPA -> SPA : discard token and cached protected data;\nreset to Guest
+SPA --> User : public page / login page
+deactivate SPA
+
+note over SPA, Google
+    Google is NOT called: logout ends the LaPrizza application session only (AC 7).
+    LaPrizza never stored Google access or refresh tokens, so there is nothing to revoke at Google.
+    The user's Google session in the browser is not affected.
+end note
+
+@enduml

@@ -1,0 +1,247 @@
+@startuml CD_BCK02_CustomerManagement
+
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam linetype ortho
+
+title Class Diagram (Design) - BCK02 Customer Management
+
+' -----------------------------------------------------------------------------
+' PRESENTATION LAYER (API)
+' -----------------------------------------------------------------------------
+package "Presentation Layer (API)" <<Rectangle>> {
+    class CustomerRoutes {
+        + setupRoutes(): Router
+    }
+
+    class CustomerController {
+        - customerService: CustomerService
+        + createCustomer(req: Request, res: Response): Promise<void>
+        + updateCustomer(req: Request, res: Response): Promise<void>
+        + getCustomerById(req: Request, res: Response): Promise<void>
+        + searchCustomers(req: Request, res: Response): Promise<void>
+    }
+
+    class AuthMiddleware {
+        + verifyToken(req: Request, res: Response, next: NextFunction): void
+    }
+
+    class RoleMiddleware {
+        + requireRole(...roles: UserRole[]): Middleware
+    }
+
+    class ValidationMiddleware {
+        + validate(schema: JoiSchema): Middleware
+    }
+}
+
+' -----------------------------------------------------------------------------
+' APPLICATION LAYER
+' -----------------------------------------------------------------------------
+package "Application Layer" <<Rectangle>> {
+    class CustomerService {
+        - customerRepository: ICustomerRepository
+        + createCustomer(dto: CreateCustomerDTO): Promise<CustomerResponseDTO>
+        + updateCustomer(id: string, dto: UpdateCustomerDTO): Promise<CustomerResponseDTO>
+        + getCustomerById(id: string): Promise<CustomerResponseDTO>
+        + searchCustomers(criteria: CustomerSearchCriteriaDTO): Promise<CustomerResponseDTO[]>
+    }
+
+    package "DTOs" <<Rectangle>> {
+        class CreateCustomerDTO <<dto>> {
+            + name: string
+            + email: string
+            + phoneNumber: string
+            + addresses?: AddressDTO[]
+            + dietaryRestrictions?: DietaryRestrictionDTO[]
+        }
+
+        class UpdateCustomerDTO <<dto>> {
+            + name?: string
+            + email?: string
+            + phoneNumber?: string
+            + addresses?: AddressDTO[]
+            + dietaryRestrictions?: DietaryRestrictionDTO[]
+        }
+
+        class CustomerSearchCriteriaDTO <<dto>> {
+            + name?: string
+            + email?: string
+            + phoneNumber?: string
+        }
+
+        class CustomerResponseDTO <<dto>> {
+            + id: string
+            + name: string
+            + email: string
+            + phoneNumber: string
+            + addresses: AddressDTO[]
+            + dietaryRestrictions: DietaryRestrictionDTO[]
+            + createdAt: string
+            + updatedAt: string
+        }
+
+        class AddressDTO <<dto>> {
+            + street: string
+            + postalCode: string
+            + city: string
+        }
+
+        class DietaryRestrictionDTO <<dto>> {
+            + name: string
+            + description: string
+        }
+    }
+}
+
+' -----------------------------------------------------------------------------
+' DOMAIN LAYER
+' -----------------------------------------------------------------------------
+package "Domain Layer" <<Rectangle>> {
+    class Customer <<entity>> <<aggregateRoot>> {
+        - id: CustomerId
+        - name: CustomerName
+        - contactInfo: ContactInfo
+        - addresses: List<Address>
+        - dietaryRestrictions: List<DietaryRestriction>
+        + create(props: CustomerProps): Customer
+        + updateName(name: CustomerName): void
+        + updateContactInfo(contactInfo: ContactInfo): void
+        + addAddress(address: Address): void
+        + removeAddress(address: Address): void
+        + addDietaryRestriction(restriction: DietaryRestriction): void
+        + removeDietaryRestriction(restriction: DietaryRestriction): void
+        + validateInvariants(): void
+    }
+
+    class CustomerId <<vo>> {
+        - value: string
+        + create(id?: string): CustomerId
+        + getValue(): string
+        + equals(other: CustomerId): boolean
+    }
+
+    class CustomerName <<vo>> {
+        - name: string
+        + create(name: string): CustomerName
+        + getValue(): string
+    }
+
+    class ContactInfo <<vo>> {
+        - email: Email
+        - phoneNumber: PhoneNumber
+        + create(email: Email, phoneNumber: PhoneNumber): ContactInfo
+        + getEmail(): Email
+        + getPhoneNumber(): PhoneNumber
+    }
+
+    class Email <<vo>> {
+        - email: string
+        + create(email: string): Email
+        + getValue(): string
+    }
+
+    class PhoneNumber <<vo>> {
+        - number: string
+        + create(number: string): PhoneNumber
+        + getValue(): string
+    }
+
+    class Address <<vo>> {
+        - street: string
+        - postalCode: string
+        - city: string
+        + create(street: string, postalCode: string, city: string): Address
+        + getStreet(): string
+        + getPostalCode(): string
+        + getCity(): string
+    }
+
+    class DietaryRestriction <<vo>> {
+        - name: string
+        - description: string
+        + create(name: string, description?: string): DietaryRestriction
+        + getName(): string
+        + getDescription(): string
+    }
+
+    interface ICustomerRepository <<interface>> {
+        + findById(id: CustomerId): Promise<Customer | null>
+        + findByEmail(email: Email): Promise<Customer | null>
+        + existsByEmail(email: Email): Promise<boolean>
+        + save(customer: Customer): Promise<Customer>
+        + search(criteria: CustomerSearchCriteriaDTO): Promise<Customer[]>
+        + isReferencedByOtherEntities(id: CustomerId): Promise<boolean>
+    }
+}
+
+' -----------------------------------------------------------------------------
+' INFRASTRUCTURE LAYER
+' -----------------------------------------------------------------------------
+package "Infrastructure Layer" <<Rectangle>> {
+    class CustomerRepository {
+        - customerModel: CustomerModel
+        + findById(id: CustomerId): Promise<Customer | null>
+        + findByEmail(email: Email): Promise<Customer | null>
+        + existsByEmail(email: Email): Promise<boolean>
+        + save(customer: Customer): Promise<Customer>
+        + search(criteria: CustomerSearchCriteriaDTO): Promise<Customer[]>
+        + isReferencedByOtherEntities(id: CustomerId): Promise<boolean>
+    }
+
+    class CustomerPersistenceModel <<PostgreSQL / customers>> {
+        + id: string
+        + name: string
+        + email: string
+        + phoneNumber: string
+        + addresses: jsonb
+        + dietaryRestrictions: jsonb
+        + createdAt: DateTime
+        + updatedAt: DateTime
+    }
+
+    class CustomerMapper {
+        + toDomain(raw: any): Customer
+        + toPersistence(customer: Customer): any
+        + toDTO(customer: Customer): CustomerResponseDTO
+    }
+}
+
+' -----------------------------------------------------------------------------
+' RELATIONSHIPS & DEPENDENCIES
+' -----------------------------------------------------------------------------
+
+' Presentation -> Application
+CustomerRoutes --> CustomerController : dispatches to >
+CustomerRoutes ..> AuthMiddleware : applies >
+CustomerRoutes ..> RoleMiddleware : applies >
+CustomerRoutes ..> ValidationMiddleware : applies >
+CustomerController --> CustomerService : invokes >
+CustomerController ..> CreateCustomerDTO : uses >
+CustomerController ..> UpdateCustomerDTO : uses >
+CustomerController ..> CustomerSearchCriteriaDTO : uses >
+
+' Application -> Domain
+CustomerService --> ICustomerRepository : persists via >
+CustomerService ..> Customer : manipulates >
+CustomerService ..> CreateCustomerDTO : receives >
+CustomerService ..> UpdateCustomerDTO : receives >
+CustomerService ..> CustomerResponseDTO : produces >
+CustomerService ..> CustomerMapper : uses >
+
+' Domain structure
+Customer "1" *-- "1" CustomerId : identified by >
+Customer "1" *-- "1" CustomerName : named >
+Customer "1" *-- "1" ContactInfo : has >
+ContactInfo "1" *-- "1" Email : has >
+ContactInfo "1" *-- "1" PhoneNumber : has >
+Customer "1" *-- "0..*" Address : maintains >
+Customer "1" *-- "0..*" DietaryRestriction : records >
+
+' Infrastructure Implementations
+CustomerRepository ..|> ICustomerRepository : implements
+CustomerRepository --> CustomerPersistenceModel : queries/persists
+CustomerRepository ..> CustomerMapper : uses
+
+@enduml

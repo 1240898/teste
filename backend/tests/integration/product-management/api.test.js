@@ -1,0 +1,200 @@
+import request from 'supertest';
+import { createApp } from '../../../src/app.js';
+import { createUserModule } from '../../../src/modules/user-authentication-management/index.js';
+import { createProductManagementModule } from '../../../src/modules/product-management/index.js';
+import { MemoryUserRepository } from '../../helpers/MemoryUserRepository.js';
+import {
+  MemoryProductImpactChecker,
+  MemoryProductReferenceReader,
+  MemoryProductRepository,
+  MemoryUnitOfWork,
+} from '../../helpers/MemoryProductRepository.js';
+import { createUser } from '../../helpers/createUser.js';
+
+const security = {
+  secret: 'test-only-secret-at-least-thirty-two-bytes',
+  expiresIn: '1d',
+  issuer: 'laprizza',
+  audience: 'laprizza-api',
+};
+const auth = (token) => ({ Authorization: `Bearer ${token}` });
+const body = (overrides = {}) => ({
+  name: 'Coca-Cola 33cl',
+  description: 'Soft drink can',
+  categoryId: 'CAT-00001',
+  isSellable: true,
+  isPizzaComponent: false,
+  acquisitionType: 'PURCHASED',
+  compositionItems: [],
+  pizzaComponentTypeId: null,
+  allergenIds: [],
+  pricingMode: 'FIXED',
+  basePrice: 1.5,
+  ...overrides,
+});
+const component = (overrides = {}) =>
+  body({
+    name: 'Mozzarella Cheese',
+    description: 'Cheese component',
+    isSellable: false,
+    isPizzaComponent: true,
+    acquisitionType: 'PRODUCED',
+    pizzaComponentTypeId: 'type-03',
+    allergenIds: [7],
+    pricingMode: null,
+    basePrice: null,
+    ...overrides,
+  });
+const pizza = (compositionItems, overrides = {}) =>
+  body({
+    name: 'Margherita',
+    description: 'Pizza composed from products',
+    acquisitionType: 'PRODUCED',
+    compositionItems,
+    pricingMode: 'COMPONENT_BASED',
+    basePrice: null,
+    ...overrides,
+  });
+
+let app, products, impact, manager, employee, customer;
+
+async function tokenFor(userModule, users, roles, email) {
+  const user = createUser({
+    name: 'Test',
+    email,
+    passwordHash: await userModule.hasher.hash('long-password'),
+    roles,
+  });
+  await users.save(user);
+  return userModule.tokens.generateToken({
+    sub: user.getId().getValue(),
+    email,
+    roles: user.getRoles(),
+  });
+}
+
+beforeEach(async () => {
+  const users = new MemoryUserRepository();
+  products = new MemoryProductRepository();
+  impact = new MemoryProductImpactChecker();
+  const references = new MemoryProductReferenceReader();
+  references.productRepository = products;
+  const userModule = createUserModule({ repository: users, security });
+  const productModule = createProductManagementModule({
+    userService: userModule.userService,
+    repository: products,
+    referenceReader: references,
+    impactChecker: impact,
+    unitOfWork: new MemoryUnitOfWork(products),
+  });
+  app = createApp({ userModule, productModule });
+  manager = await tokenFor(userModule, users, ['MANAGER'], 'm@example.com');
+  employee = await tokenFor(userModule, users, ['EMPLOYEE'], 'e@example.com');
+  customer = await tokenFor(userModule, users, ['CUSTOMER'], 'c@example.com');
+});
+
+const create = (payload = body(), token = manager) =>
+  request(app).post('/api/v1/products').set(auth(token)).send(payload);
+
+describe('BCK05 HTTP contract', () => {
+  test('Manager creates a product and receives its resource location', async () => {
+    const response = await create();
+    expect(response.status).toBe(201);
+    expect(response.headers.location).toBe('/api/v1/products/PROD-00001');
+    expect(response.body).toMatchObject({
+      id: 'PROD-00001',
+      isActive: true,
+      isSellable: true,
+      acquisitionType: 'PURCHASED',
+      compositionItems: [],
+    });
+    expect(response.body).not.toHaveProperty('isStockControlled');
+    expect(response.body).not.toHaveProperty('initialUnits');
+  });
+
+  test('creates and searches a pizza, summing repeated child product quantities', async () => {
+    const child = await create(component());
+    expect(child.status).toBe(201);
+    const created = await create(
+      pizza([
+        { productId: child.body.id, quantity: 2 },
+        { productId: child.body.id, quantity: 3 },
+      ]),
+    );
+    expect(created.status).toBe(201);
+    expect(created.body.compositionItems).toEqual([
+      { productId: child.body.id, quantity: 5 },
+    ]);
+    const found = await request(app)
+      .get(`/api/v1/products/${created.body.id}`)
+      .set(auth(employee));
+    expect(found.status).toBe(200);
+    expect(found.body.compositionItems).toEqual(created.body.compositionItems);
+    const search = await request(app)
+      .get('/api/v1/products?acquisitionType=PRODUCED&isSellable=true')
+      .set(auth(employee));
+    expect(search.status).toBe(200);
+    expect(search.body.map((item) => item.id)).toContain(created.body.id);
+  });
+
+  test('rejects invalid product data and unknown references', async () => {
+    for (const payload of [
+      { ...body(), isActive: false },
+      { ...body(), initialUnits: 4 },
+      body({ isSellable: false, isPizzaComponent: false }),
+      body({ isSellable: true, pricingMode: 'FIXED', basePrice: 1.999 }),
+      body({ compositionItems: [{ productId: 'PROD-00001', quantity: 0 }] }),
+    ])
+      expect((await create(payload)).status).toBe(400);
+    expect((await create(body({ categoryId: 'CAT-00099' }))).status).toBe(404);
+    expect(products.rows.size).toBe(0);
+  });
+
+  test('rejects a composition cycle with 409', async () => {
+    const first = await create(pizza([]));
+    const second = await create(pizza([{ productId: first.body.id, quantity: 1 }], { name: 'Second pizza' }));
+    const response = await request(app)
+      .put(`/api/v1/products/${first.body.id}`)
+      .set(auth(manager))
+      .send(pizza([{ productId: second.body.id, quantity: 1 }]));
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect(response.status).toBe(409);
+  });
+
+  test('requires authentication and limits mutations to Managers', async () => {
+    expect((await request(app).post('/api/v1/products').send(body())).status).toBe(401);
+    expect((await create(body(), customer)).status).toBe(403);
+    expect((await create(body(), employee)).status).toBe(403);
+    const created = await create();
+    const url = `/api/v1/products/${created.body.id}`;
+    expect((await request(app).get(url).set(auth(employee))).status).toBe(200);
+    expect((await request(app).delete(url).set(auth(employee))).status).toBe(403);
+  });
+
+  test('PUT replaces editable state; DELETE and PATCH deactivate/reactivate', async () => {
+    const created = await create();
+    const url = `/api/v1/products/${created.body.id}`;
+    const updated = await request(app)
+      .put(url)
+      .set(auth(manager))
+      .send(body({ name: 'Coke Zero', basePrice: 2 }));
+    expect(updated.status).toBe(200);
+    expect(updated.body).toMatchObject({ name: 'Coke Zero', basePrice: 2 });
+    expect((await request(app).delete(url).set(auth(manager))).status).toBe(204);
+    expect((await request(app).get(url).set(auth(employee))).body.isActive).toBe(false);
+    const activated = await request(app).patch(`${url}/activate`).set(auth(manager));
+    expect(activated.status).toBe(200);
+    expect(activated.body.isActive).toBe(true);
+  });
+
+  test('returns 409 when an update removes a referenced component role', async () => {
+    const created = await create(component());
+    impact.components.add(created.body.id);
+    const response = await request(app)
+      .put(`/api/v1/products/${created.body.id}`)
+      .set(auth(manager))
+      .send(body({ name: created.body.name }));
+    expect(response.status).toBe(409);
+  });
+});

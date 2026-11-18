@@ -1,0 +1,183 @@
+@startuml class_diagram
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam linetype ortho
+title Class Diagram (Design) - BCK10 Predefined Pizza Management
+
+package "Presentation Layer (API)" {
+ class PredefinedPizzaRoutes {
+  + setupRoutes(): Router
+ }
+ class PredefinedPizzaController {
+  - service: PredefinedPizzaManagementService
+  + create(req, res): Promise<void>
+  + list(req, res): Promise<void>
+  + getById(req, res): Promise<void>
+  + replaceConfiguration(req, res): Promise<void>
+ }
+ class AuthMiddleware <<BCK01 auth>> {
+  + verifyToken(req, res, next): void
+ }
+ class RoleMiddleware <<BCK01 RBAC>> {
+  + requireRole(role): Middleware
+ }
+ class ValidationMiddleware <<shared validator>> {
+  + validate(schema): Middleware
+ }
+}
+
+package "Application Layer" {
+ class PredefinedPizzaManagementService <<service>> {
+  - productRepository: IProductRepository
+  - referenceReader: IConfigurationReferenceReader
+  - unitOfWork: IUnitOfWork
+  - responseMapper: PredefinedPizzaResponseMapper
+  - requirePizza(product: Product): Product
+  - productId(value): ProductId
+  - componentIds(value): string[]
+  - assertNoSelfReference(productId: ProductId, componentIds: string[]): void
+  - assertPredefinedPizza(product: Product): void
+  - validate(pizza: Product, componentIds: string[], facts: ConfigurationFacts): void
+  + create(dto: CreatePredefinedPizzaDTO): Promise<PredefinedPizzaResponseDTO>
+  + list(): Promise<PredefinedPizzaResponseDTO[]>
+  + getById(id: ProductId): Promise<PredefinedPizzaResponseDTO>
+  + replaceConfiguration(id: ProductId, dto: ReplacePizzaConfigurationDTO): Promise<PredefinedPizzaResponseDTO>
+ }
+ interface IConfigurationReferenceReader <<port>> {
+  + readFacts(id, componentIds, tx): Promise<ConfigurationFacts>
+ }
+ interface IUnitOfWork <<shared port>> {
+  + withTransaction(work): Promise<T>
+ }
+ class PredefinedPizzaResponseMapper {
+  + toDTO(product: Product): PredefinedPizzaResponseDTO
+ }
+ class CreatePredefinedPizzaDTO <<dto>> {
+  + productId: string
+  + componentIds: string[]
+ }
+ class ReplacePizzaConfigurationDTO <<dto>> {
+  + componentIds: string[]
+ }
+ class PredefinedPizzaResponseDTO <<dto>> {
+  + id: string
+  + componentIds: string[]
+ }
+}
+
+package "Domain Layer" {
+ class Product <<aggregateRoot>> {
+  + getId(): ProductId
+  + getCompositionItems(): ProductCompositionItem[]
+  + replaceComposition(items): void
+ }
+ class SellableProduct <<entity>>
+ class PredefinedPizza <<entity>>
+ class ProductCompositionItem <<value object>> {
+  - productId: ProductId
+  - quantity: int
+  {static} + create(productId: ProductId, quantity: int): ProductCompositionItem
+  + getProductId(): ProductId
+  + getQuantity(): int
+ }
+ class ProductId <<value object>> {
+  - value: string
+  + getValue(): string
+ }
+ interface IProductRepository <<BCK05 domain contract>> {
+  + findById(id, tx?): Promise<Product | null>
+  + findByIdForUpdate(id, tx): Promise<Product | null>
+  + listPredefinedPizzas(): Promise<Product[]>
+  + save(product, tx?): Promise<Product>
+ }
+
+ class ConfigurationFacts <<read model>> {
+  + representativeProduct: ProductEligibility
+  + components: ComponentEligibility[]
+  + typeRules: TypeCardinalityRule[]
+  + activeStructurallyEligibleSizes: string[]
+ }
+ class ProductEligibility <<value object>> {
+  + productId: string
+  + isSellable: boolean
+  + isPizzaComponent: boolean
+ }
+ class ComponentEligibility <<value object>> {
+  + productId: string
+  + isActive: boolean
+  + isPizzaComponent: boolean
+  + componentTypeId: string
+ }
+ class TypeCardinalityRule <<value object>> {
+  + componentTypeId: string
+  + minQuantity: int
+  + maxQuantity: int | null
+ }
+}
+
+ConfigurationFacts "1" *-- "1" ProductEligibility
+ConfigurationFacts "1" *-- "0..*" ComponentEligibility
+ConfigurationFacts "1" *-- "0..*" TypeCardinalityRule
+
+Product <|-- SellableProduct
+SellableProduct <|-- PredefinedPizza
+Product "1" *-- "0..*" ProductCompositionItem : owns default composition >
+Product "1" *-- "1" ProductId : identified by >
+ProductCompositionItem "0..*" --> "1" ProductId : identifies component >
+
+package "Infrastructure Layer" {
+ class ProductRepository <<BCK05 adapter>>
+ class PostgresConfigurationReferenceReader <<BCK10 adapter>>
+ class PostgresUnitOfWork <<shared adapter>>
+ class Database <<database>> {
+  + query(text, values): Promise<QueryResult>
+  + withTransaction(work): Promise<T>
+ }
+}
+
+PredefinedPizzaRoutes --> PredefinedPizzaController
+PredefinedPizzaRoutes ..> AuthMiddleware : verify token >
+PredefinedPizzaRoutes ..> RoleMiddleware : require MANAGER >
+PredefinedPizzaRoutes ..> ValidationMiddleware : validate body >
+PredefinedPizzaController --> PredefinedPizzaManagementService
+PredefinedPizzaController ..> CreatePredefinedPizzaDTO
+PredefinedPizzaController ..> ReplacePizzaConfigurationDTO
+PredefinedPizzaController ..> PredefinedPizzaResponseDTO
+PredefinedPizzaManagementService --> IProductRepository
+PredefinedPizzaManagementService --> IConfigurationReferenceReader
+PredefinedPizzaManagementService --> IUnitOfWork
+PredefinedPizzaManagementService --> PredefinedPizzaResponseMapper
+PredefinedPizzaManagementService ..> Product
+PredefinedPizzaManagementService ..> ProductCompositionItem
+PredefinedPizzaManagementService ..> ConfigurationFacts
+PredefinedPizzaResponseMapper ..> Product
+PredefinedPizzaResponseMapper ..> PredefinedPizzaResponseDTO
+IConfigurationReferenceReader ..> ConfigurationFacts
+ProductRepository ..|> IProductRepository
+PostgresConfigurationReferenceReader ..|> IConfigurationReferenceReader
+PostgresUnitOfWork ..|> IUnitOfWork
+ProductRepository --> Database
+PostgresConfigurationReferenceReader --> Database
+PostgresUnitOfWork --> Database
+
+note right of PredefinedPizzaRoutes
+  Routes validate the productId path parameter
+  with the local validateParams helper before
+  invoking getById or replaceConfiguration.
+  Authentication and MANAGER authorization run first.
+end note
+
+note bottom of IProductRepository
+  Repository contract belongs to the Product aggregate's
+  domain layer. BCK10 consumes the BCK05 contract; the
+  PostgreSQL adapter remains owned by BCK05.
+  listPredefinedPizzas() is the BCK10 list query contract.
+end note
+
+legend bottom
+  Interfaces denote injected JavaScript contracts.
+  PredefinedPizza is a Product subtype and uses ProductId;
+  BCK10 adds composition to the BCK05 Product aggregate.
+endlegend
+@enduml

@@ -1,0 +1,182 @@
+@startuml LaPrizzaDomainModel
+' Excerpt of docs/architecture/domainModel/domainmodel.puml at a5a622a.
+' Omitted associations and attributes are outside this view, not removed from the model.
+' WEB07-specific constraints and model gaps are documented in usWEB07.md §2.5.
+title WEB07 — Consumption Forecasts and Planning Results
+hide methods
+hide empty members
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam nodesep 35
+skinparam ranksep 75
+
+package "Consumption Forecast Aggregate" {
+    class ConsumptionForecast <<entity>> <<aggregateRoot>> {
+        startDate : Date
+        endDate : Date
+        version : int
+    }
+    class ForecastEntry <<vo>> {
+        date : Date
+        quantity : int
+    }
+    ConsumptionForecast "1" *-- "0..*" ForecastEntry : contains
+}
+
+package "Product Aggregate" {
+    class Product <<entity>> <<aggregateRoot>> {
+        isActive : boolean
+    }
+    class SellableProduct <<entity>>
+    class PredefinedPizza <<entity>>
+    class PizzaComponent <<entity>>
+    class ProductCompositionItem <<vo>>
+    class Quantity <<vo>> {
+        amount : int
+    }
+    enum AcquisitionType <<enum>> {
+        PRODUCED
+        PURCHASED
+    }
+
+    Product <|-- PizzaComponent
+    Product <|-- SellableProduct
+    SellableProduct <|-- PredefinedPizza
+    Product "1" *-- "0..*" ProductCompositionItem : composed of
+    ProductCompositionItem "0..*" --> "1" Product : references child product
+    ProductCompositionItem "1" *-- "1" Quantity : specifies
+    Product "1" --> "1" AcquisitionType
+}
+
+package "Pizza Size Aggregate" {
+    class PizzaSize <<entity>> <<aggregateRoot>> {
+        isActive : boolean
+    }
+}
+
+package "Component Size Configuration Aggregate" {
+    class ComponentSizeConfiguration <<entity>> <<aggregateRoot>>
+    class StockUnitsConsumed <<vo>> {
+        quantity : int
+    }
+    ComponentSizeConfiguration "1" *-- "1" StockUnitsConsumed : consumes
+}
+
+package "Stock Aggregate" {
+    class StockInformation <<entity>> <<aggregateRoot>> {
+        startedAt : DateTime
+        endedAt : DateTime
+    }
+    class AbstractStockQuantity <<vo>> {
+        availableUnits : int
+    }
+    StockInformation "1" *-- "1" AbstractStockQuantity : maintains
+}
+
+package "Supplier Scenario Aggregate" {
+    class SupplierScenario <<entity>> <<aggregateRoot>> {
+        importedAt : DateTime
+        confirmedAt : DateTime [0..1]
+    }
+    enum ScenarioStatus <<enum>> {
+        IMPORTED
+        CONFIRMED
+        SUPERSEDED
+    }
+    class Supplier <<entity>>
+    class SupplierOffer <<entity>> {
+        coveredUnits : int
+        leadTimeDays : int
+        supplyLimit : Integer [0..1]
+    }
+    note right of SupplierOffer
+        A limit caps daily units for this offer.
+        An omitted limit leaves actual capacity unknown.
+        The simulation applies no cap and discloses
+        that assumption in the plan (CC §19, AI02).
+    end note
+    class "Money" as OfferMoney <<vo>> {
+        amount : BigDecimal
+        currency : String
+    }
+    enum OfferOrigin <<enum>> {
+        MANUAL
+        LLM_GENERATED
+    }
+
+    SupplierScenario "1" --> "1" ScenarioStatus : status
+    SupplierScenario "1" *-- "1..*" Supplier : lists
+    SupplierScenario "1" *-- "0..*" SupplierOffer : contains
+    SupplierOffer "1" *-- "1" OfferMoney : price
+    SupplierOffer "1" --> "1" OfferOrigin : origin
+    SupplierOffer "0..*" --> "1" Supplier : offered by
+}
+
+package "Planning Result Aggregate" {
+    class PlanningResult <<entity>> <<aggregateRoot>> {
+        requestedAt : DateTime
+        finishedAt : DateTime [0..1]
+        referenceDate : Date
+        simulation : boolean
+    }
+    enum PlanningType <<enum>> {
+        BILL_OF_MATERIALS
+        REQUIREMENTS_PLANNING
+    }
+    enum PlanningExecutionStatus <<enum>> {
+        PENDING
+        RUNNING
+        COMPLETED
+        FAILED
+    }
+    class InputProvenance <<vo>> {
+        source : String
+        versionOrRetrievedAt : String
+        simulated : boolean
+    }
+    ' Three roles of the same value-object type, drawn separately for readability.
+    class "InputSnapshot" as ForecastSnapshot <<vo>>
+    class "InputSnapshot" as StockSnapshot <<vo>>
+    class "InputSnapshot" as BomSnapshot <<vo>>
+    class PlanLine <<entity>> {
+        requirementDate : Date
+        requiredUnits : int
+        availableUnits : int
+        remainingUnits : int
+        replenishmentUnits : int
+        orderDate : Date [0..1]
+        expectedDeliveryDate : Date [0..1]
+        unmetUnits : int
+    }
+    class PlanWarning <<vo>> {
+        code : String
+        message : String
+    }
+
+    PlanningResult "1" --> "1" PlanningType : type
+    PlanningResult "1" --> "1" PlanningExecutionStatus : status
+    PlanningResult "1" *-- "1..*" InputProvenance : inputs used
+    PlanningResult "1" *-- "0..1" ForecastSnapshot : forecast copy
+    PlanningResult "1" *-- "1" StockSnapshot : stock snapshot
+    PlanningResult "1" *-- "1" BomSnapshot : pizza BOM snapshot
+    PlanningResult "1" *-- "0..*" PlanLine : daily plan
+    PlanningResult "1" *-- "0..*" PlanWarning : warnings
+}
+
+ForecastEntry "0..*" --> "1" Product : consumption of
+ForecastEntry "0..*" --> "0..1" PizzaSize : for size
+ComponentSizeConfiguration "0..*" --> "1" PizzaComponent : applies to component
+ComponentSizeConfiguration "0..*" --> "1" PizzaSize : for size
+StockInformation "0..*" --> "1" Product : tracks stock periods for
+SupplierOffer "0..*" --> "1" Product : supplies
+PlanningResult "0..*" --> "0..1" ConsumptionForecast : executed for
+PlanningResult "0..*" --> "0..1" SupplierScenario : used
+PlanLine "0..*" --> "1" Product : concerns
+PlanLine "0..*" --> "0..1" Supplier : proposed supplier
+
+legend bottom
+    Associations and multiplicities follow the Sprint 2 global model (a5a622a).
+    InputSnapshot is shown once per role. See WEB07 §2.5 for scope and model gaps.
+endlegend
+@enduml

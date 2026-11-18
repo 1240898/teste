@@ -1,0 +1,55 @@
+@startuml LaPrizza-C4-Container
+!NEW_C4_STYLE=1
+!include <C4/C4_Container>
+
+SHOW_PERSON_OUTLINE()
+
+title Container Diagram - LaPrizza Information System (Sprint 2 target)
+
+Person(customer, "Customer", "Browses the catalogue, manages personal data consents and submits requests concerning their own personal information.")
+Person(guest, "Guest", "Browses the public catalogue, product and allergen information and accesses authentication services.")
+Person(staff, "Restaurant Staff", "Consults the sellable catalogue, product and allergen information and the 3D kitchen visualization.")
+Person(manager, "Restaurant Manager", "Manages restaurant operations, including customers, products, stock, kitchen configurations, and AI-based materials and supplier planning.")
+Person(admin, "Administrator", "Manages user accounts, role assignments, access permissions, account activation, and account-related data protection requests.")
+
+System_Boundary(laprizza, "LaPrizza Information System") {
+    Container(staticContent, "Static Content", "Container: Directory", "Serves the compiled React application and static assets to the user's browser")
+    Container(ui, "Web Application", "Container: React / JavaScript / Three.js", "Browser-based SPA providing catalogue, management, authentication, 3D visualization and AI planning interfaces")
+    Container(gateway, "API Gateway", "HTTP reverse proxy", "Provides the SPA with one API entry point and routes requests to the responsible service.")
+    Container(backend, "Back-End API (Backoffice)", "Node.js / Express / REST API", "Manages operational data. Hosts the AA04 authority and the private adapter that stores Procurement records.")
+    ContainerDb(database, "Relational Database", "Container: PostgreSQL", "Stores users, customers, allergens, pizza configurations, stock, orders and schedules")
+    Container(aiService, "Procurement (AI Planning Service)", "Prolog / REST API", "Manages supplier planning scenarios and results. Calculates bills of materials and daily replenishment plans.")
+}
+
+System_Ext(email, "Email Service", "Delivers account activation invitations, password recovery emails and notifications.")
+System_Ext(identityProvider, "Google Identity Provider", "Authenticates users through OpenID Connect and OAuth 2.0.")
+
+Rel_Neighbor(staticContent, ui, "Downloads application files and static assets from", "HTTPS")
+Rel(customer, ui, "Uses", "HTTP")
+Rel(staff, ui, "Uses", "HTTP")
+Rel(manager, ui, "Manages the restaurant's data using", "HTTP")
+Rel(admin, ui, "Manages user accounts using", "HTTP")
+Rel(guest, ui, "Browses the public catalogue using", "HTTP")
+
+Rel(customer, staticContent, "Loads UI from", "HTTP")
+Rel(manager, staticContent, "Loads UI from", "HTTP")
+Rel(staff, staticContent, "Loads UI from", "HTTP")
+Rel(admin, staticContent, "Loads UI from", "HTTP")
+Rel(guest, staticContent, "Loads UI from", "HTTP")
+
+Rel_D(ui, gateway, "Makes operational and planning API requests", "HTTPS / JSON")
+Rel_D(gateway, backend, "Routes operational and forecast requests", "HTTP / JSON")
+Rel_D(gateway, aiService, "Routes supplier scenarios and planning requests", "HTTP / JSON")
+Rel_D(backend, database, "Reads and writes", "Database Driver / TCP")
+Rel_L(aiService, backend, "Checks Manager access, reads operational inputs and stores or reads planning records", "Private HTTPS / JSON")
+Rel(backend, email, "Sends account activation, password recovery and notification emails", "SMTP")
+Rel_Back(customer, email, "Delivers confirmations & notifications to", "SMTP")
+Rel(backend, identityProvider, "Authenticates users through", "OpenID Connect / OAuth 2.0")
+
+Lay_R(customer, manager)
+Lay_R(manager, staff)
+Lay_R(staff, admin)
+Lay_R(backend, aiService)
+
+SHOW_LEGEND()
+@enduml

@@ -1,0 +1,23 @@
+$kind: http-request
+name: Check Authenticated User
+url: http://localhost:8080/api/v1/auth/me
+method: GET
+body:
+  type: json
+  content: ""
+auth:
+  type: bearer
+  credentials:
+    token: "{{accessToken}}"
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test("Authenticated user request succeeds", () => pm.response.to.have.status(200));
+
+      const body = pm.response.json();
+      pm.test("Response contains an active user with roles", () => {
+        pm.expect(body.active).to.eql(true);
+        pm.expect(body.roles).to.be.an("array").that.is.not.empty;
+      });
+    language: text/javascript
+order: 2000

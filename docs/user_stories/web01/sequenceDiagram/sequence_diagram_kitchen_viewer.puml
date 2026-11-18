@@ -1,0 +1,42 @@
+@startuml sequence_diagram_kitchen_viewer
+autonumber
+title WEB01 - UC3: view the active kitchen in the shared shell
+
+actor "Restaurant Staff or Manager" as User
+participant "Kitchen viewer (VIS01)" as Viewer
+participant "kitchenConfigurationApi (WEB06)" as Adapter
+participant ModuleRequest as Request
+participant apiClient as Client
+participant "Back-End API" as API
+
+ref over User, API : SD3 - Open the viewer in the shared shell; continue only if mounted
+note over Viewer, API
+Proposed integration. WEB06 owns the endpoint and JSON contract (OP1).
+The back end authorises each protected operation.
+end note
+
+Viewer -> Adapter : getActive()
+Adapter -> Request : request(GET, active-configuration path)
+Request -> Client : request(GET, path, { accessToken })
+Client -> API : Read active kitchen configuration (Bearer)
+alt Active configuration returned
+  API --> Client : DTO with configuration ID, JSON and asset references
+  Client --> Request : Parsed DTO
+  Request --> Adapter : DTO
+  Adapter --> Viewer : DTO
+  alt 3D rendering available
+    Viewer --> User : Render the active layout in the same SPA
+  else WebGL unavailable
+    Viewer --> User : Explain why the scene cannot be displayed
+  end
+else No active configuration or request failed
+  opt API sent an error response
+    API --> Client : HTTP error
+  end
+  Client --> Request : ApiError
+  ref over Request, API : Protected error rule (SD3)
+  Request --> Adapter : Original ApiError
+  Adapter --> Viewer : ApiError
+  Viewer --> User : Explain failure; no embedded layout is substituted
+end
+@enduml

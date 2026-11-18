@@ -1,0 +1,413 @@
+@startuml class_diagram
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam linetype ortho
+left to right direction
+title BCK11 - Product Catalogue and Product Information 
+
+package "Presentation Layer (API)" as API {
+ class CatalogueRoutes {
+  - controller: CatalogueController
+  + setupRoutes(accessHandlers: Middleware[]): Router
+ }
+ class CatalogueController <<controller>> {
+  - service: CatalogueService
+  + list(req, res, next): Promise<void>
+  + getById(req, res, next): Promise<void>
+  - toHttpError(error: Error): Error
+ }
+ class "errorHandler" as ErrorHandler <<function>> {
+  + errorHandler(err, req, res, next): void
+ }
+ class AuthMiddleware <<middleware>> {
+  + verifyToken(req, res, next): Promise<void>
+ }
+ class RoleMiddleware <<middleware>> {
+  {static} + requireRole(...roles: string[]): Middleware
+ }
+}
+package "Shared Error Contract" as SHARED {
+ class AppError <<exception>> {
+  + status: int
+  + message: string
+  + constructor(message: string, status: int)
+ }
+}
+package "Application Layer" as APP {
+ class CatalogueService <<service>> {
+  - reader: ICatalogueReader
+  - policy: CataloguePolicy
+  - mapper: CatalogueResponseMapper
+  + list(): Promise<CatalogueProductDTO[]>
+  + getById(productId: ProductId): Promise<CatalogueProductDTO>
+ }
+ interface ICatalogueReader <<port>> {
+  + loadSellable(): Promise<CatalogueFacts>
+  + loadFor(productId: ProductId): Promise<CatalogueFacts>
+ }
+ class CatalogueNotFoundError <<exception>>
+ class CatalogueResponseMapper <<mapper>> {
+  + toDTO(entry: CatalogueEntry): CatalogueProductDTO
+ }
+ class CatalogueProductDTO <<dto>> {
+  + id: string
+  + name: string
+  + description: string
+  + available: boolean
+  + category: CategoryDTO
+  + price: MoneyDTO | null
+  + allergens: AllergenDTO[]
+  + pizza: PizzaDTO | null
+ }
+ class CategoryDTO <<dto>> {
+  + id: string
+  + name: string
+ }
+ class AllergenDTO <<dto>> {
+  + id: int
+  + name: string
+ }
+ class MoneyDTO <<dto>> {
+  + amount: string
+  + currency: string
+ }
+ class PizzaDTO <<dto>> {
+  + defaultComponents: ComponentDTO[]
+  + sizes: PizzaSizeDTO[]
+ }
+ class ComponentDTO <<dto>> {
+  + id: string
+  + name: string
+  + pizzaComponentTypeId: string
+ }
+ class PizzaSizeDTO <<dto>> {
+  + sizeId: string
+  + sizeName: string
+  + price: MoneyDTO
+  + available: boolean
+ }
+}
+package "Domain Layer" as DOMAIN {
+ class CataloguePolicy <<domain service>> {
+  + evaluate(product: Product, facts: CatalogueFacts): CatalogueEntry | null
+  - evaluatePizza(product: Product, pizza: PredefinedPizza, facts: CatalogueFacts): CatalogueEntry
+  - evaluateSize(components: Product[], size: PizzaSize, facts: CatalogueFacts): PizzaSizeOffer | null
+ }
+ class CatalogueFacts <<snapshot>> {
+  - roots: Product[]
+  - products: Map<string, Product>
+  - categories: Map<string, ProductCategory>
+  - allergens: Map<int, Allergen>
+  - pizzas: Map<string, PredefinedPizza>
+  - configurations: ComponentSizeConfiguration[]
+  - currentStock: Map<string, StockInformation>
+  - sizes: PizzaSize[]
+  + getRoots(): Product[]
+  + getPizza(productId: ProductId): PredefinedPizza | null
+  + resolveComponents(configuration: PizzaConfiguration): Product[]
+  + getCategory(categoryId: CategoryId): ProductCategory | null
+  + getAllergens(allergenIds: AllergenId[]): Allergen[]
+  + getSizes(): PizzaSize[]
+  + getConfiguration(productId: ProductId, size: PizzaSizeId): ComponentSizeConfiguration | null
+  + getCurrentStock(productId: ProductId): StockInformation | null
+ }
+ class CatalogueEntry <<vo>> {
+  + product: Product {readOnly}
+  + available: boolean {readOnly}
+  + category: ProductCategory {readOnly}
+  + allergens: Allergen[] {readOnly}
+  + components: Product[] {readOnly}
+  + sizes: PizzaSizeOffer[] {readOnly}
+  + isPizza: boolean {readOnly}
+ }
+ class PizzaSizeOffer <<vo>> {
+  + sizeId: PizzaSizeId {readOnly}
+  + sizeName: string {readOnly}
+  + price: Money {readOnly}
+  + available: boolean {readOnly}
+ }
+ class InvalidCatalogueData <<exception>>
+ package "Related domains" {
+  class Product <<entity>> <<aggregateRoot>> {
+   - id: ProductId
+   - name: ProductName
+   - description: ProductDescription
+   - categoryId: CategoryId
+   - isSellable: boolean
+   - isPizzaComponent: boolean
+   - isStockControlled: boolean
+   - pizzaComponentTypeId: ComponentTypeId | null
+   - allergenIds: AllergenId[]
+   - pricingMode: PricingMode | null
+   - basePrice: Money | null
+   - isActive: boolean
+   + getId(): ProductId
+   + getName(): ProductName
+   + getDescription(): ProductDescription
+   + getCategoryId(): CategoryId
+   + getAllergenIds(): AllergenId[]
+   + getBasePrice(): Money | null
+   + getPricingMode(): PricingMode | null
+   + getPizzaComponentTypeId(): ComponentTypeId | null
+   + isSellable(): boolean
+   + isPizzaComponent(): boolean
+   + isActive(): boolean
+   + isStockControlled(): boolean
+  }
+  enum PricingMode {
+   FIXED
+   COMPONENT_BASED
+  }
+  class ProductId <<vo>> {
+   - value: string
+   {static} + create(value: string): ProductId
+   + getValue(): string
+  }
+  class ProductName <<vo>> {
+   - name: string
+   + getValue(): string
+  }
+  class ProductDescription <<vo>> {
+   - text: string
+   + getValue(): string
+  }
+  class Money <<vo>> {
+   - cents: int
+   - currency: string
+   {static} + create(amount: number, currency?: string): Money
+   {static} + sum(values: Money[]): Money {proposed}
+   + getAmount(): number
+   + getCurrency(): string
+   + equals(other: Money): boolean
+  }
+  class ProductCategory <<entity>> <<aggregateRoot>> {
+   - id: CategoryId
+   - name: CategoryName
+   + getId(): CategoryId
+   + getName(): CategoryName
+  }
+  class Allergen <<entity>> <<aggregateRoot>> {
+   - id: AllergenId
+   - name: AllergenName
+   + getId(): AllergenId
+   + getName(): AllergenName
+  }
+  class CategoryId <<vo>>
+  class CategoryName <<vo>> {
+   + getValue(): string
+  }
+  class AllergenId <<vo>>
+  class AllergenName <<vo>> {
+   + getValue(): string
+  }
+  class ComponentTypeId <<vo>>
+  class PredefinedPizza <<entity>> <<aggregateRoot>> {
+   - id: PredefinedPizzaId
+   - productId: string
+   - configuration: PizzaConfiguration
+   + getId(): PredefinedPizzaId
+   + getProductId(): string
+   + getConfiguration(): PizzaConfiguration
+  }
+  class PredefinedPizzaId <<vo>> {
+   + getValue(): string
+  }
+  class PizzaConfiguration <<vo>> {
+   - componentIds: List<string>
+   + getComponentIds(): string[]
+  }
+  class PizzaSize <<entity>> <<aggregateRoot>> {
+   - id: PizzaSizeId
+   - name: PizzaSizeName
+   - active: boolean
+   + getId(): PizzaSizeId
+   + getName(): string
+   + isActive(): boolean
+  }
+  class PizzaSizeId <<vo>> {
+   - id: string
+   + getValue(): string
+  }
+  class PizzaSizeName <<vo>> {
+   - name: string
+  }
+  class ComponentSizeConfiguration <<entity>> <<aggregateRoot>> {
+   - productId: ProductId
+   - sizeId: PizzaSizeId
+   - price: Money
+   - consumption: StockUnitsConsumed | null
+   + getPrice(): Money
+   + getStockUnitsConsumed(): StockUnitsConsumed | null
+  }
+  class StockUnitsConsumed <<vo>> {
+   - units: int
+   + getUnits(): int
+  }
+  class StockInformation <<entity>> <<aggregateRoot>> {
+   - productId: ProductId
+   - quantity: AbstractStockQuantity
+   - trackingStatus: TrackingStatus
+   + getAvailableUnits(): int
+   + getTrackingStatus(): TrackingStatus
+   + isCurrent(): boolean
+  }
+  class AbstractStockQuantity <<vo>> {
+   - availableUnits: int
+  }
+  enum TrackingStatus {
+   CURRENT
+   HISTORICAL
+  }
+ }
+}
+package "Infrastructure Layer" as INFRA {
+ class PostgresCatalogueReader <<adapter>> {
+  - database: Database
+  - mapper: CataloguePersistenceMapper
+  + loadSellable(): Promise<CatalogueFacts>
+  + loadFor(productId: ProductId): Promise<CatalogueFacts>
+ }
+ class CataloguePersistenceMapper <<mapper>> {
+  + toFacts(rows: Record[]): CatalogueFacts
+ }
+ class Database <<facade>> {
+  + query(text: string, values: unknown[]): Promise<QueryResult>
+ }
+
+}
+package "Composition Root" {
+ class CatalogueModule <<factory>> {
+  + createCatalogueModule(database: Database, accessHandlers: Middleware[]): Router
+ }
+}
+CatalogueRoutes --> CatalogueController
+CatalogueRoutes ..> AuthMiddleware : conditional access handlers
+CatalogueRoutes ..> RoleMiddleware : only if approved access policy needs roles
+CatalogueController --> CatalogueService
+CatalogueController ..> ProductId
+CatalogueController ..> AppError : maps not-found and forwards 400
+CatalogueController ..> CatalogueNotFoundError
+CatalogueController ..> ErrorHandler : next(error)
+ProductId ..> AppError : invalid value throws status 400
+CatalogueService --> ICatalogueReader
+CatalogueService --> CataloguePolicy
+CatalogueService --> CatalogueResponseMapper
+CatalogueService ..> CatalogueNotFoundError
+ICatalogueReader ..> CatalogueFacts
+CatalogueResponseMapper ..> CatalogueEntry
+CatalogueResponseMapper ..> CatalogueProductDTO
+CatalogueProductDTO "1" *-- "1" CategoryDTO
+CatalogueProductDTO "1" *-- "0..1" MoneyDTO : ordinary price
+CatalogueProductDTO "1" *-- "0..*" AllergenDTO
+CatalogueProductDTO "1" *-- "0..1" PizzaDTO
+PizzaDTO "1" *-- "0..*" ComponentDTO
+PizzaDTO "1" *-- "0..*" PizzaSizeDTO
+PizzaSizeDTO "1" *-- "1" MoneyDTO
+CataloguePolicy ..> CatalogueFacts
+CataloguePolicy ..> CatalogueEntry
+CataloguePolicy ..> PizzaSizeOffer
+CataloguePolicy ..> Product
+CataloguePolicy ..> Money
+CataloguePolicy ..> Money : reads component price
+CataloguePolicy ..> PricingMode
+CataloguePolicy ..> StockInformation : reads current quantity
+CataloguePolicy ..> ComponentSizeConfiguration
+CataloguePolicy ..> StockUnitsConsumed
+CataloguePolicy ..> InvalidCatalogueData
+CatalogueFacts "1" --> "0..*" Product : references
+CatalogueFacts "1" --> "0..*" ProductCategory : loads category names
+CatalogueFacts "1" --> "0..*" Allergen : loads allergen names
+CatalogueFacts "1" --> "0..*" PredefinedPizza
+CatalogueFacts "1" --> "0..*" ComponentSizeConfiguration
+CatalogueFacts "1" --> "0..*" StockInformation
+CatalogueEntry --> Product
+CatalogueEntry "1" *-- "0..*" PizzaSizeOffer
+Product "1" *-- "1" ProductId
+Product "1" *-- "1" ProductName
+Product "1" *-- "1" ProductDescription
+Product "1" *-- "0..1" Money : direct selling price
+Product "1" *-- "1" CategoryId : stores category ID
+Product "1" *-- "0..*" AllergenId : stores allergen IDs
+ProductCategory "1" *-- "1" CategoryId
+ProductCategory "1" *-- "1" CategoryName
+Allergen "1" *-- "1" AllergenId
+Allergen "1" *-- "1" AllergenName
+PredefinedPizza "0..1" --> "1" Product : represented by productId string
+PredefinedPizza "1" *-- "1" PizzaConfiguration
+ComponentSizeConfiguration "0..*" --> "1" Product : identity reference
+ComponentSizeConfiguration "0..*" --> "1" PizzaSize : identity reference
+PizzaSize "1" *-- "1" PizzaSizeId
+PizzaSize "1" *-- "1" PizzaSizeName
+CatalogueFacts "1" --> "0..*" PizzaSize : references
+ComponentSizeConfiguration "1" *-- "1" Money
+ComponentSizeConfiguration "1" *-- "0..1" StockUnitsConsumed
+StockInformation "0..1" --> "1" Product : identity reference
+StockInformation "1" *-- "1" AbstractStockQuantity
+StockInformation ..> TrackingStatus
+PostgresCatalogueReader ..|> ICatalogueReader
+PostgresCatalogueReader --> Database
+PostgresCatalogueReader --> CataloguePersistenceMapper
+CataloguePersistenceMapper ..> CatalogueFacts
+CataloguePersistenceMapper ..> Product : owning-domain factories
+CatalogueModule ..> PostgresCatalogueReader : constructs and injects
+CatalogueModule ..> CataloguePersistenceMapper
+CatalogueModule ..> CataloguePolicy
+CatalogueModule ..> CatalogueResponseMapper
+CatalogueModule ..> CatalogueService : injects port implementation
+CatalogueModule ..> CatalogueController
+CatalogueModule ..> CatalogueRoutes
+note bottom of CataloguePolicy
+ evaluate returns null only for a non-sellable Product; inactive sellable Products remain visible.
+ Product.pricingMode selects fixed base price or component-based pizza pricing.
+ COMPONENT_BASED without an associated PredefinedPizza => InvalidCatalogueData.
+ evaluatePizza derives allergens from resolved default components.
+ evaluateSize returns null for a structurally unsupported size.
+ Inactive Products/sizes are retained and marked unavailable.
+ Check each controlled component against CURRENT stock only.
+ Missing controlled stock / invalid persisted facts => InvalidCatalogueData.
+ This is a domain service, not a new Catalogue aggregate.
+end note
+note bottom of ICatalogueReader
+ Application query port, not a replacement for owning-domain repositories.
+ Each call loads roots and their full dependency closure in one SQL statement.
+ Load all sellable Products regardless of active status, plus category/allergen records.
+ Load only CURRENT stock records; inactive sellable Products remain roots.
+ loadFor returns an empty roots array only for an absent or non-sellable id.
+ Raw SQL rows and pg types never cross this boundary.
+end note
+note bottom of ComponentSizeConfiguration
+ (ProductId, PizzaSizeId) identifies at most one configuration.
+ Controlled component: integer consumption >= 0 is mandatory.
+ Non-controlled component: consumption is absent (null).
+ Price is BCK08 Money (EUR decimal string); no fallback price/consumption.
+end note
+note bottom of PizzaSize
+ Sizes have string IDs, names and active status; no fixed S/M/L enum.
+ Include configured inactive sizes with available=false.
+ Missing component-size configuration still makes a size structurally unsupported.
+end note
+note bottom of StockInformation
+ getAvailableUnits() reuses the BCK09 read contract.
+ Use only records where getTrackingStatus() == CURRENT.
+ For pizzas compare availableUnits >= configured consumption per size.
+ For ordinary stock-controlled Products, zero current units means unavailable.
+ No stock increase/decrease is performed by catalogue consultation.
+end note
+note bottom of Product
+ Product stores categoryId and allergenIds; CatalogueFacts resolves their names.
+ getName() returns ProductName; pizzaComponentTypeId is the actual field name.
+ isSellable() controls catalogue membership; isActive() affects availability only.
+ pricingMode is an existing BCK05 Product attribute; Money.sum is a proposed addition.
+ ProductId.create() throws the existing AppError (400) for invalid IDs.
+ Aggregate factories enforce owning-domain invariants on reconstitution.
+end note
+legend bottom
+ All BCK11 components are proposed; no story implementation is provided.
+ Domain depends on no outer layer. DTOs are passive application data.
+ Configurable named PizzaSize follows the supplied domain model.
+ Component-size pairs identify at most one configuration.
+ Optional consumption follows the current global domain model.
+ Auth policy remains unresolved; no default anonymous/customer-only policy is asserted.
+endlegend
+@enduml

@@ -1,0 +1,121 @@
+@startuml sequence_diagram_provision_stock
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - Start Stock Tracking for a Product
+
+actor Manager
+participant Routes as "StockRoutes"
+participant Auth as "AuthMiddleware"
+participant Roles as "RoleMiddleware"
+participant Validator as "ValidationMiddleware"
+participant Controller as "StockController"
+participant Service as "StockManagementService"
+participant UoW as "IUnitOfWork"
+participant ProductReader as "IProductReader (BCK05 adapter)"
+participant Repository as "IStockRepository"
+participant Aggregate as "StockInformation"
+database DB as "PostgreSQL"
+
+Manager -> Routes : POST /api/v1/stock\n{ productId, initialUnits? }
+activate Routes
+Routes -> Auth : verifyToken(req, res, next)
+activate Auth
+Auth --> Routes : identity established
+deactivate Auth
+Routes -> Roles : requireRole(MANAGER)
+activate Roles
+Roles --> Routes : authorized
+deactivate Roles
+Routes -> Validator : validate Product ID and optional non-negative integer
+activate Validator
+Validator --> Routes : next()
+deactivate Validator
+Routes -> Controller : startTracking(req, res)
+activate Controller
+Controller -> Service : startTracking(dto)
+activate Service
+Service -> UoW : withTransaction(work)
+activate UoW
+UoW -> DB : BEGIN
+DB --> UoW : transaction started
+UoW -> Service : execute work(tx)
+Service -> ProductReader : getByIdForUpdate(productId, tx)
+activate ProductReader
+ProductReader -> DB : SELECT Product FOR UPDATE
+DB --> ProductReader : Product identity, name, active state / none
+ProductReader --> Service : ProductStockStatus / null
+deactivate ProductReader
+
+alt Product does not exist
+    Service --> UoW : throw NotFound
+    UoW -> DB : ROLLBACK
+    DB --> UoW : rolled back
+    UoW --> Service : rethrow error
+    Service --> Controller : error
+    Controller --> Manager : 404 Not Found
+else Product exists
+    Service -> Repository : findCurrentByProductIdForUpdate(productId, tx)
+    activate Repository
+    Repository -> DB : SELECT stock row WHERE ended_at IS NULL FOR UPDATE
+    DB --> Repository : current StockInformation / none
+    Repository --> Service : current record / null
+    deactivate Repository
+    alt Current tracking period already exists
+        Service --> UoW : throw Conflict
+        UoW -> DB : ROLLBACK
+        DB --> UoW : rolled back
+        UoW --> Service : rethrow error
+        Service --> Controller : error
+        Controller --> Manager : 409 Conflict
+    else No current tracking period
+        Service -> Repository : nextId(tx)
+        activate Repository
+        Repository -> DB : SELECT nextval(stock_information_id_seq)
+        DB --> Repository : sequence value
+        Repository --> Service : StockId
+        deactivate Repository
+        Service -> Aggregate : startTracking(stockId, productId, initialUnits ?? 0, nowUtc)
+        activate Aggregate
+        Aggregate --> Service : StockInformation(startedAt=nowUtc, endedAt=null)
+        deactivate Aggregate
+        Service -> Repository : insert(stock, tx)
+        activate Repository
+        Repository -> DB : INSERT stock_information(..., started_at=nowUtc, ended_at=NULL)
+        DB --> Repository : inserted row
+        Repository --> Service : saved
+        deactivate Repository
+        Service --> UoW : StockResponseDTO
+        UoW -> DB : COMMIT
+        DB --> UoW : committed
+        UoW --> Service : result
+        Service --> Controller : StockResponseDTO
+        Controller --> Manager : 201 Created
+    end
+end
+
+deactivate UoW
+deactivate Service
+deactivate Controller
+deactivate Routes
+
+note over ProductReader,Repository
+  Product has no isStockControlled attribute. A StockInformation
+  record with endedAt=null represents active tracking for the
+  Product. Product creation and
+  stock tracking are separate operations; BCK09 verifies the
+  Product exists but does not modify the Product aggregate.
+  An inactive Product may still be administered by the Manager.
+end note
+
+note over Service,Aggregate
+  The Manager may provide initialUnits. It must be a
+  non-negative integer; if omitted, the initial quantity is 0.
+  Each new tracking period receives a new StockId and startedAt.
+  All completed periods remain stored with their final quantity
+  and endedAt. Managers can search completed periods through
+  GET /api/v1/stock?historical=true.
+end note
+
+@enduml

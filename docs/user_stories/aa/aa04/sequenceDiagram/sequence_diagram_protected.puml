@@ -1,0 +1,100 @@
+@startuml sequence_diagram_protected
+skinparam shadowing true
+autonumber
+title AA04 - Protected Operations
+actor "System User" as User
+participant "apiClient" as Client
+participant "AuthProvider" as Provider
+participant "AuthMiddleware" as MW
+participant "UserService" as Users
+participant "JwtTokenService" as JWT
+participant "PostgresApplicationSessionRepository" as Sessions
+participant "UserRepository" as Accounts
+database PostgreSQL as DB
+participant "RoleMiddleware / feature" as Feature
+User -> Client: request(url, options)
+activate Client
+opt qualifying foreground interaction
+ Client -> Provider: recordActivity()
+ activate Provider
+ Provider --> Client: activity recorded
+ deactivate Provider
+end
+Client -> Provider: getRequestContext()
+activate Provider
+Provider --> Client: token, generation
+deactivate Provider
+Client -> MW: request + Authorization header
+activate MW
+MW -> Users: resolveActor(token)
+activate Users
+Users -> JWT: verifyToken(token)
+activate JWT
+JWT --> Users: claims or error
+deactivate JWT
+alt invalid or expired JWT
+ Users -> Users: reject (401)
+else valid JWT
+ Users -> Sessions: findActiveById(sid, sub)
+ activate Sessions
+ Sessions -> DB: SELECT active session before idle deadline
+ activate DB
+ DB --> Sessions: record / null / error
+ deactivate DB
+ Sessions --> Users: result
+ deactivate Sessions
+ alt missing, ended or idle-expired session
+  Users -> Users: reject (401)
+ else database failure
+  Users -> Users: fail closed (500)
+ else active session
+  Users -> Accounts: findById(UserId.create(sub))
+  activate Accounts
+  Accounts -> DB: SELECT current User
+  activate DB
+  DB --> Accounts: row / null / error
+  deactivate DB
+  Accounts --> Users: User / null / error
+  deactivate Accounts
+  Users -> Users: check active account; build Actor from current User
+ end
+end
+Users --> MW: Actor / 401 / 500
+deactivate Users
+opt authenticated
+ MW -> Feature: current role/ownership checks
+ activate Feature
+ Feature --> MW: success / 403 / operation error
+ deactivate Feature
+end
+MW --> Client: response (no-store)
+deactivate MW
+alt stale generation
+ Client -> Client: discard response
+else 401 with recent qualifying activity
+ Client -> Provider: renewIfNeeded()
+ activate Provider
+ Provider --> Client: renewed or error
+ deactivate Provider
+ opt renewal succeeded
+  Client -> MW: retry rejected request once with new JWT
+  activate MW
+  MW --> Client: result through the same validation pipeline
+  deactivate MW
+ end
+else 401 without qualifying activity
+ Client -> Provider: check remaining monotonic idle budget
+ activate Provider
+ alt credential and idle budget remain valid
+  Provider --> Client: wait for genuine interaction; no renewal
+ else session ended
+  Provider -> Provider: handleIdleExpiry(); clearProtectedState()
+  Provider --> Client: status=anonymous
+ end
+ deactivate Provider
+else 403 / 500 / network failure
+ Client -> Client: show denied/unavailable feedback; no forced logout
+end
+Client --> User: authorized data or protected content hidden
+deactivate Client
+@enduml

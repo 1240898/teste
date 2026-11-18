@@ -1,0 +1,50 @@
+@startuml
+title SYS01 - Recovery to a previously working release
+
+actor Operator
+participant "Deployment workflow (deploy.yml)" as Workflow
+database "Runner PostgreSQL 18\n(ephemeral / isolated)" as RunnerDB
+participant "Requested retained API image" as OldAPI
+participant "GitHub artifacts" as Artifacts
+participant "VM release manifest" as Metadata
+participant "DEI VM deploy script" as Deploy
+participant "Versioned runtime configuration" as Config
+participant "Nginx" as Nginx
+database "Shared DEI PostgreSQL 18" as DEIDB
+
+Operator -> Workflow: Dispatch rollback with release SHA
+Workflow -> Workflow: Wait in shared `dei-release` queue
+Workflow -> Workflow: Acquire queue slot; validate operation and SHA
+Workflow -> Metadata: Read release image IDs, config and current migration version
+Metadata --> Workflow: Return requested release and active schema metadata
+Workflow -> RunnerDB: Create scratch DB at active schema version
+Workflow -> OldAPI: Run compatibility suite against current schema version
+
+alt Requested version is incompatible or release is unretained
+  OldAPI --> Workflow: Compatibility/manifest check fails
+  Workflow -> Artifacts: Archive sanitized rejection evidence
+  Workflow --> Operator: Reject before SSH; VM remains unchanged
+else Compatibility passes
+  OldAPI --> Workflow: Prior-version reads/writes pass on scratch DB
+  Workflow -> Deploy: Verify SSH host key; restore retained release
+  Deploy -> Metadata: Recheck manifest and active schema version under VM lock
+  Metadata --> Deploy: Release remains eligible
+  Deploy -> Config: Select configuration revision paired with release
+  Config --> Deploy: Provide selected configuration
+  Deploy -> Nginx: Activate requested images and routing
+  OldAPI -> DEIDB: Previous API connects to shared database
+  DEIDB --> OldAPI: Connection succeeds
+  Nginx --> Deploy: HTTPS, API and SPA smoke checks pass
+  Deploy -> Metadata: Record restored active SHA and recovery run ID
+  Deploy --> Workflow: Recovery verified
+  Workflow -> Artifacts: Archive sanitized recovery logs and manifest
+  Workflow --> Operator: Rollback successful; release queue slot released
+end
+
+note over Workflow,DEIDB
+  Rollback does not rebuild images or modify/restore the shared database.
+  The requested version must pass compatibility against the current schema
+  in an isolated scratch database before the VM is changed. The concurrency
+  slot remains held through verification, activation and archival.
+end note
+@enduml

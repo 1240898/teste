@@ -1,0 +1,300 @@
+@startuml class_diagram
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam linetype ortho
+
+title Class Diagram (Design) - AA05 Authorization Enforcement
+
+package "Front-End (SPA)" <<Rectangle>> {
+ class ProtectedRoute <<route guard>> <<shared>> {
+  + requiredRoles: UserRole[]
+  + checkAccess(): boolean
+  + suspendProtectedView(): void
+  + restorePage(url: string): Promise<void>
+ }
+ note right of ProtectedRoute
+  AA04 provides the session state; AA05 adds role checks for navigation.
+  Without a session, follow the AA04 login flow. A missing role or API 403
+  renders AccessDeniedPage without protected content.
+  The API remains authoritative (WEB03).
+ end note
+ class AccessDeniedPage <<page>> {
+  + message: string
+  + render(): ReactNode
+ }
+ class SecurityAuditPage <<page>> {
+  + filters: AuditLogFilters
+  + loadEvents(): Promise<SecurityAuditSearchResult>
+ }
+ class AuthContext <<context>> <<shared>> {
+  + user: UserResponseDTO | null
+  + status: string
+ }
+ class apiClient <<HTTP client>> <<shared>> {
+  + request(url: string, options: object): Promise<object>
+ }
+}
+
+package "Presentation Layer (API)" <<Rectangle>> {
+ class FeatureRoutes <<router>> <<shared>> {
+  + setupRoutes(): Router
+ }
+ class SecurityAuditRoutes <<router>> {
+  + setupRoutes(): Router
+ }
+ note right of FeatureRoutes
+  Each feature router applies audit logging, authentication,
+  rolesFor(operationId), and ownership checks where required.
+ end note
+ class AuthMiddleware <<middleware>> <<shared>> {
+  + verifyToken(req: Request, res: Response, next: NextFunction): Promise<void>
+ }
+ class RoleMiddleware <<middleware>> <<shared>> {
+  {static} + requireOperation(operationId: string): Middleware
+ }
+ enum ReferenceSource <<shared>> {
+  params
+  query
+  body
+ }
+ class OwnershipMiddleware <<middleware>> {
+  - resolver: IOwnershipResolver
+  + requireOwnership(operationId: string, source: ReferenceSource, field: string): Middleware
+ }
+ note bottom of OwnershipMiddleware
+  Enforces AC 4 for owner-scoped operations across params, query, or body,
+  as determined by AuthorizationPolicy. It marks an ownership denial and returns
+  404 for a non-owner or missing owner-scoped resource. AuthorizationAuditMiddleware
+  records the completed response once.
+ end note
+ class AuthorizationAuditMiddleware <<middleware>> {
+  - securityLogger: ISecurityLogger
+  + auditDenials(req: Request, res: Response, next: NextFunction): Promise<void>
+ }
+ note bottom of AuthorizationAuditMiddleware
+  Records completed 401 and 403 responses and marked ownership 404 responses
+  as UNAUTHENTICATED, FORBIDDEN or OWNERSHIP_DENIED (AC 5).
+  Awaits persistence asynchronously via try/catch.
+ end note
+ class SecurityAuditController <<controller>> {
+  + search(req: Request, res: Response): Promise<void>
+ }
+ note right of SecurityAuditController
+  GET /api/v1/security-audit-logs; ADMINISTRATOR only.
+  Filters are validated; limit defaults to 50 and is capped at 100.
+  Response: items, total, limit, offset.
+ end note
+}
+
+package "Application Layer" <<Rectangle>> {
+ class AuthorizationPolicy <<policy>> {
+  {static} + rolesFor(operationId: string): UserRole[]
+  {static} + requiresOwnership(operationId: string, actorRoles: UserRole[]): boolean
+ }
+ note right of AuthorizationPolicy
+  Defines allowed roles and ownership exemptions per operation.
+  Unlisted operations are denied by default.
+  For multi-role users, an operation is authorized if any of the actor's
+  roles is allowed, while strict data ownership and confidentiality constraints
+  still apply per operation (e.g., EMPLOYEE + CUSTOMER does not bypass
+  ownership on customer data). The API makes the effective decision.
+ end note
+ class OperationPolicyEntry <<internal record>> {
+  + operationId: string
+  + allowedRoles: UserRole[]
+  + ownerScoped: boolean
+  + ownershipExemptRoles: UserRole[]
+ }
+ class SecurityAuditService <<application service>> {
+  + search(criteria: AuditLogFilters): Promise<SecurityAuditSearchResult>
+ }
+ interface ISecurityAuditRepository <<repository port>> {
+  + save(event: SecurityEvent): Promise<void>
+  + search(criteria: AuditLogFilters): Promise<SecurityAuditSearchResult>
+ }
+ class AuditLogFilters <<query>> {
+  + limit: number
+  + offset: number
+  + outcome: SecurityOutcome | null
+  + actorId: string | null
+  + from: string | null
+  + to: string | null
+  + statusCode: number | null
+  + method: string | null
+  + routeTemplate: string | null
+ }
+ class SecurityAuditSearchResult <<DTO>> {
+  + items: SecurityEvent[]
+  + total: number
+  + limit: number
+  + offset: number
+ }
+ interface IOwnershipResolver <<application port>> {
+  + isOwner(actor: Actor, resourceId: string): Promise<boolean>
+ }
+ class CustomerOwnershipResolver <<ownership adapter>> {
+  - customers: ICustomerRepository
+  + isOwner(actor: Actor, resourceId: string): Promise<boolean>
+ }
+ note right of CustomerOwnershipResolver
+  Finds the Customer linked to actor.sub and compares its ID with the
+  requested resource. No linked Customer or a different ID means not owner.
+ end note
+ interface ISecurityLogger <<security port>> {
+  + record(event: SecurityEvent): Promise<void>
+ }
+ note bottom of ISecurityLogger
+  Audits denied attempts (AC 5); events exclude passwords, tokens,
+  session credentials, cookies, Authorization headers and request bodies.
+ end note
+ class SecurityEvent <<internal record>> {
+  + timestamp: string
+  + outcome: SecurityOutcome
+  + method: string
+  + routeTemplate: string
+  + statusCode: number
+  + actorId: string | null
+  + actorRoles: UserRole[]
+  + requestId: string
+  + reasonCode: SecurityReasonCode
+ }
+ note right of SecurityEvent
+  Stores the route pattern, not the concrete URL or query string.
+  Client IP is omitted by default; any change requires a privacy decision.
+ end note
+ enum SecurityOutcome {
+  UNAUTHENTICATED
+  FORBIDDEN
+  OWNERSHIP_DENIED
+ }
+ enum SecurityReasonCode {
+  MISSING_OR_INVALID_TOKEN
+  ROLE_NOT_ALLOWED
+  RESOURCE_NOT_OWNED_OR_NOT_FOUND
+ }
+ class UserService <<application service>> <<shared>> {
+  + resolveActor(token: string): Promise<Actor>
+ }
+ class Actor <<internal record>> <<shared>> {
+  + sub: string
+  + email: string
+  + roles: UserRole[]
+ }
+ class UserResponseDTO <<DTO>> <<shared>> {
+  + roles: UserRole[]
+ }
+ interface ICustomerRepository <<repository>> <<shared>> {
+  + findByUserId(userId: string): Promise<Customer | null>
+ }
+}
+
+package "Domain Layer" <<Rectangle>> {
+ class User <<entity>> <<aggregateRoot>> <<shared>> {
+  + getId(): UserId
+  + getRoles(): UserRole[]
+  + isActive(): boolean
+ }
+ enum UserRole <<shared>> {
+  ADMINISTRATOR
+  MANAGER
+  EMPLOYEE
+  CUSTOMER
+ }
+ 
+ class UserId <<value object>> <<shared>> {
+  + getValue(): string
+ }
+ class Customer <<entity>> <<aggregateRoot>> <<shared>> {
+  + id: CustomerId
+ }
+ class CustomerId <<value object>> <<shared>> {
+  + getValue(): string
+ }
+ User "1" *-- "1" UserId
+ Customer "1" *-- "1" CustomerId
+ User "1" --> "0..*" UserRole : assigned >
+}
+
+package "Infrastructure Layer" <<Rectangle>> {
+ class SecurityAuditLogger <<security adapter>> {
+  - repository: ISecurityAuditRepository
+  + record(event: SecurityEvent): Promise<void>
+ }
+ note bottom of SecurityAuditLogger
+  Writes privacy-safe application security events. A transient write failure
+  is retried once; a repeated failure is reported through protected operational
+  logging/alerting with requestId and does not change the original denial.
+  Reading events is restricted to ADMINISTRATOR by route and policy.
+ end note
+ class PostgresSecurityAuditRepository <<repository adapter>> {
+  + save(event: SecurityEvent): Promise<void>
+  + search(criteria: AuditLogFilters): Promise<SecurityAuditSearchResult>
+ }
+ note right of PostgresSecurityAuditRepository
+  Table security_audit_logs: primary key id; required timestamp,
+  request_id, method, route_template, outcome, reason_code and status_code;
+  actor_id nullable, actor_roles empty for unauthenticated requests.
+  Constrain outcomes, reason codes and matching denial status codes. Index timestamp,
+  (actor_id, timestamp) and (outcome, timestamp).
+  Retention is configurable and purged after an approved period;
+  no indefinite retention.
+ end note
+ class CustomerRepository <<repository implementation>> <<shared>> {
+  + findByUserId(userId: string): Promise<Customer | null>
+ }
+}
+
+FeatureRoutes ..> AuthorizationAuditMiddleware
+FeatureRoutes ..> AuthMiddleware
+FeatureRoutes ..> RoleMiddleware
+FeatureRoutes ..> OwnershipMiddleware
+FeatureRoutes ..> AuthorizationPolicy
+SecurityAuditRoutes --> AuthMiddleware
+SecurityAuditRoutes --> RoleMiddleware
+SecurityAuditRoutes --> SecurityAuditController
+AuthMiddleware --> UserService
+UserService ..> Actor
+RoleMiddleware ..> Actor
+RoleMiddleware ..> UserRole
+RoleMiddleware ..> AuthorizationPolicy : queries allowed roles
+OwnershipMiddleware --> IOwnershipResolver
+OwnershipMiddleware ..> Actor
+OwnershipMiddleware ..> AuthorizationPolicy : asks if ownership applies
+OwnershipMiddleware ..> ReferenceSource
+AuthorizationAuditMiddleware --> ISecurityLogger
+AuthorizationAuditMiddleware ..> SecurityEvent
+SecurityAuditController --> SecurityAuditService
+SecurityAuditService --> ISecurityAuditRepository
+SecurityAuditRoutes ..> AuthorizationPolicy : requires securityAudit.read
+SecurityAuditPage --> apiClient
+SecurityAuditPage ..> SecurityEvent
+SecurityAuditPage ..> ProtectedRoute : proposed ADMINISTRATOR policy (D5)
+ISecurityAuditRepository ..> SecurityEvent
+ISecurityAuditRepository ..> AuditLogFilters
+ISecurityAuditRepository ..> SecurityAuditSearchResult
+SecurityAuditLogger --> ISecurityAuditRepository
+PostgresSecurityAuditRepository ..|> ISecurityAuditRepository
+PostgresSecurityAuditRepository ..> DB
+AuthorizationPolicy "1" *-- "*" OperationPolicyEntry
+OperationPolicyEntry ..> UserRole
+CustomerOwnershipResolver ..|> IOwnershipResolver
+CustomerOwnershipResolver --> ICustomerRepository
+CustomerOwnershipResolver ..> Actor
+ICustomerRepository ..> Customer
+CustomerRepository ..|> ICustomerRepository
+Customer "0..1" --> "0..1" User : may be associated with >
+ISecurityLogger ..> SecurityEvent
+SecurityEvent --> SecurityOutcome
+SecurityEvent ..> SecurityReasonCode
+SecurityEvent ..> UserRole
+SecurityAuditLogger ..|> ISecurityLogger
+Actor ..> UserRole
+UserResponseDTO ..> UserRole
+ProtectedRoute --> AuthContext
+ProtectedRoute --> apiClient
+ProtectedRoute ..> AccessDeniedPage : renders when denied
+ProtectedRoute ..> UserRole
+AuthContext --> UserResponseDTO
+apiClient ..> AuthMiddleware : protected requests
+@enduml

@@ -1,0 +1,70 @@
+@startuml sequence_diagram_catalogue_consultation
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - WEB05 Sellable Catalogue Consultation
+
+actor User as "Guest / Customer"
+participant Page as "CatalogueViewerPage\n(WEB05)"
+participant API as "catalogueApi\n(WEB01 adapter)"
+participant Req as "ModuleRequest\n(WEB01)"
+participant Client as "apiClient\n(WEB01)"
+participant Routes as "CatalogueRoutes\n(Back-End)"
+participant Ctrl as "CatalogueController"
+participant Svc as "CatalogueService"
+participant Reader as "ICatalogueReader\n(PostgresCatalogueReader)"
+participant Policy as "CataloguePolicy"
+participant Mapper as "CatalogueResponseMapper"
+
+note over User, Routes
+    WEB05 requires public read-only access to the sellable catalogue for Guests and signed-in users.
+    Endpoint: GET /api/v1/catalogue (relative to apiClient).
+    The request is public, requires no authentication token, and uses skipAuthFailureHandler: true.
+end note
+
+User -> Page : opens catalogue / applies filters (componentName)
+activate User
+activate Page
+Page -> API : list(filters, signal)
+activate API
+API -> Req : request("GET", "/catalogue", { query: filters, signal, skipAuthFailureHandler: true })
+activate Req
+Req -> Client : request("GET", "/catalogue", { query: filters, signal, skipAuthFailureHandler: true })
+activate Client
+Client -> Routes : HTTP GET /api/v1/catalogue?componentName=... (Public, no token)
+activate Routes
+
+Routes -> Ctrl : list(req, res, next)
+activate Ctrl
+Ctrl -> Svc : list(validatedQuery)
+activate Svc
+Svc -> Reader : loadSellable()
+activate Reader
+Reader --> Svc : CatalogueFacts
+deactivate Reader
+Svc -> Policy : evaluate sellable products and filters
+activate Policy
+Policy --> Svc : matching catalogue entries
+deactivate Policy
+Svc -> Mapper : toDTO(entries)
+activate Mapper
+Mapper --> Svc : CatalogueDTO[]
+deactivate Mapper
+Svc --> Ctrl : CatalogueDTO[]
+deactivate Svc
+Ctrl --> Routes : 200 OK (JSON array)
+deactivate Ctrl
+
+Routes --> Client : HTTP 200 OK
+deactivate Routes
+Client --> Req : resolves response
+deactivate Client
+Req --> API : returns catalogue data
+deactivate Req
+API --> Page : CatalogueDTO[]
+deactivate API
+Page --> User : displays catalogue and allergen information (BCK05 / ALN-1)
+deactivate Page
+deactivate User
+@enduml

@@ -1,0 +1,192 @@
+@startuml sequence_diagram_list_catalogue
+autonumber
+skinparam maxMessageSize 105
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+title BCK11 - Consult product catalogue
+actor Customer
+participant Routes as "CatalogueRoutes"
+participant Auth as "AuthMiddleware"
+participant Roles as "RoleMiddleware"
+participant Controller as "CatalogueController"
+participant Service as "CatalogueService"
+participant Reader as "reader : ICatalogueReader"
+participant PersistenceMapper as "CataloguePersistenceMapper"
+database DB as "PostgreSQL"
+participant Facts as "CatalogueFacts"
+participant Policy as "CataloguePolicy"
+participant Product as "Product"
+participant Money as "Money"
+participant BCK08Money as "Money"
+participant Stock as "StockInformation"
+participant Mapper as "CatalogueResponseMapper"
+participant Errors as "errorHandler"
+
+Customer -> Routes : GET /api/v1/catalogue
+activate Routes
+opt approved policy requires authentication
+ Routes -> Auth : verifyToken(req, res, next)
+ activate Auth
+ break missing / invalid credentials
+  Auth -> Errors : errorHandler(AppError(401), req, res, next)
+  Errors --> Customer : 401 standard JSON error
+ end
+ Auth --> Routes : next(); req.user established
+ deactivate Auth
+end
+opt approved policy additionally restricts roles
+ Routes -> Roles : requireRole(...approvedRoles)(req, res, next)
+ activate Roles
+ break authenticated role not permitted
+  Roles -> Errors : errorHandler(AppError(403), req, res, next)
+  Errors --> Customer : 403 standard JSON error
+ end
+ Roles --> Routes : next()
+ deactivate Roles
+end
+Routes -> Controller : list(req, res, next)
+activate Controller
+Controller -> Service : list()
+activate Service
+Service -> Reader : loadSellable()
+activate Reader
+Reader -> DB : query(parameterized SQL: all sellable roots + related facts; CURRENT stock only)
+activate DB
+break SQL / connection failure
+ DB --> Reader : error
+ Reader --> Service : rejected promise
+ Service --> Controller : error
+ Controller -> Errors : errorHandler(error, req, res, next)
+ Errors --> Customer : 500 generic JSON error
+end
+DB --> Reader : rows: sellable roots, categories, allergens, pizza data, sizes, configurations, CURRENT stock
+deactivate DB
+Reader -> PersistenceMapper : toFacts(rows)
+activate PersistenceMapper
+break mapping / persisted invariant failure
+ PersistenceMapper --> Reader : error
+ Reader --> Service : rejected promise
+ Service --> Controller : error
+ Controller -> Errors : errorHandler(error, req, res, next)
+ Errors --> Customer : 500 generic JSON error
+end
+PersistenceMapper --> Reader : CatalogueFacts
+deactivate PersistenceMapper
+Reader --> Service : facts
+deactivate Reader
+Service -> Facts : getRoots()
+activate Facts
+Facts --> Service : roots : Product[]
+deactivate Facts
+loop each sellable root (including inactive Products)
+ Service -> Policy : evaluate(product, facts)
+ activate Policy
+ Policy -> Product : isSellable(), getCategoryId(), getAllergenIds()
+ activate Product
+ Product --> Policy : sellable; categoryId; allergenIds
+ deactivate Product
+ Policy -> Facts : getCategory(categoryId), getAllergens(allergenIds)
+ activate Facts
+ Facts --> Policy : ProductCategory; Allergen[]
+ deactivate Facts
+ Policy -> Product : getPricingMode(), isActive(), isStockControlled()
+ activate Product
+ Product --> Policy : pricingMode; active; stockControlled
+ deactivate Product
+ alt pricingMode = FIXED
+  Policy -> Product : getBasePrice()
+  activate Product
+  Product --> Policy : basePrice : Money (BCK05)
+  deactivate Product
+  opt active and stockControlled
+   Policy -> Facts : getCurrentStock(productId)
+   activate Facts
+   Facts --> Policy : StockInformation (trackingStatus = CURRENT)
+   deactivate Facts
+   Policy -> Stock : getAvailableUnits()
+   activate Stock
+   Stock --> Policy : units : int
+   deactivate Stock
+   note right of Policy : available = units > 0; zero current units means unavailable.
+  end
+  note right of Policy : Inactive sellable Product stays in the catalogue with available=false.
+ else pricingMode = COMPONENT_BASED
+  Policy -> Facts : getPizza(product.getId())
+  activate Facts
+  Facts --> Policy : PredefinedPizza | null
+  deactivate Facts
+  break COMPONENT_BASED Product has no PredefinedPizza
+   Policy --> Service : InvalidCatalogueData
+   Service --> Controller : error
+   Controller -> Errors : errorHandler(error, req, res, next)
+   Errors --> Customer : 500 generic JSON error
+  end
+  Policy -> Facts : resolveComponents(pizza.getConfiguration())
+  activate Facts
+  Facts --> Policy : components : Product[]
+  deactivate Facts
+  Policy -> Facts : getSizes()
+  activate Facts
+  Facts --> Policy : all maintained Pizza Sizes
+  deactivate Facts
+  loop each size, including inactive sizes
+   Policy -> Policy : evaluateSize(components, size, facts)
+   activate Policy
+   loop each default component
+    Policy -> Facts : getConfiguration(componentId, sizeId)
+    activate Facts
+    Facts --> Policy : ComponentSizeConfiguration | null
+    deactivate Facts
+   end
+   alt a component-size configuration is missing
+    note right of Policy : Omit this structurally unsupported size.
+   else all component-size configurations exist
+    loop each configured component price
+     Policy -> BCK08Money : getAmount(), getCurrency()
+     activate BCK08Money
+     BCK08Money --> Policy : canonical decimal string, EUR
+     deactivate BCK08Money
+     Policy -> Money : create(amount, currency)
+     activate Money
+     Money --> Policy : normalized cents-backed Money
+     deactivate Money
+    end
+    Policy -> Money : sum(normalized component prices)
+    activate Money
+    Money --> Policy : per-size total
+    deactivate Money
+    loop each stock-controlled component
+     Policy -> Facts : getCurrentStock(componentId)
+     activate Facts
+     Facts --> Policy : StockInformation (trackingStatus = CURRENT)
+     deactivate Facts
+     Policy -> Stock : getAvailableUnits()
+     activate Stock
+     Stock --> Policy : availableUnits : int
+     deactivate Stock
+     note right of Policy : Compare units with this size's StockUnitsConsumed; any shortage makes this size unavailable.
+    end
+    note right of Policy : Size is unavailable if Product/size is inactive or any required stock is insufficient.
+   end
+   Policy --> Policy : PizzaSizeOffer | null
+   deactivate Policy
+  end
+  note right of Policy
+   Pizza available = Product is active and at least one included size is available.
+   Keep unavailable sizes with their price and available=false.
+   No stock is consumed or reserved.
+  end note
+ end
+ Policy --> Service : CatalogueEntry
+ deactivate Policy
+ Service -> Mapper : toDTO(entry)
+ activate Mapper
+ Mapper --> Service : CatalogueProductDTO
+ deactivate Mapper
+end
+Service --> Controller : CatalogueProductDTO[]
+deactivate Service
+Controller --> Customer : 200 OK\nCatalogueProductDTO[] (including [])
+deactivate Controller
+deactivate Routes
+@enduml

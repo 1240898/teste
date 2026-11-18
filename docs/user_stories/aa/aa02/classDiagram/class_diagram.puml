@@ -1,0 +1,382 @@
+@startuml class_diagram
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam linetype ortho
+
+title Class Diagram (Design) - AA02 External Identity Provider Integration (Google OIDC)
+
+' -----------------------------------------------------------------------------
+' FRONT-END (SPA) - only the AA02 touch points (SPA shell owned by WEB01/WEB02)
+' -----------------------------------------------------------------------------
+package "Front-End (SPA)" <<Rectangle>> {
+    class GoogleSignInButton {
+        + onClick(): Promise<void>
+    }
+
+    class GoogleCallbackPage {
+        + handleRedirect(query: URLSearchParams): Promise<void>
+    }
+
+    class authApi {
+        + startGoogleLogin(): Promise<ExternalAuthorizationDTO>
+        + completeGoogleLogin(code: string, state: string): Promise<AuthTokenDTO>
+    }
+}
+
+' -----------------------------------------------------------------------------
+' PRESENTATION LAYER (API)
+' -----------------------------------------------------------------------------
+package "Presentation Layer (API)" <<Rectangle>> {
+    class AuthRoutes {
+        - authController: AuthController
+        - limiter: Middleware
+        + setupRoutes(): Router
+    }
+    note right of AuthRoutes
+        New routes for external authentication:
+        POST /auth/google/authorization
+        POST /auth/google/callback
+          -> ValidationMiddleware.validate(schemas.googleCallback)
+    end note
+
+    class AuthController {
+        - userService: UserService
+        - externalAuthService: ExternalAuthenticationService
+        + login(req: Request, res: Response): Promise<void>
+        + startGoogleLogin(req: Request, res: Response): Promise<void>
+        + completeGoogleLogin(req: Request, res: Response): Promise<void>
+    }
+
+    class ValidationMiddleware {
+        + validate(schema: JoiSchema): Middleware
+    }
+
+    class AuthMiddleware {
+        - userService: UserService
+        + verifyToken(req: Request, res: Response, next: NextFunction): Promise<void>
+    }
+
+    class RoleMiddleware {
+        + requireRole(...roles: UserRole[]): Middleware
+    }
+
+    note bottom of RoleMiddleware
+        AuthMiddleware and RoleMiddleware are reused unchanged
+        on protected routes (e.g. UserRoutes). The Google routes
+        are public: the user has no token yet.
+        Errors use AppError(message, status) and the existing
+        errorHandler format { error: { message, status } }.
+    end note
+}
+
+' -----------------------------------------------------------------------------
+' APPLICATION LAYER
+' -----------------------------------------------------------------------------
+package "Application Layer" <<Rectangle>> {
+
+    class ExternalAuthenticationService {
+        - userRepository: IUserRepository
+        - identityProvider: IExternalIdentityProvider
+        - stateStore: IAuthorizationStateStore
+        - userService: UserService
+        + startAuthorization(): Promise<ExternalAuthorizationDTO>
+        + completeAuthorization(dto: ExternalCallbackDTO): Promise<AuthTokenDTO>
+        + verifyIdentity(code: string, state: string): Promise<ExternalIdentityClaims>
+        - resolveAccount(claims: ExternalIdentityClaims): Promise<User>
+        - assertCanStartSession(user: User): void
+    }
+    note bottom of ExternalAuthenticationService
+        verifyIdentity(): consume state + exchangeAndVerify;
+        reused by AA07 for invited external accounts.
+        assertCanStartSession(): inactive -> 403 "Account is not active";
+        no role -> 403 "No active role is assigned to this account".
+    end note
+
+    class UserService {
+        - userRepository: IUserRepository
+        - passwordHasher: IPasswordHasher
+        - tokenService: ITokenService
+        + login(dto: LoginDTO): Promise<AuthTokenDTO>
+        + issueAuthToken(user: User): AuthTokenDTO
+        + resolveActor(token: string): Promise<{ sub: string, email: string, roles: string[] }>
+    }
+    note bottom of UserService
+        issueAuthToken() is extracted from login() so local
+        and external sign-in issue the same AuthTokenDTO.
+        login() still compares against the dummy hash when there
+        is no local Password (uniform timing), and then rejects
+        the account explicitly if !user.hasLocalPassword() (BR 18).
+    end note
+
+    package "DTOs" <<Rectangle>> {
+        class ExternalAuthorizationDTO <<dto>> {
+            + authorizationUrl: string
+            + state: string
+        }
+
+        class ExternalCallbackDTO <<dto>>  {
+            + code: string
+            + state: string
+        }
+
+        class ExternalIdentityClaims <<dto>> {
+            + provider: IdentityProvider
+            + subject: string
+            + email: string
+            + emailVerified: boolean
+            + name: string
+        }
+
+        class AuthTokenDTO <<dto>> {
+            + accessToken: string
+            + tokenType: string
+            + expiresIn: string
+            + user: UserResponseDTO
+        }
+
+        class UserResponseDTO <<dto>> {
+            + id: string
+            + name: string
+            + email: string
+            + roles: string[]
+            + active: boolean
+            + marketingConsent: boolean
+            + createdAt: string
+        }
+    }
+
+    class UserResponseMapper {
+        + toDTO(user: User): UserResponseDTO
+    }
+
+    interface IExternalIdentityProvider <<interface>>  {
+        + createAuthorizationRequest(): AuthorizationRequest
+        + exchangeAndVerify(code: string, codeVerifier: string, nonce: string): Promise<ExternalIdentityClaims>
+    }
+    note right of IExternalIdentityProvider
+        AuthorizationRequest =
+        { authorizationUrl, state, nonce, codeVerifier }
+        (state / nonce / PKCE verifier generated by the adapter)
+    end note
+
+    interface IAuthorizationStateStore <<interface>>  {
+        + save(state: string, pending: PendingAuthorization): void
+        + consume(state: string): PendingAuthorization | null
+    }
+    note right of IAuthorizationStateStore
+        PendingAuthorization =
+        { provider, nonce, codeVerifier, expiresAt }
+        consume() is single-use and ignores expired entries.
+    end note
+
+    interface ITokenService <<interface>> {
+        + expiresIn: string
+        + generateToken(payload: { sub: string, email: string, roles: string[] }): string
+        + verifyToken(token: string): { sub: string, email: string, roles: string[] }
+    }
+}
+
+' -----------------------------------------------------------------------------
+' DOMAIN LAYER
+' -----------------------------------------------------------------------------
+package "Domain Layer" <<Rectangle>> {
+    class User <<entity>> <<aggregateRoot>> {
+        - id: UserId
+        - name: UserName
+        - email: Email
+        - password: Password [0..1]
+        - externalIdentities: ExternalIdentity[]
+        - roles: UserRole[]
+        - marketingConsent: MarketingConsent
+        - active: boolean
+        + createFromExternalIdentity(id: UserId, name: UserName, email: Email, identity: ExternalIdentity, consent: MarketingConsent): User
+        + linkExternalIdentity(identity: ExternalIdentity): void
+        + hasExternalIdentity(provider: IdentityProvider, subject: string): boolean
+        + getExternalIdentities(): ExternalIdentity[]
+        + hasLocalPassword(): boolean
+        + hasCredential(): boolean
+        + hasActiveRole(): boolean
+        + activate(): void
+        + getId(): UserId
+        + getEmail(): Email
+        + getPassword(): Password | null
+        + getRoles(): string[]
+        + isActive(): boolean
+    }
+
+    class ExternalIdentity <<vo>>  {
+        - provider: IdentityProvider
+        - subject: string
+        - linkedAt: DateTime
+        + create(provider: IdentityProvider, subject: string, linkedAt?: DateTime): ExternalIdentity
+        + getProvider(): IdentityProvider
+        + getSubject(): string
+        + getLinkedAt(): DateTime
+        + equals(other: ExternalIdentity): boolean
+    }
+
+    enum IdentityProvider <<enum>>  {
+        GOOGLE
+    }
+
+    class UserId <<vo>>
+    class UserName <<vo>>
+    class Email <<vo>>
+    class Password <<vo>>
+    class MarketingConsent <<vo>>
+
+    enum UserRole <<enum>> {
+        ADMINISTRATOR
+        MANAGER
+        EMPLOYEE
+        CUSTOMER
+    }
+    note bottom of UserRole
+        ADMINISTRATOR and the 0..* multiplicity
+        are introduced by AA06 / AA03.
+        AA02 only assigns CUSTOMER.
+    end note
+
+    interface IUserRepository <<interface>>  {
+        + nextId(): Promise<string>
+        + findById(id: UserId): Promise<User | null>
+        + findByEmail(email: Email): Promise<User | null>
+        + existsByEmail(email: Email): Promise<boolean>
+        + findByExternalIdentity(provider: IdentityProvider, subject: string): Promise<User | null>
+        + findAll(): Promise<User[]>
+        + save(user: User): Promise<User>
+    }
+}
+
+' -----------------------------------------------------------------------------
+' INFRASTRUCTURE LAYER
+' -----------------------------------------------------------------------------
+package "Infrastructure Layer" <<Rectangle>> {
+    class GoogleOidcProvider {
+        - clientId: string
+        - clientSecret: string
+        - redirectUri: string
+        - client: OAuth2Client
+        + createAuthorizationRequest(): AuthorizationRequest
+        + exchangeAndVerify(code: string, codeVerifier: string, nonce: string): Promise<ExternalIdentityClaims>
+    }
+    note bottom of GoogleOidcProvider
+        Uses google-auth-library (OAuth2Client):
+        Authorization Code flow + PKCE (S256),
+        scope "openid email profile".
+        Verifies ID token signature (Google JWKS),
+        iss, aud, exp and nonce; requires email_verified.
+        Google access token is discarded, never stored.
+    end note
+
+    class InMemoryAuthorizationStateStore  {
+        - entries: Map<string, PendingAuthorization>
+        - ttlMs: number = 600000
+        + save(state: string, pending: PendingAuthorization): void
+        + consume(state: string): PendingAuthorization | null
+    }
+
+    class UserRepository  {
+        - database: Database
+        - snapshots: WeakMap<User, Snapshot>
+        + nextId(): Promise<string>
+        + findById(id: UserId): Promise<User | null>
+        + findByEmail(email: Email): Promise<User | null>
+        + existsByEmail(email: Email): Promise<boolean>
+        + findByExternalIdentity(provider: IdentityProvider, subject: string): Promise<User | null>
+        + findAll(): Promise<User[]>
+        + save(user: User): Promise<User>
+    }
+
+    class UserMapper  {
+        + toDomain(row: UserRow, identityRows: IdentityRow[]): User
+        + toPersistence(user: User): { user: UserRow, identities: IdentityRow[] }
+    }
+
+    class UserPersistenceModel <<PostgreSQL / users>> {
+        + id: VARCHAR(32)
+        + email: string
+        + passwordHash: string | null
+        + roles: string[]
+        + active: boolean
+    }
+
+    class UserExternalIdentityPersistenceModel <<PostgreSQL / user_external_identities>>  {
+        + userId: VARCHAR(32)
+        + provider: VARCHAR(16)
+        + subject: VARCHAR(255)
+        + linked_at: TIMESTAMPTZ
+    }
+
+    class JwtTokenService {
+        - secret: string
+        - issuer: string
+        - audience: string
+        + expiresIn: string
+        + generateToken(payload: { sub: string, email: string, roles: string[] }): string
+        + verifyToken(token: string): { sub: string, email: string, roles: string[] }
+    }
+}
+
+' -----------------------------------------------------------------------------
+' EXTERNAL SYSTEM
+' -----------------------------------------------------------------------------
+package "External System" <<Rectangle>> {
+    class "Google Identity Services\n(OpenID Connect Provider)" as Google <<external>>
+}
+
+' -----------------------------------------------------------------------------
+' RELATIONSHIPS & DEPENDENCIES
+' -----------------------------------------------------------------------------
+
+' Front-End -> API
+GoogleSignInButton ..> authApi : uses >
+GoogleCallbackPage ..> authApi : uses >
+authApi ..> AuthRoutes : HTTPS / JSON >
+
+' Presentation -> Application
+AuthRoutes --> AuthController : dispatches to >
+AuthRoutes ..> ValidationMiddleware : applies >
+
+AuthController --> UserService : invokes >
+AuthController --> ExternalAuthenticationService : invokes >
+AuthController ..> ExternalCallbackDTO : uses >
+AuthMiddleware --> UserService : resolveActor >
+
+' Application
+ExternalAuthenticationService --> IExternalIdentityProvider : verifies identity via >
+ExternalAuthenticationService --> IAuthorizationStateStore : stores / consumes state >
+ExternalAuthenticationService --> IUserRepository : resolves account via >
+ExternalAuthenticationService --> UserService : issueAuthToken >
+ExternalAuthenticationService ..> User : creates / reads >
+ExternalAuthenticationService ..> ExternalAuthorizationDTO : produces >
+ExternalAuthenticationService ..> ExternalIdentityClaims : receives >
+UserService --> ITokenService : uses >
+UserService --> IUserRepository : persists via >
+UserService ..> UserResponseMapper : uses >
+UserService ..> AuthTokenDTO : produces >
+AuthTokenDTO *-- UserResponseDTO
+
+' Domain structure
+User "1" *-- "1" UserId : identified by >
+User "1" *-- "1" UserName : has >
+User "1" *-- "1" Email : has >
+User "1" *-- "0..1" Password : has >
+User "1" *-- "0..*" ExternalIdentity : authenticated through >
+User "1" *-- "1" MarketingConsent : manages >
+User "1" --> "0..*" UserRole : assigned >
+ExternalIdentity --> IdentityProvider
+
+' Infrastructure implementations
+GoogleOidcProvider ..|> IExternalIdentityProvider : implements
+GoogleOidcProvider ..> Google : HTTPS (authorize, token, JWKS) >
+InMemoryAuthorizationStateStore ..|> IAuthorizationStateStore : implements
+UserRepository ..|> IUserRepository : implements
+UserRepository --> UserPersistenceModel : queries/persists
+UserRepository --> UserExternalIdentityPersistenceModel : queries/persists
+UserRepository ..> UserMapper : uses
+UserPersistenceModel "1" -- "0..*" UserExternalIdentityPersistenceModel : user_id FK >
+JwtTokenService ..|> ITokenService : implements
+
+@enduml

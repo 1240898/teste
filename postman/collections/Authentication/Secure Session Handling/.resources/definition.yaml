@@ -1,0 +1,15 @@
+$kind: collection
+order: 1000
+description: |-
+  Validates the complete lifecycle of a secure user session against the `/api/v1/auth` endpoints.
+
+  **What is covered:**
+  - **Login** – authenticates a customer and asserts that an access token and a CSRF token are returned.
+  - **Resume Session** – restores an existing session and confirms that the idle expiry timestamp is not extended.
+  - **Session Renewal (failure)** – attempts renewal with an invalid CSRF token and verifies the request is rejected.
+  - **Session Renewal (success)** – renews the session and asserts that the CSRF token is rotated and that a new `HttpOnly` cookie is issued.
+  - **Check Authenticated User** – calls the `/me` endpoint to confirm the session is active and that the user has at least one role assigned.
+  - **Logout** – terminates the session.
+  - **Check Session After Logout** – re-calls `/me` to verify the session has been fully invalidated.
+
+  Requests are ordered to run sequentially so that environment variables (`accessToken`, `csrfToken`, expiry timestamps) flow correctly from one step to the next.

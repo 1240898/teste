@@ -1,0 +1,31 @@
+{
+  "description": "WEB06 kitchen asset catalogue (D8). Files live in ./files. Equipment models are made by the team in code by VIS02 (`npm run kitchen:models`), without textures (the layout supplies them); `npm run kitchen:demo-assets` writes the files that are missing (assembly-line models and textures are still placeholders). Models: glTF / GLB, metres, Y-up, origin at the bottom centre, belt travel along +X.",
+  "assets": [
+    { "id": "AST-MDL-DISPENSER-01", "kind": "MODEL", "format": "glb", "path": "models/dispenser-01.glb", "description": "Overhead crust dispenser" },
+    { "id": "AST-MDL-CONVEYOR-01", "kind": "MODEL", "format": "glb", "path": "models/conveyor-01.glb", "description": "Conveyor belt segment (1 m, travel along +X)" },
+    { "id": "AST-MDL-ROBOT-ARM-01", "kind": "MODEL", "format": "glb", "path": "models/robot-arm-01.glb", "description": "Robotic arm" },
+    { "id": "AST-MDL-OVEN-DOME-01", "kind": "MODEL", "format": "glb", "path": "models/oven-dome-01.glb", "description": "Dome wood-fired oven (WEB06 placeholder box with its texture set; kept for existing layouts)" },
+    { "id": "AST-MDL-OVEN-DOME-02", "kind": "MODEL", "format": "glb", "path": "models/oven-dome-02.glb", "description": "Dome wood-fired oven: base, hearth, dome, mouth arch and chimney (no textures: material from the layout)" },
+    { "id": "AST-MDL-FRIDGE-01", "kind": "MODEL", "format": "glb", "path": "models/fridge-01.glb", "description": "Refrigerator (WEB06 placeholder box with its texture set; kept for existing layouts)" },
+    { "id": "AST-MDL-FRIDGE-02", "kind": "MODEL", "format": "glb", "path": "models/fridge-02.glb", "description": "Upright two-door refrigerator with handles and display (no textures: material from the layout)" },
+    { "id": "AST-MDL-TABLE-PLAIN-01", "kind": "MODEL", "format": "glb", "path": "models/table-plain-01.glb", "description": "Work table: top, legs, apron and lower shelf (no textures: material from the layout)" },
+    { "id": "AST-MDL-COUNTER-01", "kind": "MODEL", "format": "glb", "path": "models/counter-01.glb", "description": "Base cabinet counter with worktop and three doors (no textures: material from the layout)" },
+    { "id": "AST-MDL-DEEP-FRYER-01", "kind": "MODEL", "format": "glb", "path": "models/deep-fryer-01.glb", "description": "Deep fryer with oil well, two baskets and flue (no textures: material from the layout)" },
+    { "id": "AST-MDL-GRIDDLE-01", "kind": "MODEL", "format": "glb", "path": "models/griddle-01.glb", "description": "Flat-top griddle with cooking plate and splash guard (no textures: material from the layout)" },
+    { "id": "AST-MDL-GRILL-01", "kind": "MODEL", "format": "glb", "path": "models/grill-01.glb", "description": "Char grill with grate bars over a burner (no textures: material from the layout)" },
+    { "id": "AST-MDL-DISHWASHER-01", "kind": "MODEL", "format": "glb", "path": "models/dishwasher-01.glb", "description": "Front-loading dishwasher with control panel (no textures: material from the layout)" },
+    { "id": "AST-MDL-EXHAUST-HOOD-01", "kind": "MODEL", "format": "glb", "path": "models/exhaust-hood-01.glb", "description": "Wall canopy exhaust hood with grease filters and duct (no textures: material from the layout)" },
+    { "id": "AST-MDL-PIZZA-PEEL-01", "kind": "MODEL", "format": "glb", "path": "models/pizza-peel-01.glb", "description": "Pizza peel (no textures: material from the layout)" },
+    { "id": "AST-MDL-PAN-01", "kind": "MODEL", "format": "glb", "path": "models/pan-01.glb", "description": "Frying pan (no textures: material from the layout)" },
+    { "id": "AST-MDL-POT-01", "kind": "MODEL", "format": "glb", "path": "models/pot-01.glb", "description": "Stock pot with lid (no textures: material from the layout)" },
+    { "id": "AST-TEX-TILES-COLOR", "kind": "TEXTURE", "format": "png", "path": "textures/tiles-color.png", "description": "Floor tiles - colour map" },
+    { "id": "AST-TEX-TILES-NORMAL", "kind": "TEXTURE", "format": "png", "path": "textures/tiles-normal.png", "description": "Floor tiles - normal map" },
+    { "id": "AST-TEX-PLASTER-COLOR", "kind": "TEXTURE", "format": "png", "path": "textures/plaster-color.png", "description": "Wall plaster - colour map" },
+    { "id": "AST-TEX-PLASTER-ROUGH", "kind": "TEXTURE", "format": "png", "path": "textures/plaster-rough.png", "description": "Wall plaster - roughness map" },
+    { "id": "AST-TEX-STEEL-COLOR", "kind": "TEXTURE", "format": "png", "path": "textures/steel-color.png", "description": "Brushed steel - colour map" },
+    { "id": "AST-TEX-STEEL-ROUGH", "kind": "TEXTURE", "format": "png", "path": "textures/steel-rough.png", "description": "Brushed steel - roughness map" },
+    { "id": "AST-TEX-STEEL-NORMAL", "kind": "TEXTURE", "format": "png", "path": "textures/steel-normal.png", "description": "Brushed steel - normal map" },
+    { "id": "AST-TEX-WOOD-COLOR", "kind": "TEXTURE", "format": "png", "path": "textures/wood-color.png", "description": "Wood - colour map" },
+    { "id": "AST-TEX-WOOD-NORMAL", "kind": "TEXTURE", "format": "png", "path": "textures/wood-normal.png", "description": "Wood - normal map" }
+  ]
+}

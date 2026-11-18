@@ -1,0 +1,80 @@
+@startuml class_diagram_bom
+title AI01 - Prolog module and data structures
+hide empty members
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam linetype ortho
+
+class "AI01 BOM module" as Module <<Prolog module>> {
+  bom_requirements(Input, Outcome)
+  prepare_bom(Input, Prepared)
+  net_requirements(Prepared, Lines)
+}
+
+class "BOM input" as Input <<Prolog data>> {
+  pizza and size eligibility
+  selected pizza demand
+  scenario item definitions and opening stock
+}
+
+class "Prepared BOM" as Prepared <<Prolog data>> {
+  parent-first item order
+  gross component demand by product ID
+  items, internal recipes and stock by product ID
+}
+
+class "Pizza demand line" as Demand <<Prolog data>> {
+  bomId
+  quantity
+}
+
+class "Pizza definition" as Pizza <<Prolog data>> {
+  bomId
+  sizeId
+  pizzaId when catalogue-backed
+  components: productId and unitsPerPizza
+}
+
+class "Planning item" as Item <<Prolog data>> {
+  productId
+  kind: terminal or aggregate
+  acquisitionType
+  tracked
+}
+
+class "Preparation recipe" as Recipe <<Prolog data>> {
+  productId
+  yieldUnits
+  ingredients: productId and unitsPerBatch
+}
+
+class "Opening stock" as Stock <<Prolog data>> {
+  productId
+  availableUnits
+}
+
+class "Requirement row" as Row <<Prolog data>> {
+  productId, requiredUnits, availableUnits
+  withdrawnUnits, residualUnits
+  batchCount, plannedProductionUnits, surplusUnits
+  remainingUnits, replenishmentUnits
+}
+
+class "Diagnostic" as Diagnostic <<Prolog data>> {
+  code, field or reference, recipe path
+}
+
+Module ..> Input : reads
+Module ..> Prepared : builds and traverses
+Module ..> Row : returns on success
+Module ..> Diagnostic : returns on input error
+Input "1" *-- "0..*" Demand
+Input "1" *-- "0..*" Pizza
+Input "1" *-- "0..*" Item
+Input "1" *-- "0..*" Stock
+Demand ..> Pizza : resolves by BOM ID
+Pizza ..> Item : component ID
+Stock ..> Item : product ID
+Item "1" *-- "0..1" Recipe : internal aggregate
+Recipe ..> Item : ingredient IDs
+@enduml

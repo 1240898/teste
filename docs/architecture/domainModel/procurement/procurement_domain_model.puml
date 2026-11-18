@@ -1,0 +1,135 @@
+@startuml Procurement-Domain
+title Procurement (Prolog) - Domain model
+hide empty members
+hide methods
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam nodesep 32
+skinparam ranksep 52
+
+package "Scenario and demand (AI06 inputs)" as ScenarioInputs {
+    class "Planning scenario" as Scenario {
+        Scenario identity
+        Demand source and selected period
+    }
+    class "Input provenance" as Provenance {
+        Input dataset
+        Source, version or retrieval time
+        Simulated input
+    }
+    class "Demand line" as Demand {
+        Quantity in sales units
+        Date for daily demand
+        BOM reference for pizza demand
+    }
+    class "Stock snapshot" as Snapshot
+    class "Opening stock" as Opening {
+        Available units for the product
+    }
+    class "Direct-sale consumption" as SalesFactor {
+        Stock units per sold item
+    }
+    class Product {
+        ProductId
+        Terminal item or aggregate
+        Acquisition type and stock tracking status
+    }
+
+    Scenario "1" *-- "1..*" Provenance : identifies inputs
+    Scenario "1" *-- "0..*" Demand : selects
+    Scenario "1" *-- "1" Snapshot : starts with
+    Snapshot "1" *-- "0..*" Opening : captures
+    Opening "0..*" --> "1" Product : balance for
+    Demand "0..*" --> "1" Product : requested product
+    Product "1" *-- "0..1" SalesFactor : configured for direct sale
+}
+
+package "Bill of materials and stock requirements (AI01)" as BomDomain {
+    class "Pizza BOM" as Bom {
+        Scenario-local BOM ID and size
+        Catalogue pizza when applicable
+    }
+    class "BOM component" as Component {
+        Stock units per pizza
+    }
+    class "Preparation recipe" as Recipe {
+        Output units per batch
+    }
+    class "Recipe ingredient" as Ingredient {
+        Units per batch
+    }
+    class "BOM result" as BomResult
+    class "Material requirement" as Requirement {
+        Required and stock-covered units
+        Planned production and surplus
+        Hypothetical balance and units to replenish
+    }
+
+    Bom "1" *-- "1..*" Component : lists
+    Recipe "1" *-- "1..*" Ingredient : contains
+    BomResult "1" *-- "0..*" Requirement : reports
+}
+
+package "Replenishment and suppliers (AI02)" as ReplenishmentDomain {
+    class "Confirmed supplier scenario" as SupplierScenario {
+        Scenario identity and version
+    }
+    class Supplier
+    class "Supplier offer" as Offer {
+        Price in EUR and stock units covered
+        Lead time in whole calendar days
+        Optional daily capacity in stock units
+    }
+    class "Replenishment plan" as Plan {
+        Planning reference date
+    }
+    class "Planning day" as Day {
+        Calendar date
+    }
+    class "Daily product plan" as DailyProduct {
+        Opening and closing hypothetical stock
+        Required and replenishment units
+        Planned receipts and unmet units
+    }
+    class "Supplier order proposal" as Proposal {
+        Proposed placement date
+    }
+    class "Supplier order line" as SupplyLine {
+        Stock units to buy and estimated cost
+        Expected delivery date
+    }
+
+    SupplierScenario "1" *-- "1..*" Supplier : includes
+    SupplierScenario "1" *-- "0..*" Offer : provides
+    Offer "0..*" --> "1" Supplier : offered by
+    Plan "1" *-- "1..*" Day : plans by day
+    Day "1" *-- "0..*" DailyProduct : reports per product
+    Plan "1" *-- "0..*" Proposal : proposes
+    Proposal "0..*" --> "1" Supplier : addressed to
+    Proposal "1" *-- "1..*" SupplyLine : contains
+    SupplyLine "0..*" --> "1" Offer : uses selected offer
+    DailyProduct ..> SupplyLine : includes receipts due that day
+}
+
+abstract "Calculation result" as Result {
+    Execution identity and simulation status
+    Warnings and assumptions
+}
+
+Result "0..*" --> "1" Scenario : uses selected inputs
+Result <|-- BomResult
+Result <|-- Plan
+Scenario "0..*" --> "0..1" SupplierScenario : selected for replenishment
+Demand "0..*" --> "0..1" Bom : resolves by BOM ID for pizzas
+Component "0..*" --> "1" Product : requires
+Product "1" *-- "0..1" Recipe : prepared using
+Ingredient "0..*" --> "1" Product : refers to
+Requirement "0..*" --> "1" Product : concerns
+Offer "0..*" --> "1" Product : supplies
+DailyProduct "0..*" --> "1" Product : concerns
+DailyProduct ..> Requirement : uses material calculation for the day
+
+ScenarioInputs -[hidden]down-> BomDomain
+BomDomain -[hidden]right-> ReplenishmentDomain
+@enduml

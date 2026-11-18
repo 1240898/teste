@@ -1,0 +1,79 @@
+@startuml LaPrizza-C4-Component-Backend
+!include <C4/C4_Component>
+
+title Component Diagram - Back-End API (LaPrizza Information System)
+
+
+System_Boundary(laprizza, "LaPrizza Information System") {
+
+    Container(spa, "Front-End", "React, JavaScript, Three.js", "Single-page application for ordering, catalogue and stock management, and 3D pizza visualization")
+
+    Container_Boundary(backend, "Back-End API", "Node.js / Express / JavaScript") {
+
+        Component(securityComponent, "Security Component", "Node.js Module / Middleware", "Runs the Google OpenID Connect sign-in (authorization code exchange and ID token validation), issues and validates application JWTs, and enforces Role-Based Access Control (RBAC)")
+        Component(userComponent, "User Component", "Node.js Service Module", "Manages user accounts, customer profiles and role assignment")
+        Component(catalogueComponent, "Catalogue Component", "Node.js Service Module", "Manages products, sizes, allergens and predefined pizzas")
+        Component(visualizationComponent, "3D Visualization Component", "Node.js Service Module", "Manages 3D models, meshes and pizza customization configurations")
+        Component(orderComponent, "Order Component", "Node.js Service Module", "Manages order lifecycle, pricing and kitchen preparation steps")
+        Component(stockComponent, "Stock Component", "Node.js Service Module", "Tracks ingredient quantities and deducts stock when orders are placed")
+        Component(schedulingComponent, "Scheduling Component", "Node.js Service Module", "Communicates with the AI Scheduling Service to optimize kitchen resource allocation")
+        Component(emailComponent, "Email Component", "Node.js Module / Nodemailer", "Formats and dispatches registration, order confirmation and notification emails")
+        Component(repositoryComponent, "Repositories Component", "Node.js Data Access / ORM", "Provides data access interfaces for relational storage")
+    }
+
+    ContainerDb(database, "Relational Database", "PostgreSQL", "Stores users, customers, products, allergens, stock, orders, schedule assignments, 3D models, meshes and visualization configurations")
+
+    Container(scheduler, "Scheduling Service (AI)", "Prolog / HTTP Service", "Schedules food preparation activities, allocating kitchen stations and ovens")
+}
+
+System_Ext(googleIdentity, "Google Identity Services", "External identity provider (OAuth 2.0 / OpenID Connect)")
+System_Ext(email, "Email Service", "Sends confirmation and notification emails")
+
+' ----------------------------------------------------
+' RELAÇÕES
+' ----------------------------------------------------
+
+' Front-End -> Componentes do Back-End
+Rel(spa, securityComponent, "Starts Google sign-in and submits the authorization code using", "JSON / HTTP")
+Rel(spa, userComponent, "Makes API requests to", "JSON / HTTP")
+Rel(spa, catalogueComponent, "Makes API requests to", "JSON / HTTP")
+Rel(spa, visualizationComponent, "Requests 3D models and configurations from", "JSON / HTTP")
+Rel(spa, orderComponent, "Makes API requests to", "JSON / HTTP")
+Rel(spa, stockComponent, "Makes API requests to", "JSON / HTTP")
+
+' Autenticação externa (OIDC Authorization Code + PKCE)
+Rel(spa, googleIdentity, "Redirects the user to for sign-in and consent", "HTTPS / OAuth 2.0 redirect")
+Rel(securityComponent, googleIdentity, "Exchanges authorization codes and validates ID tokens (JWKS) with", "HTTP / OpenID Connect")
+
+' Segurança / RBAC
+Rel(userComponent, securityComponent, "Validates token & roles using")
+Rel(catalogueComponent, securityComponent, "Validates token & roles using")
+Rel(visualizationComponent, securityComponent, "Validates token & roles using")
+Rel(orderComponent, securityComponent, "Validates token & roles using")
+Rel(stockComponent, securityComponent, "Validates token & roles using")
+Rel(securityComponent, userComponent, "Resolves or creates user account via")
+
+' Lógica entre componentes
+Rel(visualizationComponent, catalogueComponent, "Gets product and ingredient data from")
+Rel(orderComponent, catalogueComponent, "Gets products and prices from")
+Rel(orderComponent, stockComponent, "Verifies and updates stock via")
+Rel(orderComponent, schedulingComponent, "Requests order scheduling via")
+Rel(orderComponent, emailComponent, "Triggers order notification emails via")
+Rel(userComponent, emailComponent, "Triggers registration confirmation email via")
+
+' Persistência
+Rel(userComponent, repositoryComponent, "Persists users and profiles via")
+Rel(catalogueComponent, repositoryComponent, "Persists product data via")
+Rel(visualizationComponent, repositoryComponent, "Persists 3D configurations via")
+Rel(orderComponent, repositoryComponent, "Persists orders via")
+Rel(stockComponent, repositoryComponent, "Persists inventory data via")
+Rel(schedulingComponent, repositoryComponent, "Persists schedule assignments via")
+
+Rel(repositoryComponent, database, "Reads and writes relational data using", "Database Driver / TCP")
+
+' Serviços externos
+Rel(schedulingComponent, scheduler, "Sends activities & receives schedules via", "JSON / HTTP")
+Rel(emailComponent, email, "Sends emails using", "SMTP")
+
+SHOW_LEGEND()
+@enduml

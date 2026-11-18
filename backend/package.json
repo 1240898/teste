@@ -1,0 +1,61 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Starting skeleton for the LaPrizza backend HTTP API",
+  "main": "index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:unit": "node --experimental-vm-modules node_modules/jest/bin/jest.js tests/unit",
+    "test:integration": "node --experimental-vm-modules node_modules/jest/bin/jest.js tests/integration",
+    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:check": "node scripts/database.js check",
+    "db:migrate": "node scripts/database.js migrate",
+    "db:state": "node scripts/database.js state",
+    "db:seed": "node scripts/seed-reference-data.js",
+    "db:reset": "node scripts/reset-database.js",
+    "db:reset:dei": "node scripts/reset-database.js --dei",
+    "test:db": "cross-env RUN_DATABASE_TESTS=1 npm test -- --runInBand tests/integration/database.test.js tests/integration/user-authentication-management/postgres.test.js tests/integration/user-authentication-management/session.postgres.test.js tests/integration/user-authentication-management/externalIdentity.postgres.test.js tests/integration/user-authentication-management/activation.postgres.test.js tests/integration/product-category-management/postgres.test.js tests/integration/allergen-management/postgres.test.js tests/integration/product-management/postgres.test.js tests/integration/pizza-component-type-management/postgres.test.js tests/integration/pizza-component-configuration/postgres.test.js tests/integration/stock-information-management/postgres.test.js tests/integration/product-catalogue-and-information/postgres.test.js tests/integration/reference-data/postgres.test.js tests/integration/kitchen-configuration-management/postgres.test.js",
+    "bck09:bootstrap": "node scripts/bootstrap-bck09-demo.js",
+    "users:bootstrap-admin": "node scripts/bootstrap-administrator.js",
+    "kitchen:demo-assets": "node scripts/generate-kitchen-demo-assets.js",
+    "kitchen:models": "node scripts/generate-kitchen-models.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.7",
+    "express": "^5.3.0",
+    "express-rate-limit": "^8.7.1",
+    "google-auth-library": "^11.3.3",
+    "joi": "^18.2.9",
+    "jsonwebtoken": "^9.0.3",
+    "morgan": "^1.12.1",
+    "nodemailer": "^10.3.1",
+    "pg": "^8.23.1",
+    "swagger-ui-express": "^5.0.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "cross-env": "^10.1.0",
+    "eslint": "^10.12.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.13.0",
+    "jest": "^30.5.2",
+    "prettier": "^3.9.9",
+    "supertest": "^7.3.1"
+  },
+  "overrides": {
+    "glob": "^14.0.2",
+    "minimatch": "^11.0.1"
+  }
+}

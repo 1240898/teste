@@ -1,0 +1,123 @@
+@startuml SD_BCK06_UpdatePizzaSize
+title BCK06 - Update a pizza size (rename / activate / deactivate)
+autonumber
+skinparam maxMessageSize 105
+skinparam shadowing true
+
+actor Manager
+participant "PizzaSizeRoutes" as Routes
+participant "AuthMiddleware" as Auth
+participant "RoleMiddleware" as Roles
+participant "ValidationMiddleware\n(Joi)" as Validation
+participant "PizzaSizeController" as Controller
+participant "PizzaSizeService" as Service
+participant "PizzaSize\n(Domain)" as Domain
+participant "IPizzaSizeRepository\n: PizzaSizeRepository" as Repo
+participant "PizzaSizeResponseMapper" as Mapper
+database "PostgreSQL" as DB
+
+Manager -> Routes : PUT /api/v1/pizza-sizes/{id}\n{ name? , active? }
+activate Routes
+activate Manager
+
+Routes -> Auth : verifyToken(req, res, next)
+activate Auth
+break Missing / invalid token
+Auth --> Routes : authentication error
+Routes --> Manager : 401 Unauthorized
+end
+Auth --> Routes : identity established
+deactivate Auth
+
+Routes -> Roles : requireRole('MANAGER')(req, res, next)
+activate Roles
+break Caller lacks Manager role
+Roles --> Routes : authorization error
+Roles --> Manager : 403 Forbidden
+end
+Roles --> Routes : next()
+deactivate Roles
+
+Routes -> Validation : validate(req.params & req.body, updateSchema)
+activate Validation
+break Invalid id format (PSIZE-####) or invalid body
+Validation --> Manager : 400 Bad Request
+end
+Validation --> Routes : next()
+deactivate Validation
+
+Routes -> Controller : update(req, res, next)
+activate Controller
+
+Controller -> Service : update(id, dto)
+activate Service
+
+Service -> Repo : findById(id)
+activate Repo
+Repo -> DB : SELECT * FROM pizza_sizes WHERE id = $1
+activate DB
+DB --> Repo : row or null
+deactivate DB
+Repo --> Service : pizzaSize or null
+deactivate Repo
+
+break Pizza size not found
+Service --> Controller : not-found error
+Controller --> Manager : 404 Not Found
+end
+
+alt Name is provided in DTO
+    Service -> Service : PizzaSizeName.create(dto.name)
+    break Invalid name (domain error)
+    Service --> Controller : domain error
+    Controller --> Manager : 400 Bad Request
+    end
+
+    Service -> Repo : findByName(name)
+    activate Repo
+    Repo -> DB : SELECT * FROM pizza_sizes WHERE lower(name) = lower($1)
+    activate DB
+    DB --> Repo : row or null
+    deactivate DB
+    Repo --> Service : existingSize or null
+    deactivate Repo
+
+    break Name belongs to another size (Conflict)
+    Service --> Controller : duplicate name error
+    Controller --> Manager : 409 Conflict
+    end
+end
+
+Service -> Domain : updateName(name) if provided\nactivate() / deactivate() if active provided\n(PizzaSizeId is preserved)
+activate Domain
+Domain --> Service : updated pizzaSize
+deactivate Domain
+
+Service -> Repo : save(pizzaSize)
+activate Repo
+Repo -> DB : INSERT ... ON CONFLICT (id) DO UPDATE\nSET name = EXCLUDED.name, active = EXCLUDED.active
+activate DB
+DB --> Repo : success / error
+deactivate DB
+Repo --> Service : saved instance
+deactivate Repo
+
+break Write failure
+Service --> Controller : error
+Controller --> Manager : 500 Internal Server Error
+end
+
+Service -> Mapper : toDTO(pizzaSize)
+activate Mapper
+Mapper --> Service : response DTO
+deactivate Mapper
+
+Service --> Controller : PizzaSizeResponseDTO
+Controller --> Manager : 200 OK\n{ id, name, active }
+
+deactivate Service
+deactivate Controller
+deactivate Routes
+deactivate Manager
+
+@enduml

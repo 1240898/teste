@@ -1,0 +1,357 @@
+@startuml class_diagram
+title AA06 - Role Assignment and Activation Invitation
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+skinparam shadowing true
+hide empty members
+left to right direction
+
+package "Front-End (SPA)" <<Rectangle>> {
+  class AdminUserManagementPage <<UI>> {
+    +loadUsers(includeInactive : boolean) : Promise<UserResponseDTO[]>
+    +updateRoles(userId : string, roles : UserRole[]) : Promise<UserResponseDTO>
+    +deactivateUser(userId : string) : Promise<void>
+    +reactivateUser(userId : string) : Promise<UserResponseDTO>
+    +inviteWorker(dto : InviteWorkerDTO) : Promise<InvitationResultDTO>
+    +issueReplacementInvitation(userId : string) : Promise<InvitationResultDTO>
+    +showInvitationResult(result : InvitationResultDTO) : void
+  }
+  
+  class UserAdministrationApi <<frontend client>> {
+    +register(dto : RegisterUserDTO) : Promise<RegistrationResultDTO>
+    +inviteWorker(dto : InviteWorkerDTO) : Promise<InvitationResultDTO>
+    +listUsers(includeInactive : boolean) : Promise<UserResponseDTO[]>
+    +getUser(id : string) : Promise<UserResponseDTO>
+    +updateRoles(id : string, dto : UpdateRolesDTO) : Promise<UserResponseDTO>
+    +deactivateUser(id : string) : Promise<void>
+    +reactivateUser(id : string) : Promise<UserResponseDTO>
+    +inviteWorker(dto : InviteWorkerDTO) : Promise<InvitationResultDTO>
+    +issueReplacementInvitation(id : string) : Promise<InvitationResultDTO>
+  }
+  class InvitationDeliveryNotice <<UI component>> {
+    +show(status : InvitationDeliveryStatus, retryable : boolean) : void
+  }
+  class AuthContext <<AA04 shared design>> {
+    +currentUser : UserResponseDTO
+    +hasRole(role : UserRole) : boolean
+  }
+  class apiClient <<AA04 shared design>> {
+    +request(url : string, options : object) : Promise<object>
+  }
+}
+
+package "Presentation Layer (API)" <<Rectangle>> {
+  class UserRoutes <<router>> {
+    +setupRoutes() : Router
+  }
+  class UserController <<controller>> {
+    -userService : UserService
+    +getAll(req, res) : Promise<void>
+    +getById(req, res) : Promise<void>
+    +updateRoles(req, res) : Promise<void>
+    +deactivate(req, res) : Promise<void>
+    +reactivate(req, res) : Promise<void>
+    +register(req, res) : Promise<void>
+    +inviteWorker(req, res) : Promise<void>
+    +issueInvitation(req, res) : Promise<void>
+  }
+  class AuthMiddleware <<middleware>> {
+    +verifyToken(req, res, next) : Promise<void>
+  }
+  class RoleMiddleware <<middleware>> {
+    +requireRole(roles) : Middleware
+  }
+  class ValidationMiddleware <<middleware>> {
+    +validate(schema) : Middleware
+  }
+}
+
+package "Application Layer" <<Rectangle>> {
+  class UserService <<service>> {
+    -userRepository : IUserRepository
+    -roleChangeRepository : IRoleChangeRecordRepository
+    -unitOfWork : IUnitOfWork
+    -invitationSender : IActivationInvitationSender
+    -invitationTokenGenerator : IInvitationTokenGenerator
+    +register(dto : RegisterUserDTO) : Promise<RegistrationResultDTO>
+    +inviteWorker(dto : InviteWorkerDTO, actor : ActorContext) : Promise<InvitationResultDTO>
+    +listUsers(actor : ActorContext, includeInactive : boolean) : Promise<UserResponseDTO[]>
+    +getUserById(id : UserId, actor : ActorContext) : Promise<UserResponseDTO>
+    +updateRoles(id : UserId, dto : UpdateRolesDTO, actor : ActorContext) : Promise<UserResponseDTO>
+    +deactivateUser(id : UserId, actor : ActorContext) : Promise<void>
+    +reactivateUser(id : UserId, actor : ActorContext) : Promise<UserResponseDTO>
+    +issueReplacementInvitation(id : UserId, actor : ActorContext) : Promise<InvitationResultDTO>
+    +resolveActor(userId : UserId) : Promise<ActorContext>
+  }
+  interface IUnitOfWork <<application port>> {
+    +withTransaction(work : (tx : Transaction) => Promise<T>) : Promise<T>
+  }
+  interface IPasswordHasher <<existing port>> {
+    +hash(plainText : string) : Promise<string>
+  }
+  package "Application DTOs" <<Rectangle>> {
+    class UpdateRolesDTO <<dto>> {
+      +roles : UserRole[]
+    }
+    class InviteWorkerDTO <<dto>> {
+      +name : string
+      +email : string
+      +role : UserRole
+      +activationMethod : ActivationMethod
+    }
+    class RegisterUserDTO <<dto>> {
+      +name : string
+      +email : string
+      +password : string
+      +marketingConsent : boolean
+    }
+    class UserResponseDTO <<dto>> {
+      +id : string
+      +name : string
+      +email : string
+      +roles : UserRole[]
+      +active : boolean
+      +marketingConsent : boolean
+      +createdAt : DateTime
+    }
+    class InvitationResultDTO <<dto>> {
+      +status: InvitationDeliveryStatus
+      +expiresAt : DateTime
+      +retryable : boolean
+    }
+    class RegistrationResultDTO <<dto>> {
+      +user : UserResponseDTO
+      +status: InvitationDeliveryStatus
+      +retryable : boolean
+    }
+    class ActorContext <<dto>> {
+      +userId : UserId 
+      +roles : UserRole[]
+    }
+    enum InvitationDeliveryStatus {
+      SENT
+      FAILED
+    }
+  }
+  interface IActivationInvitationSender <<port>> {
+    +send(recipient : Email, token : string, expiresAt : DateTime) : Promise<void>
+  }
+  interface IInvitationTokenGenerator <<port>> {
+    +generate() : GeneratedInvitationToken
+  }
+  class GeneratedInvitationToken <<value object>> {
+    +rawToken : string
+    +tokenHash : InvitationTokenHash
+  }
+}
+
+package "Domain Layer" <<Rectangle>> {
+  class User <<aggregate root>> {
+    -id : UserId
+    -name : UserName
+    -email : Email
+    -password : Password
+    -marketingConsent : MarketingConsent
+    -roles : Set<UserRole>
+    -active : boolean
+    -everActivated : boolean
+    -activationInvitation : ActivationInvitation [0..1]
+    +createInactive(id : UserId, name : UserName, email : Email, password : Password, roles : UserRole[], consent : MarketingConsent) : User
+    +getRoles() : UserRole[]
+    +setRoles(roles : UserRole[]) : void
+    +deactivate() : void
+    +activate() : void
+    +issueActivationInvitation(tokenHash, expiresAt, now) : void
+    +consumeActivationInvitation(at : DateTime) : void
+  }
+  class ActivationInvitation <<entity>> {
+    -intendedEmail : Email
+    -tokenHash : InvitationTokenHash
+    -expiresAt : DateTime
+    -status : InvitationStatus
+    -activationMethod : ActivationMethod
+    +create(intendedEmail : Email, tokenHash : InvitationTokenHash, expiresAt : DateTime) : ActivationInvitation
+    +invalidate() : void
+    +markUsed(at : DateTime) : void
+    +isUsableAt(at : DateTime) : boolean
+  }
+  class RoleChangeRecord <<aggregate root>> {
+    -id : RoleChangeRecordId
+    -affectedUserId : UserId
+    -changedAt : DateTime
+    -previousRoles : Set<UserRole>
+    -newRoles : Set<UserRole>
+    -actor : ChangeActor
+    +create(affectedUserId : UserId, previousRoles : UserRole[], newRoles : UserRole[], actor : ChangeActor, changedAt : DateTime) : RoleChangeRecord
+  }
+  class ChangeActor <<value object>> {
+    +type : ActorType
+    +userId : UserId [0..1]
+    +process : SystemProcess [0..1]
+  }
+  class UserId <<value object>>{
+    +id : string
+  }
+  class Email <<value object>> {
+        + emailAddress : String
+    }
+
+    class Password <<value object>> {
+        + passwordHash : String
+    }
+
+    class UserName <<value object>> {
+        + name : String
+    }
+
+    class MarketingConsent <<value object>> {
+        + consentGiven : boolean
+        + timestamp : DateTime
+    }
+  class RoleChangeRecordId <<value object>>{
+    +id : string
+  }
+  enum UserRole {
+    ADMINISTRATOR
+    MANAGER
+    RESTAURANT_STAFF
+    CUSTOMER
+  }
+  enum InvitationStatus {
+    PENDING
+    USED
+    EXPIRED
+    INVALIDATED
+  }
+  enum ActivationMethod {
+    LOCAL
+    EXTERNAL
+  }
+  enum ActorType {
+    ADMINISTRATOR
+    SYSTEM_PROCESS
+  }
+  enum SystemProcess {
+    INITIAL_CUSTOMER_ASSIGNMENT
+  }
+
+  interface IUserRepository <<repository port>> {
+    +findById(id : UserId, tx : Transaction) : Promise<User>
+    +findByEmail(email : Email, tx : Transaction) : Promise<User>
+    +findAll(includeInactive : boolean, tx : Transaction) : Promise<User[]>
+    +save(user : User, tx : Transaction) : Promise<User>
+    +countActiveAdministrators(tx : Transaction) : Promise<number>
+    +lockAdministratorRoster(tx : Transaction) : Promise<void>
+  }
+  interface IRoleChangeRecordRepository <<repository port>> {
+    +save(record : RoleChangeRecord, tx : Transaction) : Promise<void>
+  }
+}
+
+package "Infrastructure Layer" <<Rectangle>> {
+  class UserRepository <<adapter>> {
+    +findById(id : UserId, tx : Transaction) : Promise<User>
+    +findByEmail(email : Email, tx : Transaction) : Promise<User>
+    +findAll(includeInactive : boolean, tx : Transaction) : Promise<User[]>
+    +save(user : User, tx : Transaction) : Promise<User>
+    +countActiveAdministrators(tx : Transaction) : Promise<number>
+    +lockAdministratorRoster(tx : Transaction) : Promise<void>
+  }
+  class RoleChangeRecordRepository <<adapter>> {
+    +save(record : RoleChangeRecord, tx : Transaction) : Promise<void>
+  }
+  class PostgresUnitOfWork <<adapter>> {
+    +withTransaction(work) : Promise<T>
+  }
+  class SmtpActivationInvitationSender <<adapter>> {
+    +send(recipient : Email, token : string, expiresAt : DateTime) : Promise<void>
+  }
+  class CryptoInvitationTokenGenerator <<adapter>> {
+    +generate() : GeneratedInvitationToken
+  }
+  class BcryptPasswordHasher <<existing adapter>> {
+    +hash(plainText : string) : Promise<string>
+  }
+  class UserMapper <<mapper>> {
+    +toDomain(row : object) : User
+    +toPersistence(user : User) : object
+  }
+  class RoleChangeRecordMapper <<mapper>> {
+    +toPersistence(record : RoleChangeRecord) : object
+  }
+  class Database <<adapter>> {
+    +query(text : string, values : object[]) : Promise<object>
+    +withTransaction(work : function) : Promise<object>
+  }
+}
+
+UserRoutes ..> AuthMiddleware
+UserRoutes ..> RoleMiddleware
+UserRoutes ..> ValidationMiddleware
+UserRoutes --> UserController
+AuthMiddleware ..> UserService : resolves current actor
+RoleMiddleware ..> ActorContext : authorizes current roles
+ValidationMiddleware ..> UpdateRolesDTO : validates role changes
+UserController --> UserService
+UserService --> IUserRepository
+UserService --> IRoleChangeRecordRepository
+UserService --> IUnitOfWork
+UserService --> IActivationInvitationSender
+UserService --> IInvitationTokenGenerator
+UserService ..> RegisterUserDTO 
+UserService ..> InviteWorkerDTO
+UserService ..> UpdateRolesDTO
+UserService ..> UserResponseDTO
+UserService ..> InvitationResultDTO
+UserService ..> RegistrationResultDTO
+UserService ..> ActorContext
+UserService ..> GeneratedInvitationToken
+UserService --> IPasswordHasher
+IUserRepository ..> User
+IRoleChangeRecordRepository ..> RoleChangeRecord
+IInvitationTokenGenerator ..> GeneratedInvitationToken
+UserService ..> User : applies account and role changes
+UserService ..> RoleChangeRecord : records role changes
+InvitationResultDTO --> InvitationDeliveryStatus
+RegistrationResultDTO --> InvitationDeliveryStatus
+
+User "1" *-- "0..1" ActivationInvitation
+User "1" --> "0..*" UserRole
+User "1" *-- "1" UserId : identified by >
+User "1" *-- "1" Email : has >
+User "1" *-- "1" MarketingConsent : manages >
+User "1" *-- "1" Password : has>
+User "1" *-- "1" UserName : has >
+RoleChangeRecord "0..*" --> "1" User : affected user ID
+RoleChangeRecord "1" *-- "1" ChangeActor
+RoleChangeRecord "1" --> "1" RoleChangeRecordId : identified by >
+ChangeActor "1" --> "0..1" SystemProcess 
+ChangeActor "1" --> "1" ActorType : has >
+ 
+ActivationInvitation "1" --> "1" InvitationStatus : has >
+ActivationInvitation "1" --> "1" ActivationMethod : permits >
+
+UserRepository ..|> IUserRepository
+RoleChangeRecordRepository ..|> IRoleChangeRecordRepository
+UserRepository --> UserMapper
+RoleChangeRecordRepository --> RoleChangeRecordMapper
+UserMapper ..> User : maps aggregate
+RoleChangeRecordMapper ..> RoleChangeRecord : maps audit record
+PostgresUnitOfWork ..|> IUnitOfWork
+PostgresUnitOfWork --> Database
+SmtpActivationInvitationSender ..|> IActivationInvitationSender
+CryptoInvitationTokenGenerator ..|> IInvitationTokenGenerator
+BcryptPasswordHasher ..|> IPasswordHasher
+
+
+AdminUserManagementPage --> UserAdministrationApi
+AdminUserManagementPage --> AuthContext : UI visibility only
+AdminUserManagementPage --> InvitationDeliveryNotice
+UserAdministrationApi --> apiClient
+apiClient --> AuthContext : request context
+apiClient ..> UserRoutes : REST / JSON
+AdminUserManagementPage ..> InvitationResultDTO : displays delivery result
+UserRepository --> Database
+RoleChangeRecordRepository --> Database
+
+@enduml

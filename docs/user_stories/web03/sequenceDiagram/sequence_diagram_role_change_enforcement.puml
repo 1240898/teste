@@ -1,0 +1,148 @@
+@startuml sequence_diagram_role_change_enforcement
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - WEB03 Role or Account-Status Change while the SPA is Open (back-end enforcement, non-recursive 401/403 handling)
+
+actor User as "Manager\n(SPA open on /manage/stock)"
+actor Admin as "Administrator\n(AA06)"
+participant Page as "StockPage\n(WEB05)"
+participant API as "apiClient\n(WEB01, extended)"
+participant Auth as "AuthProvider"
+participant Menu as "NavigationMenu"
+participant Guard as "ProtectedRoute"
+participant AuthMW as "AuthMiddleware"
+participant RoleMW as "RoleMiddleware"
+participant Service as "UserService"
+database DB as "Database\n(Persistence)"
+
+note over User, DB
+    The menu shown to the user was built when the roles were last confirmed (SD 1 / SD 2).
+    A change made in the meantime is enforced by the BACK END on the very next protected
+    request (AA03: resolveActor reloads the User every time), so no further protected
+    operation is accepted with the withdrawn permissions (AC 6).
+    Handling rule (3.4, BR 13): only BUSINESS requests reach handleAuthFailure();
+    401 is terminal (no /auth/me); 403 causes at most ONE /auth/me (single-flight);
+    /auth/me is sent with skipAuthFailureHandler = true, so its answer never re-enters the handler.
+end note
+
+Admin -> DB : removes MANAGER from the user (AA06)\nroles: [CUSTOMER, MANAGER] -> [CUSTOMER]\n(or: deactivates the account / the token expires)
+note right of Admin : no new login is required for\nthe change to take effect
+
+User -> Page : submits "Adjust stock" (button visible: menu is stale)
+activate Page
+Page -> API : request("POST", "/stock/{productId}/adjustments", { body })
+activate API
+API -> AuthMW : POST ... Authorization: Bearer <token>
+activate AuthMW
+AuthMW -> Service : resolveActor(token)
+activate Service
+Service -> DB : SELECT ... FROM users WHERE id = $1
+activate DB
+DB --> Service : row (current roles, active)
+deactivate DB
+
+alt A) Token expired / invalid or user deleted
+    Service --> AuthMW : throw AppError("Invalid or expired token", 401)
+    AuthMW --> API : 401 { error: { message: "Invalid or expired token", status: 401 } }
+else B) Account deactivated (or left with no role)
+    Service -> Service : assertCanAccess(user)
+    Service --> AuthMW : throw AppError("Account is not active", 403)
+    AuthMW --> API : 403 { error: { message: "Account is not active", status: 403 } }
+    note right of AuthMW : RoleMiddleware and controller NOT executed:\nstock is not changed
+else C) Active, roles = [CUSTOMER]
+    Service -> Service : assertCanAccess(user)
+    Service --> AuthMW : AuthenticatedActor { roles: ["CUSTOMER"] }
+    AuthMW -> RoleMW : next()
+    activate RoleMW
+    RoleMW -> RoleMW : requireRole("MANAGER")\n["CUSTOMER"] has none of [MANAGER]
+    RoleMW --> API : 403 { error: { message: "Forbidden: insufficient permissions", status: 403 } }
+    deactivate RoleMW
+    note right of RoleMW : controller NOT executed:\nstock is not changed
+end
+deactivate Service
+deactivate AuthMW
+
+== The SPA reacts BEFORE the error is returned to the page (business request -> handler invoked) ==
+
+API -> Auth : handleAuthFailure(status)
+activate Auth
+
+alt status = 401 (branch A) - TERMINAL
+    Auth -> Auth : clear(): discard token (AA04);\nstatus = "guest"
+    Auth -> Guard : state changed
+    activate Guard
+    Guard -> Guard : evaluateAccess(stock, auth) = LOGIN_REQUIRED
+    Guard -> Page : unmount
+    Guard --> User : redirect to /login?returnTo=/manage/stock
+    deactivate Guard
+    note right of Auth
+        NO refresh(), NO /auth/me request,
+        NO retry of the business request.
+        The flow ends here.
+    end note
+
+else status = 403 (branches B and C)
+    alt status is already "guest" / "denied" (no token)
+        Auth -> Auth : no-op (nothing to clear or refresh)
+    else authenticated
+        Auth -> Auth : refresh()\nsingle-flight: if a refresh is in progress,\nreturn the SAME promise (no new request)
+        Auth -> API : authApi.getCurrentUser()\nrequest("GET", "/auth/me", { skipAuthFailureHandler: true })
+        API -> AuthMW : GET /api/v1/auth/me (Bearer)
+        activate AuthMW
+        AuthMW --> API : 200 { roles } / 401 / 403 / 5xx
+        deactivate AuthMW
+        note right of API
+            skipAuthFailureHandler = true:
+            the apiClient does NOT call handleAuthFailure()
+            for this answer; it only resolves / rejects.
+            => an /auth/me answer can never start
+            another /auth/me request (no recursion).
+        end note
+        API --> Auth : result (mapped by table A, 3.4)
+
+        alt A') /auth/me -> 401
+            Auth -> Auth : clear(); status = "guest"\n(flow ends, login on protected section)
+        else B') /auth/me -> 403 "Account is not active"
+            Auth -> Auth : clear(); status = "denied";\ndeniedMessage = message (flow ends)
+        else C') /auth/me -> 200 { roles: ["CUSTOMER"] }
+            Auth -> Auth : currentUser.roles = ["CUSTOMER"]
+        else D') /auth/me -> 200 with the SAME roles
+            Auth -> Auth : nothing changed: the operation itself\nwas not permitted for this user
+        else E') /auth/me -> 5xx / network / malformed
+            Auth -> Auth : clear(); status = "guest" (fail closed)
+        end
+
+        Auth -> Menu : state changed
+        activate Menu
+        Menu -> Menu : getVisibleSections(auth)
+        Menu --> User : menu rebuilt (A', B', E': public only;\nC': restaurant management, kitchen\nand planning groups removed; D': unchanged)
+        deactivate Menu
+
+        Auth -> Guard : state changed
+        activate Guard
+        Guard -> Guard : evaluateAccess(stock, auth)
+        alt decision is no longer ALLOW (A', B', C', E')
+            Guard -> Page : unmount (stock data removed from the screen)
+            Guard --> User : LoginPage / AccessDeniedPage (ACCOUNT_DENIED message /\n"You do not have permission to access this page.")
+        else D') still ALLOW
+            Guard -> Guard : keep the page
+        end
+        deactivate Guard
+    end
+end
+deactivate Auth
+
+API --> Page : rejects with ApiError(401 | 403)\n(business request is NOT retried)
+deactivate API
+Page --> User : (only if still mounted, D') error feedback (WEB04):\n"You do not have permission to perform this operation."\noperation NOT shown as completed, input preserved
+deactivate Page
+
+note over User, DB
+    The same back-end checks (AuthMiddleware -> RoleMiddleware) apply when the request does not come
+    from the SPA at all (e.g. curl with a valid token), so hiding the menu option is never the only
+    protection (AC 7, AA05).
+end note
+
+@enduml

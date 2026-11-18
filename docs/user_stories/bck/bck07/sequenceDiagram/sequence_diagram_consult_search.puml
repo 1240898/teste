@@ -1,0 +1,90 @@
+@startuml sequence_diagram_consult_search
+autonumber
+skinparam maxMessageSize 90
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+actor Manager
+participant "ComponentTypeRoutes" as Routes
+participant "ComponentTypeController" as Controller
+participant "ComponentTypeService" as Service
+participant "IComponentTypeRepository" as Repo
+participant "ComponentTypeResponseMapper" as Mapper
+title BCK07 - Consult and search component types
+Manager -> Routes : GET /api/v1/pizza-component-types/{id}\nor GET /api/v1/pizza-component-types?id=...&name=...
+activate Routes
+participant "AuthMiddleware" as Auth
+participant "RoleMiddleware" as Roles
+participant "ValidationMiddleware" as Validator
+Routes -> Auth : verifyToken(req, res, next)
+activate Auth
+break Missing, invalid or expired token
+ Auth --> Manager : 401 Unauthorized
+end
+Auth --> Routes : identity established
+deactivate Auth
+Routes -> Roles : requireRole(MANAGER)
+activate Roles
+break Caller lacks Manager role
+ Roles --> Manager : 403 Forbidden
+end
+Roles --> Routes : authorized
+deactivate Roles
+Routes -> Validator : validate(req)
+activate Validator
+break Malformed identifier or fields / invalid count representation
+ Validator --> Manager : 400 Bad Request
+end
+Validator --> Routes : request valid
+deactivate Validator
+alt Consult one type
+ Routes -> Controller : getById(req, res, next)
+ activate Controller
+ Controller -> Service : getById(id)
+ activate Service
+ Service -> Repo : findById(id)
+ activate Repo
+ Repo --> Service : type or null
+ deactivate Repo
+ alt Type absent
+  Service --> Controller : NotFound
+  Controller --> Manager : 404 Not Found
+ else Type found
+  Service -> Mapper : toDTO(type)
+  activate Mapper
+  Mapper --> Service : response
+  deactivate Mapper
+  Service --> Controller : response
+  Controller --> Manager : 200 OK + ComponentTypeResponseDTO
+ end
+ deactivate Service
+ deactivate Controller
+else Search by identifying information
+ Routes -> Controller : search(req, res, next)
+ activate Controller
+ Controller -> Service : search(query)
+ activate Service
+ Service -> Service : toSearchCriteria(query)
+ activate Service
+ Service --> Service : criteria
+ deactivate Service
+ Service -> Repo : search(criteria)
+ activate Repo
+ Repo --> Service : types[]
+ deactivate Repo
+ loop Each matching type
+  Service -> Mapper : toDTO(type)
+  activate Mapper
+  Mapper --> Service : response
+  deactivate Mapper
+ end
+ Service --> Controller : responses[]
+ deactivate Service
+ Controller --> Manager : 200 OK + responses[] (possibly empty)
+ deactivate Controller
+end
+note over Controller,Repo
+ Unexpected repository failures propagate to the existing
+ error handler as 500; no successful response on failure.
+end note
+deactivate Routes
+@enduml

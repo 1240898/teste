@@ -1,0 +1,473 @@
+@startuml class_diagram
+title Class Diagram (Design) - AA01 Local Accounts and Authentication
+' Members shown are limited to the local registration, login, password change and recovery flows.
+allowmixing
+hide empty members
+skinparam noteBackgroundColor #FAFAFA
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam linetype ortho
+skinparam nodesep 24
+skinparam ranksep 32
+left to right direction
+
+package "Frontend · SPA" {
+  class App <<SPA shell>> {
+    - pathname: string
+    - screen: string
+    - recoveryToken: string
+    - hasLocalCredential: boolean
+    + navigate(path: string): void
+    + backToSignIn(): void
+    - onSignedIn(result: AuthTokenDTO): void
+  }
+
+  class AuthProvider <<AA03 integration>> {
+    + acceptAuthToken(result: AuthTokenDTO)
+    {field} In-memory authentication state
+  }
+  class "getCurrentUser" as CurrentUserApi <<AA03 API client>> {
+    + getCurrentUser(token: string)
+  }
+
+  package "Local account feature" {
+    class authApi <<API client>> {
+      + register(fields: RegisterUserDTO): Promise<UserResponseDTO>
+      + login(credentials: LoginDTO): Promise<AuthTokenDTO>
+      + changePassword(accessToken, currentPassword, newPassword): Promise<null>
+      + requestPasswordRecovery(email: string): Promise<{ message: string }>
+      + completePasswordRecovery(linkToken, newPassword): Promise<null>
+    }
+
+    class "send" as HttpTransport <<HTTP transport>> {
+      + send(path, method, body, accessToken?)
+      {field} REST/JSON via fetch · bearer header · error mapping
+    }
+
+    package "Views" {
+      class LocalRegistrationPage <<React component>> {
+        + onBackToSignIn: callback
+        - busy: boolean
+        - error: string
+        - created: boolean
+      }
+      class LocalSignInForm <<React component>> {
+        {field} + onAuthenticated: callback(AuthTokenDTO)
+        + onRequestRecovery: callback
+        - email: string
+        - password: string
+        - busy: boolean
+        - error: string
+      }
+      class SessionPanel <<React component>> {
+        + session: AuthTokenDTO
+        + onChangePassword: callback
+      }
+      class ChangePasswordPage <<React component>> {
+        + accessToken: string
+        + onBack: callback
+        - currentPassword: string
+        - newPassword: string
+        - confirmation: string
+        - busy: boolean
+        - error: string
+        - message: string
+      }
+      class PasswordRecoveryPage <<React component>> {
+        + token: string
+        + onBackToLogin: callback
+        - email: string
+        - newPassword: string
+        - confirmation: string
+        - busy: boolean
+        - error: string
+        - message: string
+      }
+    }
+    authApi --> HttpTransport
+  }
+
+  App --> LocalRegistrationPage
+  App ..> AuthProvider
+  AuthProvider ..> CurrentUserApi : resolves current user
+  App --> LocalSignInForm
+  App --> SessionPanel
+  App --> ChangePasswordPage
+  App --> PasswordRecoveryPage
+  LocalRegistrationPage --> authApi
+  LocalSignInForm --> authApi
+  ChangePasswordPage --> authApi
+  PasswordRecoveryPage --> authApi
+
+  note top of App
+    / opens sign-in. /register opens registration.
+    History API updates the pathname without reloading.
+    The recovery query is read on load.
+    AuthProvider state and screen state select the other views.
+    App passes props down and handles callbacks from views.
+  end note
+
+  note bottom of SessionPanel
+    AA04 owns the session lifecycle and logout.
+  end note
+}
+
+package "Backend · Onion Architecture" {
+  package "Presentation Layer (API)" {
+    package "routes" {
+      class UserRoutes {
+        - userController: UserController
+        - limiter: Middleware
+        + setupRoutes(): Router
+      }
+      class AuthRoutes {
+        - authController: AuthController
+        - authMiddleware: AuthMiddleware
+        - limiter: Middleware
+        + setupRoutes(): Router
+      }
+      class PasswordRecoveryRoutes {
+        - controller: PasswordRecoveryController
+        - limiter: Middleware
+        + setupRoutes(): Router
+      }
+      class "publicRateLimiter" as PublicRateLimiter <<shared middleware>> {
+        {field} Registration and local login
+        {field} Recovery request and completion
+      }
+    }
+
+    package "controllers" {
+      class UserController {
+        - userService: UserService
+        + register(req: Request, res: Response): Promise<void>
+      }
+      class AuthController {
+        - userService: UserService
+        + login(req: Request, res: Response): Promise<void>
+        + getCurrentUser(req: Request, res: Response): Promise<void>
+        + changePassword(req: Request, res: Response): Promise<void>
+      }
+      class PasswordRecoveryController {
+        - passwordRecoveryService: PasswordRecoveryService
+        + requestRecovery(req: Request, res: Response): Promise<void>
+        + completeRecovery(req: Request, res: Response): Promise<void>
+      }
+    }
+
+    class AuthMiddleware <<middleware>> {
+      - userService: UserService
+      + verifyToken(req, res, next): Promise<void>
+    }
+
+    UserRoutes --> UserController
+    AuthRoutes --> AuthController
+    AuthRoutes --> AuthMiddleware : protects password change
+    PasswordRecoveryRoutes --> PasswordRecoveryController
+    UserRoutes ..> PublicRateLimiter
+    AuthRoutes ..> PublicRateLimiter
+    PasswordRecoveryRoutes ..> PublicRateLimiter
+  }
+
+  package "Application Layer" {
+    package "services" {
+      class UserService {
+        - userRepository: IUserRepository
+        - passwordHasher: IPasswordHasher
+        - tokenService: ITokenService
+        - requestActivationInvitation: callback [0..1]
+        + register(dto: RegisterUserDTO): Promise<UserResponseDTO>
+        + login(dto: LoginDTO): Promise<AuthTokenDTO>
+        + assertCanAccess(user: User): void
+        + getCurrentUser(actor: AuthenticatedActor): Promise<UserResponseDTO>
+        + issueAuthToken(user: User): AuthTokenDTO
+        + changePassword(actor: object, dto: ChangePasswordDTO): Promise<void>
+        + resolveActor(token: string): Promise<object>
+      }
+      class PasswordRecoveryService {
+        - userRepository: IUserRepository
+        - recoveryRepository: IRecoveryTokenRepository
+        - tokenService: IRecoveryTokenService
+        - passwordHasher: IPasswordHasher
+        - delivery: IRecoveryDelivery
+        - unitOfWork: PostgresUnitOfWork
+        - validitySeconds: number
+        - webUrl: string
+        + requestRecovery(emailAddress: string): Promise<void>
+        + completeRecovery(linkToken: string, newPassword: string): Promise<void>
+      }
+      class "passwordPolicy" as PasswordPolicy <<functions>> {
+        + validatePassword(password, options?): void
+        + validatePasswordChange(currentPassword, newPassword, options?): void
+      }
+    }
+
+    package "DTOs" {
+      class RegisterUserDTO <<dto>> {
+        + name: string
+        + email: string
+        + password: string
+        + marketingConsent: boolean = false
+      }
+      class LoginDTO <<dto>> {
+        + email: string
+        + password: string
+      }
+      class ChangePasswordDTO <<dto>> {
+        + currentPassword: string
+        + newPassword: string
+      }
+      class AuthTokenDTO <<dto>> {
+        + accessToken: string
+        + tokenType: string = "Bearer"
+        + expiresIn: string
+        + hasLocalCredential: boolean
+        + user: UserResponseDTO
+      }
+      class UserResponseDTO <<dto>> {
+        + id: string
+        + name: string
+        + email: string
+        + roles: string[]
+        + active: boolean
+        + marketingConsent: boolean
+        + createdAt: string
+      }
+    }
+
+    class UserResponseMapper <<mapper>> {
+      {static} + toDTO(user: User): UserResponseDTO
+    }
+    class RecoveryTokenCandidate <<read model>> {
+      + userId: string
+    }
+
+    package "ports" {
+      interface IPasswordHasher {
+        + hash(plainText: string): Promise<string>
+        + compare(plainText: string, encodedHash: string): Promise<boolean>
+      }
+      interface ITokenService {
+        + expiresIn: string
+        + generateToken(payload: object): string
+        + verifyToken(token: string): object
+      }
+      interface IRecoveryTokenService {
+        + createLinkToken(): { plaintextToken: string, tokenHash: string }
+        + hashToken(plaintextToken: string): string
+      }
+      interface IRecoveryTokenRepository <<repository>> {
+        + replaceActive(userId, tokenHash, expiresAt, tx): Promise<boolean>
+        + findUsableForUpdate(tokenHash, tx): Promise<RecoveryTokenCandidate | null>
+        + consumeAndUpdatePassword(tokenHash, userId, passwordHash, tx): Promise<boolean>
+      }
+      interface IRecoveryDelivery {
+        + sendRecoveryLink(email: string, link: string): Promise<void>
+      }
+    }
+
+    UserService ..> PasswordPolicy
+    PasswordRecoveryService ..> PasswordPolicy
+    UserService ..> AuthTokenDTO
+    UserService ..> UserResponseMapper
+    UserResponseMapper ..> UserResponseDTO
+    AuthTokenDTO *-- UserResponseDTO : user
+    UserService --> IPasswordHasher
+    UserService --> ITokenService
+    PasswordRecoveryService --> IPasswordHasher
+    PasswordRecoveryService --> IRecoveryTokenService
+    PasswordRecoveryService --> IRecoveryTokenRepository
+    PasswordRecoveryService --> IRecoveryDelivery
+    IRecoveryTokenRepository ..> RecoveryTokenCandidate : returns
+  }
+
+  package "Domain Layer" {
+    interface IUserRepository <<repository>> {
+      + nextId(): Promise<string>
+      + findByEmail(email: Email): Promise<User | null>
+      + findById(id: UserId, tx?): Promise<User | null>
+      + save(user: User): Promise<User>
+      + updatePasswordIfCurrent(id: UserId, expectedHash: string, replacementHash: string): Promise<boolean>
+    }
+
+    package "model" {
+      class User <<entity>> <<aggregateRoot>> {
+        - id: UserId
+        - name: UserName
+        - email: Email
+        - password: Password [0..1]
+        - roles: UserRole[]
+        - marketingConsent: MarketingConsent
+        - active: boolean
+        + createdAt: Date
+        + updatedAt: Date
+        {static} + create(id, name, email, password, consent): User
+        + getId(): UserId
+        + getName(): UserName
+        + getEmail(): Email
+        + getPassword(): Password | null
+        + getRoles(): UserRole[]
+        + getMarketingConsent(): MarketingConsent
+        + hasLocalPassword(): boolean
+        + isActive(): boolean
+        + hasActiveRole(): boolean
+        + deactivate(): void
+        + changePassword(password: Password): void
+      }
+      class UserId <<vo>> {
+        - value: string
+        {static} + create(id: string): UserId
+        + getValue(): string
+      }
+      class UserName <<vo>> {
+        - name: string
+        {static} + create(name: string): UserName
+        + getValue(): string
+      }
+      class Email <<vo>> {
+        - emailAddress: string
+        {static} + create(email: string): Email
+        + getValue(): string
+      }
+      class Password <<vo>> {
+        - passwordHash: string
+        {static} + createFromHash(hash: string): Password
+        + getHash(): string
+      }
+      class MarketingConsent <<vo>> {
+        - consentGiven: boolean
+        - timestamp: number
+        {static} + create(consentGiven: boolean, timestamp?: Date): MarketingConsent
+        + isGiven(): boolean
+        + getTimestamp(): Date
+      }
+      enum UserRole <<enum>> {
+        ADMINISTRATOR
+        MANAGER
+        EMPLOYEE
+        CUSTOMER
+      }
+    }
+
+    IUserRepository ..> User : loads and saves
+    User "1" *-- "1" UserId
+    User "1" *-- "1" UserName
+    User "1" *-- "1" Email
+    User "1" *-- "0..1" Password
+    User "1" *-- "1" MarketingConsent
+    User --> "0..*" UserRole
+  }
+
+  package "Infrastructure Layer" {
+    package "persistence" {
+      class UserRepository <<repository adapter>> {
+        - database: Database
+        + nextId(): Promise<string>
+        + findByEmail(email: Email): Promise<User | null>
+        + findById(id: UserId, tx?): Promise<User | null>
+        + save(user: User): Promise<User>
+        + updatePasswordIfCurrent(id, expectedHash, replacementHash): Promise<boolean>
+      }
+      class UserMapper <<mapper>> {
+        {static} + toDomain(row: object): User
+        {static} + toPersistence(user: User): object
+      }
+      class PostgresRecoveryTokenRepository <<repository adapter>> {
+        + replaceActive(userId, tokenHash, expiresAt, tx): Promise<boolean>
+        + findUsableForUpdate(tokenHash, tx): Promise<RecoveryTokenCandidate | null>
+        + consumeAndUpdatePassword(tokenHash, userId, passwordHash, tx): Promise<boolean>
+      }
+      class PostgresUnitOfWork <<unit of work>> {
+        - database: Database
+        + withTransaction(work: callback): Promise<T>
+      }
+      class Database <<database adapter>> {
+        + query(text, values): Promise<QueryResult>
+        + withTransaction(work): Promise<T>
+      }
+    }
+
+    package "security" {
+      class BcryptPasswordHasher <<adapter>> {
+        + hash(plainText: string): Promise<string>
+        + compare(plainText: string, encodedHash: string): Promise<boolean>
+      }
+      class JwtTokenService <<adapter>> {
+        - secret: string
+        - expiresIn: string
+        - issuer: string
+        - audience: string
+        + generateToken(payload: object): string
+        + verifyToken(token: string): object
+      }
+      class RecoveryTokenServiceAdapter <<adapter>> {
+        + createLinkToken(): { plaintextToken: string, tokenHash: string }
+        + hashToken(plaintextToken: string): string
+      }
+      class SmtpRecoveryDeliveryAdapter <<adapter>> {
+        - host: string
+        - port: number
+        - secure: boolean
+        - user: string [0..1]
+        - password: string [0..1]
+        - from: string
+        - transporter: Transporter [0..1]
+        + sendRecoveryLink(email: string, link: string): Promise<void>
+      }
+    }
+
+    UserRepository ..> UserMapper
+    UserRepository --> Database
+    PostgresUnitOfWork --> Database
+  }
+
+  UserController --> UserService
+  AuthController --> UserService
+  AuthMiddleware --> UserService : resolves actor
+  PasswordRecoveryController --> PasswordRecoveryService
+
+  UserController ..> RegisterUserDTO
+  AuthController ..> LoginDTO
+  AuthController ..> ChangePasswordDTO
+
+  UserService --> IUserRepository
+  PasswordRecoveryService --> IUserRepository
+  UserService ..> User : creates / checks account
+  PasswordRecoveryService ..> User : reads email and credential
+  UserResponseMapper ..> User : maps account
+
+  IUserRepository <|.left. UserRepository
+  UserMapper ..> User : restores
+  IPasswordHasher <|.left. BcryptPasswordHasher
+  ITokenService <|.left. JwtTokenService
+  IRecoveryTokenService <|.left. RecoveryTokenServiceAdapter
+  IRecoveryTokenRepository <|.left. PostgresRecoveryTokenRepository
+  IRecoveryDelivery <|.left. SmtpRecoveryDeliveryAdapter
+  PostgresUnitOfWork <.. PasswordRecoveryService : runs recovery transaction
+}
+
+class "AA06 invitation request" as AA06 <<optional callback>>
+class "SMTP server" as SMTP <<external>>
+database "PostgreSQL" as PostgreSQL
+
+HttpTransport ..> UserRoutes
+HttpTransport ..> AuthRoutes
+HttpTransport ..> PasswordRecoveryRoutes
+CurrentUserApi ..> AuthRoutes : GET /api/v1/auth/me
+UserService ..> AA06 : saved user ID
+SmtpRecoveryDeliveryAdapter --> SMTP
+Database --> PostgreSQL
+PostgresRecoveryTokenRepository ..> PostgreSQL : SQL via transaction
+
+hide <<React component>> circle
+hide <<SPA shell>> circle
+hide <<API client>> circle
+hide <<HTTP transport>> circle
+hide AuthProvider circle
+hide CurrentUserApi circle
+hide <<functions>> circle
+hide PublicRateLimiter circle
+hide AA06 circle
+hide SMTP circle
+@enduml

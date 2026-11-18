@@ -1,0 +1,44 @@
+@startuml DMX_BCK06_PizzaSizeManagement
+
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam classAttributeIconSize 0
+hide methods
+
+title Domain Model Excerpt - BCK06 Pizza Size Management
+
+' -----------------------------------------------------------------------------
+' PIZZA SIZE AGGREGATE.
+' -----------------------------------------------------------------------------
+package "Pizza Size Aggregate" <<Rectangle>> {
+
+    class PizzaSize <<entity>> <<aggregateRoot>> {
+        + isActive : boolean
+    }
+
+    class PizzaSizeId <<vo>> {
+        + id : string
+    }
+
+    class PizzaSizeName <<vo>> {
+        + name : string
+    }
+
+    PizzaSize "1" *-- "1" PizzaSizeId : identified by >
+    PizzaSize "1" *-- "1" PizzaSizeName : named >
+}
+
+' -----------------------------------------------------------------------------
+' COMPONENT SIZE CONFIGURATION AGGREGATE.
+' -----------------------------------------------------------------------------
+package "Component Size Configuration Aggregate" <<Rectangle>> {
+    class ComponentSizeConfiguration <<entity>> <<aggregateRoot>> {
+    }
+}
+
+' -----------------------------------------------------------------------------
+' CROSS-AGGREGATE LINKS.
+' -----------------------------------------------------------------------------
+ComponentSizeConfiguration "0..*" --> "1" PizzaSize : for size >
+
+@enduml

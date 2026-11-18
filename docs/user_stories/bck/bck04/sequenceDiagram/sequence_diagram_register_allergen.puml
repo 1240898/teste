@@ -1,0 +1,124 @@
+@startuml sequence_diagram_register_allergen
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - BCK04 Register Allergen (POST /api/v1/allergens)
+
+actor Client as "Manager / Client"
+participant Routes as "AllergenRoutes"
+participant AuthMW as "AuthMiddleware"
+participant RoleMW as "RoleMiddleware"
+participant Validator as "ValidationMiddleware\n(Joi)"
+participant Controller as "AllergenController"
+participant Service as "AllergenService"
+participant Repo as "IAllergenRepository"
+database DB as "Database\n(Persistence)"
+participant Mapper as "AllergenMapper"
+
+Client -> Routes : POST /api/v1/allergens\n{ id: 1, name: "Gluten" }
+activate Routes
+
+' Validations & Middlewares
+Routes -> AuthMW : verifyToken(req, res, next)
+activate AuthMW
+alt Invalid or Missing Token
+    AuthMW --> Client : 401 Unauthorized\n{ error: { message: "No token provided" | "Invalid or expired token" } }
+else Token Valid
+    AuthMW --> Routes : next()
+    deactivate AuthMW
+
+    Routes -> RoleMW : requireRole("MANAGER")
+    activate RoleMW
+    alt Lacks MANAGER Role
+        RoleMW --> Client : 403 Forbidden\n{ error: { message: "Forbidden: insufficient permissions" } }
+    else Has MANAGER Role
+        RoleMW --> Routes : next()
+        deactivate RoleMW
+
+        Routes -> Validator : validate(req.body, registerAllergenSchema)
+        activate Validator
+        alt Malformed body (missing / unknown fields, id not a number, name not a string)
+            Validator --> Client : 400 Bad Request\n{ error: { message: "Invalid request body" } }
+        else Validation Success
+            Validator --> Routes : next()
+            deactivate Validator
+
+            ' Controller & Application Service Logic
+            Routes -> Controller : createAllergen(req, res)
+            activate Controller
+
+            Controller -> Service : createAllergen(registerAllergenDTO)
+            activate Service
+
+            Service -> Service : AllergenId.create(dto.id)\nAllergenName.create(dto.name)
+            alt id outside 1..14, blank or too long name (domain invariants)
+                Service --> Controller : throw AppError(400, "Allergen name cannot be empty" | "Allergen id must be an integer between 1 and 14")
+                Controller --> Client : 400 Bad Request
+            end
+
+            Service -> Repo : existsByName(allergenName)
+            activate Repo
+            Repo -> DB : SELECT EXISTS(... WHERE lower(name) = lower(name))
+            activate DB
+            DB --> Repo : exists (boolean)
+            deactivate DB
+            Repo --> Service : exists (boolean)
+            deactivate Repo
+
+            alt Allergen Name Already Exists
+                Service --> Controller : throw AppError(409, "Allergen name already exists")
+                Controller --> Client : 409 Conflict\n{ error: { message: "Allergen name already exists" } }
+            else Unique Name Confirmed
+                Service -> Repo : findById(allergenId)
+                activate Repo
+                Repo -> DB : SELECT ... FROM allergens WHERE id = id
+                activate DB
+                DB --> Repo : row / none
+                deactivate DB
+                Repo --> Service : allergen / null
+                deactivate Repo
+
+                alt Allergen Id Already Exists
+                    Service --> Controller : throw AppError(409, "Allergen id already exists")
+                    Controller --> Client : 409 Conflict\n{ error: { message: "Allergen id already exists" } }
+                else Unique Id Confirmed
+                    Service -> Mapper : toDomain({ id, name })
+                    activate Mapper
+                    Mapper --> Service : allergen (Aggregate Root)
+                    deactivate Mapper
+
+                    Service -> Repo : save(allergen)
+                    activate Repo
+                    Repo -> DB : INSERT INTO allergens ... RETURNING ...
+                    activate DB
+                    alt Concurrent duplicate (23505 on allergens_name_key / allergens_pkey)
+                        DB --> Repo : unique_violation
+                        Repo --> Service : throw AppError(409, "Allergen name/id already exists")
+                        Service --> Controller : propagate
+                        Controller --> Client : 409 Conflict
+                    else Inserted
+                        DB --> Repo : savedRow
+                        deactivate DB
+                        Repo --> Service : savedAllergen
+                        deactivate Repo
+
+                        Service -> Mapper : toDTO(savedAllergen)
+                        activate Mapper
+                        Mapper --> Service : allergenResponseDTO
+                        deactivate Mapper
+
+                        Service --> Controller : allergenResponseDTO
+                        deactivate Service
+
+                        Controller --> Client : 201 Created\nLocation: /api/v1/allergens/1\n{ id, name, createdAt, updatedAt }
+                        deactivate Controller
+                    end
+                end
+            end
+        end
+    end
+end
+deactivate Routes
+
+@enduml

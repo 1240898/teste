@@ -1,0 +1,77 @@
+@startuml
+title ARC04 — PostgreSQL startup verification
+hide footbox
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+
+participant "Startup\nbackend/index.js" as Startup
+participant "Database configuration\nloadDatabaseConfig()" as Config
+participant "Database adapter\ncreateDatabase()" as Adapter
+participant "Connection pool\npg.Pool" as Pool
+database PostgreSQL as DB
+participant "HTTP application\nExpress" as API
+
+activate Startup
+Startup -> Adapter: createDatabase()
+activate Adapter
+Adapter -> Config: Validate PG settings
+activate Config
+Config --> Adapter: Connection options
+deactivate Config
+Adapter -> Pool: Create pool and register error handler
+activate Pool
+Pool --> Adapter: Pool created
+deactivate Pool
+Adapter --> Startup: Database interface
+deactivate Adapter
+
+Startup -> Adapter: verify()
+activate Adapter
+Adapter -> Pool: query("SELECT 1 AS connected")
+activate Pool
+Pool -> DB: Connect and execute query
+activate DB
+
+alt Connection and query succeed
+    DB --> Pool: connected = 1
+else Connection or query fails
+    DB --> Pool: Connection / query error
+end
+deactivate DB
+Pool --> Adapter: Query result or rejection
+deactivate Pool
+
+alt Verification succeeds
+    Adapter --> Startup: Verification complete
+    deactivate Adapter
+    Startup -> API: app.locals.database = database
+    activate API
+    Startup -> API: listen(config.port)
+    API --> Startup: Server listening
+    deactivate API
+else Verification fails
+    Adapter --> Startup: Verification error
+    deactivate Adapter
+    Startup -> Startup: Log generic startup failure
+    Startup -> Adapter: close()
+    activate Adapter
+    Adapter -> Pool: end()
+    activate Pool
+    Pool --> Adapter: Pool closed
+    deactivate Pool
+    Adapter --> Startup: Cleanup complete
+    deactivate Adapter
+    Startup -> Startup: process.exitCode = 1
+end
+deactivate Startup
+
+note over Startup, Config
+Invalid configuration fails before pool creation.
+Startup reports failure and exits with code 1.
+end note
+
+note over Startup, API
+Migrations run separately through npm run db:migrate.
+The HTTP server starts only after verification succeeds.
+end note
+@enduml

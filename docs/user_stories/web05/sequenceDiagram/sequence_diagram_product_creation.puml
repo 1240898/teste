@@ -1,0 +1,103 @@
+@startuml sequence_diagram_product_creation
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - WEB05 Creation of a New Product (Manager Action)
+
+actor User as "Manager"
+participant Page as "ProductManagementPage\n(WEB05)"
+participant API as "productApi\n(WEB05 adapter)"
+participant Client as "apiClient\n(WEB01)"
+participant Routes as "ProductRoutes\n(Back-End)"
+participant AuthM as "AuthMiddleware"
+participant RoleM as "RoleMiddleware"
+participant ValMW as "ValidationMiddleware"
+participant Ctrl as "ProductController"
+participant Svc as "ProductService"
+participant Repo as "ProductRepository"
+participant Errors as "errorHandler"
+
+note over User, Repo
+    The Page validates the form; the adapter calls apiClient with a path relative to /api/v1
+    and the session access token. The back end remains authoritative (authentication,
+    MANAGER role, validation). Domain and persistence behaviour belongs to BCK05.
+end note
+
+User -> Page : submits product details
+Page -> Page : validate form and prepare payload
+
+alt Client-side validation fails
+    Page --> User : show localized field errors; preserve input
+else Client-side validation succeeds
+    Page -> API : create(token, payload)
+    API -> Client : post("/products", { accessToken, body })
+    Client -> Routes : HTTP POST /api/v1/products (+ Bearer token)
+    Routes -> AuthM : verifyToken
+    AuthM --> Routes : authenticated actor
+    Routes -> RoleM : requireRole("MANAGER")
+    RoleM --> Routes : role verified
+    Routes -> ValMW : validate(schemas.create)
+
+    alt Back-end body validation fails (400)
+        ValMW --> Routes : throws AppError(400)
+        Routes -> Errors : handle(error)
+        Errors --> Routes : error response
+        Routes --> Client : HTTP 400
+        Client --> API : throws ApiError(400)
+        API --> Page : throws error
+        Page --> User : show safe, localized form-level message (WEB04); preserve input
+    else Valid body
+        ValMW --> Routes : validated body
+        Routes -> Ctrl : createProduct(req, res)
+        Ctrl -> Svc : createProduct(dto)
+
+        alt Domain / business rejection (400 / 409)
+            Svc --> Ctrl : throws AppError
+            Ctrl --> Routes : propagates error
+            Routes -> Errors : handle(error)
+            Errors --> Routes : error response
+            Routes --> Client : HTTP 4xx
+            Client --> API : throws ApiError(4xx)
+            API --> Page : throws error
+            Page --> User : show safe, localized business feedback (WEB04); preserve input
+        else Server error (5xx, response received)
+            Svc -> Repo : save(product, tx)
+            Repo --> Svc : throws persistence error
+            Svc --> Ctrl : propagates error
+            Ctrl --> Routes : propagates error
+            Routes -> Errors : handle(error)
+            Errors --> Routes : error response
+            Routes --> Client : HTTP 5xx
+            Client --> API : throws ApiError(5xx)
+            API --> Page : throws error
+            Page --> User : outcome unconfirmed (BR 25); block resubmission; check the product list
+        else Timeout / network drop (no response, BR 25)
+            note over Routes, Repo
+                The server may have committed the product,
+                but the response never reaches the client.
+            end note
+            Client --> API : throws timeout / network error
+            API --> Page : throws error
+            Page --> User : outcome unconfirmed (BR 25); block resubmission; check the product list
+        else Product created (201)
+            Svc -> Repo : save(product, tx)
+            Repo --> Svc : product persisted
+            Svc --> Ctrl : ProductResponseDTO
+            Ctrl --> Routes : 201 Created
+            Routes --> Client : HTTP 201
+            Client --> API : parsed JSON
+            API --> Page : ProductDTO
+            Page --> User : show localized success feedback (WEB04)
+
+            Page -> API : search(token, currentFilters)
+            API -> Client : get("/products", { query, accessToken })
+            Client -> Routes : HTTP GET /api/v1/products
+            Routes --> Client : HTTP 200 OK
+            Client --> API : parsed JSON
+            API --> Page : ProductDTO[]
+            Page --> User : display refreshed list (BR 9)
+        end
+    end
+end
+@enduml

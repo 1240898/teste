@@ -1,0 +1,116 @@
+@startuml SD_BCK06_CreatePizzaSize
+title BCK06 - Create a pizza size
+autonumber
+skinparam maxMessageSize 105
+skinparam shadowing true
+
+actor Manager
+participant "PizzaSizeRoutes" as Routes
+participant "AuthMiddleware" as Auth
+participant "RoleMiddleware" as Roles
+participant "ValidationMiddleware\n(Joi)" as Validation
+participant "PizzaSizeController" as Controller
+participant "PizzaSizeService" as Service
+participant "PizzaSize\n(Domain)" as Domain
+participant "IPizzaSizeRepository\n: PizzaSizeRepository" as Repo
+participant "PizzaSizeResponseMapper" as Mapper
+database "PostgreSQL" as DB
+
+Manager -> Routes : POST /api/v1/pizza-sizes\n{ name }
+activate Routes
+activate Manager
+
+Routes -> Auth : verifyToken(req, res, next)
+activate Auth
+break Missing / invalid token
+Auth --> Routes : authentication error
+Routes --> Manager : 401 Unauthorized
+end
+Auth --> Routes : identity established
+deactivate Auth
+
+Routes -> Roles : requireRole('MANAGER')(req, res, next)
+activate Roles
+break Caller lacks Manager role
+Roles --> Routes : authorization error
+Routes --> Manager : 403 Forbidden
+end
+Roles --> Routes : next()
+deactivate Roles
+
+Routes -> Validation : validate(req.body, createSchema)
+activate Validation
+break Invalid body payload (name required)
+Validation --> Manager : 400 Bad Request
+end
+Validation --> Routes : next()
+deactivate Validation
+
+Routes -> Controller : create(req, res, next)
+activate Controller
+
+Controller -> Service : create(dto)
+activate Service
+
+Service -> Service : PizzaSizeName.create(dto.name)
+break Invalid name (domain error)
+Service --> Controller : domain error
+Controller --> Manager : 400 Bad Request
+end
+
+Service -> Repo : findByName(name)
+activate Repo
+Repo -> DB : SELECT * FROM pizza_sizes WHERE lower(name) = lower($1)
+activate DB
+DB --> Repo : row or null
+deactivate DB
+Repo --> Service : pizzaSize or null
+deactivate Repo
+
+break Size name already exists (Case-insensitive)
+Service --> Controller : duplicate name error
+Controller --> Manager : 409 Conflict
+end
+
+Service -> Repo : nextId()
+activate Repo
+Repo -> DB : SELECT nextval('pizza_size_id_seq')
+activate DB
+DB --> Repo : sequenceValue
+deactivate DB
+Repo --> Service : PizzaSizeId ("PSIZE-" + zero-padded value)
+deactivate Repo
+
+Service -> Domain : PizzaSize.create(pizzaSizeId, name)\n(active = true)
+activate Domain
+Domain --> Service : pizzaSize instance
+deactivate Domain
+
+Service -> Repo : save(pizzaSize)
+activate Repo
+Repo -> DB : INSERT INTO pizza_sizes (id, name, active) ...
+activate DB
+DB --> Repo : success / error
+deactivate DB
+Repo --> Service : saved instance
+deactivate Repo
+
+break Write failure
+Service --> Controller : error
+Controller --> Manager : 500 Internal Server Error
+end
+
+Service -> Mapper : toDTO(pizzaSize)
+activate Mapper
+Mapper --> Service : response DTO
+deactivate Mapper
+
+Service --> Controller : PizzaSizeResponseDTO
+Controller --> Manager : 201 Created\n{ id, name, active }
+
+deactivate Service
+deactivate Controller
+deactivate Routes
+deactivate Manager
+
+@enduml

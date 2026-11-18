@@ -1,0 +1,42 @@
+@startuml sequence_diagram_list
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+title Sequence Diagram - BCK10 List Predefined Pizzas for Management
+
+actor Manager
+participant Routes as "PredefinedPizzaRoutes / Express"
+participant Auth as "AuthMiddleware (BCK01)"
+participant Roles as "RoleMiddleware (BCK01)"
+participant Controller as "PredefinedPizzaController"
+participant Service as "PredefinedPizzaManagementService"
+participant ProductRepository as "ProductRepository (BCK05)"
+participant Mapper as "PredefinedPizzaResponseMapper"
+database DB as "PostgreSQL"
+
+Manager -> Routes : GET /api/v1/predefined-pizzas
+Routes -> Auth : verifyToken(req)
+Auth --> Routes : next() with authenticated req.user
+Routes -> Roles : requireRole(MANAGER)
+Roles --> Routes : next() when authorized
+Routes -> Controller : list(req, res)
+Controller -> Service : list()
+Service -> ProductRepository : listPredefinedPizzas()
+ProductRepository -> DB : SELECT component-based Sellable Products with composition
+DB --> ProductRepository : Product rows and composition items
+ProductRepository --> Service : configured PredefinedPizza Products
+loop each configured Product
+  Service -> Mapper : toDTO(Product)
+  Mapper --> Service : { id, componentIds }
+end
+Service --> Controller : response DTO list
+Controller --> Manager : 200 OK + array (empty if none are configured)
+
+note over Manager,DB
+  The list contains configured component-based Sellable Products only.
+  It returns the shared Product ID and default composition. BCK11 owns
+  customer-facing prices and current size availability. Authentication,
+  authorization or repository errors are forwarded through Express to the
+  global handler and mapped to the shared JSON error response.
+end note
+@enduml

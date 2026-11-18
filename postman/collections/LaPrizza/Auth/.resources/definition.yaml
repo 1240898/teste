@@ -1,0 +1,22 @@
+$kind: collection
+auth:
+  - id: 0c16bcde-f448-47a0-b339-c041e07e2b50
+    type: bearer
+    name: Bearer Token
+    credentials:
+      token: "{{accessToken}}"
+order: 1000
+description: |-
+  Covers all authentication and user management operations for the LaPrizza API.
+
+  **Authentication**
+  - Login as Manager — authenticates a manager and returns a JWT bearer token used to authorise subsequent requests.
+
+  **User Registration**
+  - Register New User — creates a new customer account (name, email, password, marketing consent).
+  - Register Staff Member — demonstrates public signup; public registration still assigns only the `CUSTOMER` role. Use Invite Worker for administrator-managed staff accounts.
+
+  **User Administration** *(requires an active Administrator role)*
+  - Invite Worker — creates or reuses an account, assigns a role, and sends a LOCAL or EXTERNAL activation invitation.
+  - List Users — retrieves the full list of registered users.
+  - Change Employee Role — updates a user's assigned roles. The Manager login in this collection verifies that non-administrators are denied.

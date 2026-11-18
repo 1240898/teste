@@ -1,0 +1,157 @@
+@startuml sequence_diagram_update
+autonumber
+skinparam maxMessageSize 90
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+actor Manager
+participant "ComponentTypeRoutes" as Routes
+participant "ComponentTypeController" as Controller
+participant "ComponentTypeService" as Service
+participant "IComponentTypeRepository" as Repo
+participant "IUnitOfWork" as UoW
+participant "IComponentTypeImpactGuard" as Impact
+participant "PizzaComponentType" as Type
+participant "ComponentTypeName" as Name
+participant "ComponentTypeResponseMapper" as Mapper
+database "PostgreSQL" as DB
+title BCK07 - Partially update a component type
+Manager -> Routes : PATCH /api/v1/pizza-component-types/{id}\n{ maxQuantity: null }
+activate Routes
+participant "AuthMiddleware" as Auth
+participant "RoleMiddleware" as Roles
+participant "ValidationMiddleware" as Validator
+Routes -> Auth : verifyToken(req, res, next)
+activate Auth
+break Missing, invalid or expired token
+ Auth --> Manager : 401 Unauthorized
+end
+Auth --> Routes : identity established
+deactivate Auth
+Routes -> Roles : requireRole(MANAGER)
+activate Roles
+break Caller lacks Manager role
+ Roles --> Manager : 403 Forbidden
+end
+Roles --> Routes : authorized
+deactivate Roles
+Routes -> Validator : validate(req)
+activate Validator
+break Malformed identifier or fields / invalid count representation
+ Validator --> Manager : 400 Bad Request
+end
+Validator --> Routes : request valid
+deactivate Validator
+Routes -> Controller : update(req, res, next)
+activate Controller
+Controller -> Service : update(id, changes)
+activate Service
+Service -> UoW : withTransaction(work)
+activate UoW
+UoW -> DB : BEGIN
+activate DB
+DB --> UoW : transaction started
+deactivate DB
+UoW -> Service : work(tx)
+activate Service
+Service -> Repo : findByIdForUpdate(id, tx)
+activate Repo
+Repo --> Service : current or null
+deactivate Repo
+break Type not found
+ Service --> UoW : NotFound
+ UoW -> DB : ROLLBACK
+ activate DB
+ DB --> UoW : rolled back
+ deactivate DB
+ UoW --> Controller : error propagated through Service
+ Controller --> Manager : 404 Not Found
+end
+Service -> Service : mergeChanges(current, changes)
+activate Service
+note right of Service
+ Omitted fields retain current values.
+ Explicit maxQuantity = null means unbounded.
+ Only fields present in changes are applied.
+end note
+Service --> Service : merged
+ deactivate Service
+Service -> Name : create(merged.name)
+activate Name
+Name --> Service : name
+deactivate Name
+Service -> Type : revised(name, merged.assemblyOrder, merged.minQuantity, merged.maxQuantity)
+activate Type
+Type --> Service : validated candidate or domain error
+deactivate Type
+break Resulting state has min < 0, non-integer counts or finite max < min
+ Service --> UoW : validation error
+ UoW -> DB : ROLLBACK
+ activate DB
+ DB --> UoW : rolled back
+ deactivate DB
+ UoW --> Controller : error propagated through Service
+ Controller --> Manager : 400 Bad Request
+end
+Service -> Repo : existsByOrder(merged.assemblyOrder, id, tx)
+activate Repo
+Repo --> Service : occupied
+deactivate Repo
+break Assembly order belongs to another type
+ Service --> UoW : Conflict
+ UoW -> DB : ROLLBACK
+ activate DB
+ DB --> UoW : rolled back
+ deactivate DB
+ UoW --> Controller : error propagated through Service
+ Controller --> Manager : 409 Conflict
+end
+Service -> Impact : assertSafeUpdate(current, candidate, tx)
+activate Impact
+break Safety cannot be established
+ Impact --> Service : operation cannot proceed
+ Service --> UoW : abort without persistence
+ UoW -> DB : ROLLBACK
+ activate DB
+ DB --> UoW : rolled back
+ deactivate DB
+ UoW --> Controller : failure propagated through Service
+ Controller --> Manager : operation rejected
+end
+Impact --> Service : consistency check passed
+deactivate Impact
+Service -> Repo : save(candidate, tx)
+activate Repo
+Repo -> DB : parameterized UPDATE
+activate DB
+break Unique-order race, constraint violation or persistence failure
+ DB --> Repo : persistence error
+ Repo --> UoW : error propagated through Service
+ UoW -> DB : ROLLBACK
+ activate DB
+ DB --> UoW : rolled back
+ deactivate DB
+ UoW --> Controller : error propagated through Service
+ Controller --> Manager : 409 for known conflicts; 500 otherwise
+end
+DB --> Repo : persisted
+deactivate DB
+Repo --> Service : void
+deactivate Repo
+Service -> Mapper : toDTO(candidate)
+activate Mapper
+Mapper --> Service : response
+deactivate Mapper
+Service --> UoW : response
+deactivate Service
+UoW -> DB : COMMIT
+activate DB
+DB --> UoW : committed
+deactivate DB
+UoW --> Service : committed response
+deactivate UoW
+Service --> Controller : response
+deactivate Service
+Controller --> Manager : 200 OK + ComponentTypeResponseDTO
+deactivate Controller
+deactivate Routes
+@enduml

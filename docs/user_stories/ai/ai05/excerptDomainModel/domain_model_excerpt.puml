@@ -1,0 +1,113 @@
+@startuml AI05-Domain-Model-Excerpt
+' Excerpt aligned with AI01 (BOM result) and AI06 (planning inputs).
+title AI05 - Artificial Intelligence service access
+hide empty members
+hide methods
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam nodesep 28
+skinparam ranksep 48
+
+package "Service access (AI05)" as Access {
+    class "Requester" as Requester {
+        Authenticated user or service identity
+        Active website roles
+    }
+    class "Calculation request" as Request {
+        Request identity
+        Calculation kind (BOM | Requirements planning)
+        Submitted at
+    }
+    class "Planning request" as PlanRequest {
+        Planning reference date
+    }
+    class "Calculation execution" as Execution {
+        Execution identity
+        Outcome
+        Started and finished at
+    }
+    enum "Execution outcome" as Outcome {
+        SUCCEEDED
+        INVALID_INPUT
+        MISSING_INFORMATION
+        SERVICE_UNAVAILABLE
+    }
+    class "Validation issue" as Issue {
+        Affected field or item
+        Reason
+    }
+    class "Calculation result" as Result {
+        Simulation status
+    }
+    class "Calculation warning" as Warning {
+        Warning code
+        Concerned item
+    }
+    class "Operational change request" as Change {
+        Change kind (stock update | purchase order)
+        Explicit confirmation
+    }
+
+    Requester "1" --> "0..*" Request : submits
+    Request <|-- PlanRequest
+    Request "1" *-- "0..1" Execution : produces
+    Execution "0..*" --> "1" Outcome : ends with
+    Execution "1" *-- "0..*" Issue : explains
+    Execution "1" *-- "0..1" Result : returns
+    Result "1" *-- "0..*" Warning : reports
+    Requester "1" --> "0..*" Change : confirms
+    Change "0..*" --> "1" Result : based on
+}
+
+package "Referenced results (AI01 / AI02)" as Results {
+    class "BOM result" as BomResult <<AI01>> {
+        Execution identity
+    }
+    class "Requirements plan" as Plan <<AI02>>
+}
+
+package "Referenced planning inputs (AI06)" as Inputs {
+    class "Planning scenario" as Scenario {
+        Scenario identity
+        Demand source and selected period
+    }
+    class "Input provenance" as Provenance {
+        Source, version or retrieval time
+        Simulated input
+    }
+    class "Confirmed supplier scenario" as SupplierScenario {
+        Scenario identity and version
+    }
+
+    Scenario "1" *-- "1..*" Provenance : identifies inputs
+    Scenario "0..*" --> "0..1" SupplierScenario : selected for replenishment
+}
+
+Result <|-- BomResult
+Result <|-- Plan
+Request "0..*" --> "1" Scenario : calculated for
+
+note right of Execution
+    Only SUCCEEDED returns a result.
+    INVALID_INPUT and MISSING_INFORMATION list
+    validation issues; SERVICE_UNAVAILABLE
+    returns neither a result nor issues.
+end note
+
+note bottom of Change
+    A calculation never changes stock or creates
+    purchase orders. Changes are separate, explicit
+    requests applied by the responsible back-end module.
+end note
+
+note left of Requester
+    Access restricted to authorized roles
+    or service identities (Table 1, AA05).
+end note
+
+note right of Result
+    Simulation status follows Input provenance:
+    any simulated input makes the result a simulation.
+end note
+@enduml

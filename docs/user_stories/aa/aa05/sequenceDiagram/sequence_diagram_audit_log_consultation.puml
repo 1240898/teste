@@ -1,0 +1,136 @@
+@startuml sequence_diagram_audit_consultation
+skinparam shadowing true
+autonumber
+title AA05 - Security Audit Log Consultation by Administrator
+
+actor "System User" as User
+participant "ProtectedRoute" as ProtectedRoute
+participant "AuthContext" as AuthContext
+participant "AccessDeniedPage" as DeniedPage
+participant "apiClient" as Client
+participant "FeatureRoutes" as Routes
+participant "AuthorizationAuditMiddleware" as AuditMW
+participant "AuthMiddleware" as Auth
+participant "UserService" as UserService
+participant "RoleMiddleware" as RoleMW
+participant "AuthorizationPolicy" as Policy
+participant "SecurityAuditController" as Controller
+participant "SecurityAuditService" as Service
+participant "ISecurityAuditRepository" as AuditRepo
+database PostgreSQL as DB
+participant "ISecurityLogger" as Logger
+
+User -> ProtectedRoute : navigate to audit logs view
+activate ProtectedRoute
+activate User
+ProtectedRoute -> AuthContext : checkAccess(['ADMINISTRATOR'])
+activate AuthContext
+AuthContext --> ProtectedRoute : user roles (e.g., ['CUSTOMER'] or ['ADMINISTRATOR', 'EMPLOYEE'])
+deactivate AuthContext
+
+alt user lacks ADMINISTRATOR role locally in SPA
+  ProtectedRoute -> DeniedPage : render AccessDeniedPage
+  activate DeniedPage
+  DeniedPage --> User : show denied view
+  deactivate DeniedPage
+else local SPA check passes (has ADMINISTRATOR role)
+  ProtectedRoute -> Client : GET /api/v1/security-audit-logs
+  activate Client
+  Client -> Routes : HTTP GET + Authorization header
+  activate Routes
+  Routes -> AuditMW : auditDenials(req, res, next)
+  activate AuditMW
+  AuditMW --> Routes : next()
+
+  Routes -> Auth : verifyToken(request)
+  activate Auth
+  Auth -> UserService : resolveActor(token)
+  activate UserService
+  UserService --> Auth : current Actor with roles
+  deactivate UserService
+
+  alt unauthenticated or invalid token
+    Auth --> Routes : 401 Unauthorized
+    deactivate Auth
+    Routes --> AuditMW : completed response (401)
+    AuditMW -> Logger : record(UNAUTHENTICATED, statusCode=401, reasonCode=MISSING_OR_INVALID_TOKEN)
+    activate Logger
+    Logger --> AuditMW : recorded
+    deactivate Logger
+    AuditMW --> Client : 401 Unauthorized (no-store)
+  else authenticated actor
+    Auth --> Routes : request.user = Actor
+    deactivate Auth
+    Routes -> RoleMW : requireOperation('securityAudit.read')
+    activate RoleMW
+    RoleMW -> Policy : rolesFor('securityAudit.read')
+    activate Policy
+    Policy --> RoleMW : ['ADMINISTRATOR']
+    deactivate Policy
+
+    alt actor does not possess ADMINISTRATOR role (even if multi-role, e.g., EMPLOYEE + CUSTOMER)
+      RoleMW --> Routes : 403 Forbidden
+      deactivate RoleMW
+      Routes --> AuditMW : completed response (403)
+      AuditMW -> Logger : record(FORBIDDEN, statusCode=403, reasonCode=ROLE_NOT_ALLOWED)
+      activate Logger
+      Logger --> AuditMW : recorded
+      deactivate Logger
+      AuditMW --> Client : 403 Forbidden (no-store)
+    else actor possesses ADMINISTRATOR role (e.g., ADMINISTRATOR or ADMINISTRATOR + MANAGER)
+      RoleMW --> Routes : next()
+      deactivate RoleMW
+      Routes -> Controller : search(req, res)
+      activate Controller
+      Controller -> Service : search(criteria)
+      activate Service
+      Service -> AuditRepo : search(criteria)
+      activate AuditRepo
+      AuditRepo -> DB : SELECT * FROM security_audit_logs ...
+      activate DB
+      DB --> AuditRepo : audit log rows
+      deactivate DB
+      AuditRepo --> Service : SecurityAuditSearchResult
+      deactivate AuditRepo
+      Service --> Controller : SecurityAuditSearchResult
+      deactivate Service
+      Controller --> Routes : 200 OK (audit logs data)
+      deactivate Controller
+      Routes --> AuditMW : completed successful response
+      AuditMW --> Client : 200 OK (audit logs data)
+    end
+  end
+
+  deactivate AuditMW
+  deactivate Routes
+  Client --> ProtectedRoute : response
+  deactivate Client
+  
+  alt API response is 401 Unauthorized
+    ProtectedRoute --> User : redirect to login (AA04 session expiration flow)
+  else API response is 403 Forbidden
+    ProtectedRoute -> DeniedPage : render AccessDeniedPage
+    activate DeniedPage
+    DeniedPage --> User : show denied feedback without protected data
+    deactivate DeniedPage
+  else request succeeds
+    ProtectedRoute --> User : display audit logs dashboard
+  end
+end
+
+deactivate ProtectedRoute
+deactivate User
+
+note over AuditMW,Logger
+  Audit writes are retried once for transient persistence failure. If retry
+  fails, preserve the original denial and report a sanitized requestId through
+  protected operational alerting. This does not change the AA04 401 session flow.
+end note
+
+note over RoleMW,Policy
+  Access is permitted if the user has the ADMINISTRATOR role among their assigned roles
+  (multi-role users with ADMINISTRATOR are allowed). Having other roles does not block access,
+  but lacking ADMINISTRATOR results in HTTP 403. The API remains authoritative
+  (proposed BR 8, pending confirmation).
+end note
+@enduml

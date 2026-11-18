@@ -1,0 +1,92 @@
+@startuml class_diagram
+!pragma layout smetana
+skinparam classAttributeIconSize 0
+hide empty members
+title WEB01 - Application structure and module slot
+
+package "Application and routing" {
+  class App <<component>> {
+    + App(modules: ModuleLoaders = {}): ReactNode
+  }
+  class BrowserRouter <<React Router>>
+  class Routes <<React Router>>
+  class AppShell <<component>> {
+    + enabledModules: RouteDefinition[]
+    - health: checking | ok | unreachable
+    - attempt: number
+  }
+  class "Account routes" as AccountRoutes <<component group>>
+  class moduleRoutes <<registry>>
+  class RouteDefinition <<record>> {
+    + id: string
+    + path: string
+    + label: string
+    + roles: UserRole[]
+  }
+}
+
+package "Module slot" {
+  class ModulePage <<component>> {
+    + roles: UserRole[]
+    + load: ModuleLoader
+  }
+  class ProtectedRoute <<AA03 component>> {
+    + requiredRoles: UserRole[]
+    + children: ReactNode
+  }
+  class ConfirmedModule <<component>> {
+    - confirmed: boolean
+    - request: ModuleRequest
+  }
+  class LazyModule <<component>> {
+    + load: ModuleLoader
+    + request: ModuleRequest
+    - attempt: number
+    - retry(): void
+  }
+  class ModuleErrorBoundary <<React class>> {
+    + onRetry: () => void
+    - state.failed: boolean
+    {static} + getDerivedStateFromError(): State
+    + render(): ReactNode
+  }
+  class "Feature page" as FeaturePage <<extension>> {
+    + request: ModuleRequest
+  }
+  class "Feature REST adapter" as FeatureApi <<extension>>
+  interface ModuleRequest <<function contract>> {
+    + request(method, path, options?): Promise<JSON | null>
+  }
+}
+
+class AuthProvider <<AA03/AA04 component>>
+class apiClient <<module>>
+
+App --> BrowserRouter : mounts
+App ..> moduleRoutes : filters by supplied loaders
+App ..> AuthProvider : mounts shared provider
+moduleRoutes --> "3" RouteDefinition : entries
+BrowserRouter --> AppShell : provides router context
+AppShell ..> RouteDefinition : filters navigation
+AppShell ..> AuthProvider : reads roles via useAuth
+AppShell --> Routes : renders supplied children
+Routes --> AccountRoutes : account and callback
+Routes --> ModulePage : enabled feature route
+ModulePage --> ProtectedRoute : wraps child
+ModulePage --> ConfirmedModule : passes as guarded child
+ProtectedRoute ..> AuthProvider : hasAnyRole()
+ConfirmedModule ..> AuthProvider : refresh()
+ConfirmedModule ..> apiClient : scoped REST calls
+ConfirmedModule --> LazyModule : passes load and request
+LazyModule --> ModuleErrorBoundary : catches section errors
+LazyModule ..> FeaturePage : lazy(load)
+FeaturePage ..> FeatureApi : business operations
+FeatureApi ..> ModuleRequest : calls injected function
+ConfirmedModule ..> ModuleRequest : provides
+
+note bottom of ModuleRequest
+Features can pass body, query and signal.
+A ModuleLoader imports a default-exported page.
+ModuleLoaders maps route IDs to their loaders.
+end note
+@enduml

@@ -1,0 +1,134 @@
+@startuml sequence_diagram_active_configuration
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - WEB06 Retrieve the Active Kitchen Configuration and load its assets (viewer contract 3.4.5)
+
+actor User as "Restaurant Staff or\nLaPrizza Manager"
+participant Viewer as "KitchenViewerPage\n(VIS01)"
+participant Loader as "SceneAssetLoader\n(VIS01, Three.js loaders)"
+participant Files as "Asset files\nGET /api/v1/kitchen-assets/files/*"
+participant Api as "kitchenConfigurationApi\n.getActive()"
+participant Req as "ModuleRequest\n(WEB01) + apiClient"
+participant AuthMW as "AuthMiddleware"
+participant RoleMW as "RoleMiddleware\nrequireRole(MANAGER, EMPLOYEE)"
+participant Ctrl as "KitchenConfigurationController"
+participant Service as "KitchenConfigurationService"
+participant Repo as "IKitchenConfigurationRepository"
+participant Catalogue as "IKitchenAssetCatalogue"
+database PG as "PostgreSQL"
+
+note over User, PG
+    WEB06 owns this endpoint, its JSON contract and the viewer contract (3.4.5).
+    VIS01 implements the viewer states and the rendering. The front end contains NO layout:
+    every scene comes from this answer (AC 7) and is shown only when complete (AC 8).
+end note
+
+User -> Viewer : opens /kitchen/viewer\n(or "Open / reload" after an activation, SD 3)
+activate Viewer
+Viewer --> User : state = loading
+Viewer -> Api : getActive(signal)
+activate Api
+Api -> Req : request("GET", "/kitchen-configurations/active")
+activate Req
+Req -> AuthMW : GET /api/v1/kitchen-configurations/active\nAuthorization: Bearer <token>
+activate AuthMW
+
+alt A) No / invalid / expired token
+    AuthMW --> Req : 401
+else B) Authenticated
+    AuthMW -> RoleMW : next()
+    activate RoleMW
+    alt B1) Roles without MANAGER / EMPLOYEE (CUSTOMER, ADMINISTRATOR alone)
+        RoleMW --> Req : 403 "Forbidden: insufficient permissions"
+    else B2) MANAGER or EMPLOYEE
+        RoleMW -> Ctrl : getActiveConfiguration(req, res)
+        activate Ctrl
+        Ctrl -> Service : getActiveConfiguration()
+        activate Service
+        Service -> Repo : findActive()
+        activate Repo
+        Repo -> PG : SELECT ... FROM kitchen_configurations WHERE status = 'ACTIVE'
+        note right of PG : at most one row (partial unique index)
+        PG --> Repo : row / none
+        Repo --> Service : configuration / null
+        deactivate Repo
+        alt B2.1) None active yet
+            Service --> Ctrl : throw AppError("No active kitchen configuration", 404)
+        else B2.2) Active found
+            Service -> Catalogue : findByIds(layout.referencedAssetIds())
+            activate Catalogue
+            Catalogue -> PG : SELECT id, kind, format, path FROM kitchen_assets\nWHERE id = ANY($1::varchar[])
+            PG --> Catalogue : asset rows
+            Catalogue --> Service : Map<assetId, KitchenAsset>
+            deactivate Catalogue
+            note right of Service
+                The FK ON DELETE RESTRICT guarantees only that each
+                referenced asset still has a CATALOGUE ENTRY (a missing
+                row would be a 500). It does NOT guarantee that the
+                file can be downloaded: files were checked at seed and
+                at activation, but the viewer still verifies them below.
+            end note
+            Service -> Service : mapper.toActive(configuration, assets)\nurl = KITCHEN_ASSETS_PUBLIC_URL + "/" + asset.path
+            Service --> Ctrl : ActiveKitchenConfigurationDTO
+        end
+        deactivate Service
+        Ctrl --> Req : 200 { id, name, status: "ACTIVE", version, activatedAt,\ncontent, assets } / 404\nCache-Control: no-store
+        deactivate Ctrl
+    end
+    deactivate RoleMW
+end
+deactivate AuthMW
+
+Req --> Api : DTO / throws ApiError
+deactivate Req
+note right of Req : 401 / 403: role re-check rule of\nWEB01 SD 3 / WEB03 SD 3
+Api --> Viewer : DTO / ApiError
+deactivate Api
+
+alt 200
+    Viewer -> Viewer : status = "ACTIVE" and content.schemaVersion = 1 ?
+    alt no
+        Viewer --> User : state = invalid: "The active kitchen configuration\ncannot be displayed" (no scene)
+    else yes
+        Viewer --> User : state = loading ("Loading 3D models and textures")
+        Viewer -> Loader : preloadAll(response.assets, timeout = 30 s)
+        activate Loader
+        par for every entry of assets (models and textures)
+            Loader -> Files : GET <asset.url>
+            activate Files
+            alt file present
+                Files --> Loader : 200 + bytes
+                Loader -> Loader : decode (GLTFLoader / TextureLoader)
+            else file missing
+                Files --> Loader : 404
+            end
+            deactivate Files
+        end
+        alt every asset loaded and decoded before the timeout
+            Loader --> Viewer : Map<assetId, Object3D | Texture>
+            Viewer -> Viewer : build scene from content + loaded assets\n(scene modules VIS02-VIS05)
+            Viewer --> User : state = ready: renders the layout of "Extended line"\n(KCF-00002) - the COMPLETE scene only
+        else any asset failed (404, decode error or timeout)
+            Loader -> Loader : dispose everything already loaded
+            Loader --> Viewer : AssetLoadError { assetId: "AST-MDL-OVEN-DOME-01" }
+            Viewer --> User : state = error (asset-unavailable):\n"The 3D file AST-MDL-OVEN-DOME-01 of the active configuration\nis unavailable" + [Retry]\nNO partial scene, NO previous scene, NO default layout
+        end
+        deactivate Loader
+    end
+else 404
+    Viewer --> User : state = empty: "No kitchen configuration is active.\nA Manager must activate one." (no default layout)
+else 5xx / network / timeout
+    Viewer --> User : state = error with retry (no previous or embedded layout)
+else 401 / 403
+    Viewer --> User : state = expired / denied (WEB03 reaction)
+end
+
+opt User clicks Retry / Reload
+    User -> Viewer : Retry
+    Viewer -> Viewer : dispose current scene (if any);\nrepeat from step "getActive" - a failure does not\nbring back the previous scene
+end
+deactivate Viewer
+
+@enduml

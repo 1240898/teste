@@ -1,0 +1,434 @@
+@startuml class_diagram
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam linetype ortho
+
+title Class Diagram (Design) - AA03 Internal Role Resolution
+
+' -----------------------------------------------------------------------------
+' FRONT-END (SPA) - only the AA03 touch points (SPA shell owned by WEB01/WEB02,
+' role-based navigation owned by WEB03)
+' -----------------------------------------------------------------------------
+package "Front-End (SPA)" <<Rectangle>> {
+    class AuthProvider {
+        - currentUser: UserResponseDTO | null
+        - status: "loading" | "authenticated" | "denied" | "guest"
+        + loadCurrentUser(): Promise<void>
+        + hasAnyRole(...roles: string[]): boolean
+        + clear(): void
+    }
+    note right of AuthProvider
+        Roles are taken ONLY from GET /auth/me
+        (never decoded from the JWT, never chosen by the user).
+        Called after local login (AA01), after Google login (AA02)
+        and on every page reload.
+        Any non-200 answer -> currentUser = null:
+        no protected navigation is shown (fail closed).
+    end note
+
+    class ProtectedRoute {
+        + requiredRoles: string[]
+        + render(): ReactNode
+    }
+
+    class AccessDeniedPage {
+        + message: string
+        + render(): ReactNode
+    }
+
+    class authApi {
+        + login(email: string, password: string): Promise<AuthTokenDTO>
+        + getCurrentUser(): Promise<UserResponseDTO>
+        + parseCurrentUser(body: unknown): UserResponseDTO
+    }
+    note bottom of authApi
+        parseCurrentUser() throws unless: id "USR-...", name/email strings,
+        roles = non-empty array of DISTINCT known roles
+        {ADMINISTRATOR, MANAGER, EMPLOYEE, CUSTOMER}, active === true.
+        A malformed body is treated like an error answer:
+        currentUser = null, token discarded (fail closed, D10).
+    end note
+}
+
+' -----------------------------------------------------------------------------
+' PRESENTATION LAYER (API)
+' -----------------------------------------------------------------------------
+package "Presentation Layer (API)" <<Rectangle>> {
+    class AuthRoutes {
+        - authController: AuthController
+        - authMiddleware: AuthMiddleware
+        - limiter: Middleware
+        + setupRoutes(): Router
+    }
+    note right of AuthRoutes
+        New route:
+        GET /auth/me -> authMiddleware.verifyToken
+        Existing routes unchanged:
+        POST /auth/login (AA01)
+        POST /auth/google/* (AA02)
+    end note
+
+    class AuthController {
+        - userService: UserService
+        - externalAuthService: ExternalAuthenticationService
+        + login(req: Request, res: Response): Promise<void>
+        + getCurrentUser(req: Request, res: Response): Promise<void>
+    }
+
+    class UserRoutes {
+        - userController: UserController
+        - authMiddleware: AuthMiddleware
+        - limiter: Middleware
+        + setupRoutes(): Router
+    }
+    note bottom of UserRoutes
+        POST /users/register: Joi schema
+        has no "roles" field and rejects
+        unknown fields (400) -> a user can
+        never choose its own role.
+        Other routes: authMiddleware +
+        requireRole('MANAGER') (AA06 will
+        change them to ADMINISTRATOR).
+    end note
+
+    class UserController {
+        - userService: UserService
+        + register(req: Request, res: Response): Promise<void>
+        + getAll(req: Request, res: Response): Promise<void>
+        + getById(req: Request, res: Response): Promise<void>
+        + updateRoles(req: Request, res: Response): Promise<void>
+        + deactivate(req: Request, res: Response): Promise<void>
+    }
+    note bottom of UserController
+        Existing (BCK01), reused unchanged.
+        register -> 201 + Location header.
+    end note
+
+    class ValidationMiddleware {
+        + validate(schema: JoiSchema): Middleware
+    }
+
+    class AuthMiddleware {
+        - userService: UserService
+        + verifyToken(req: Request, res: Response, next: NextFunction): Promise<void>
+    }
+
+    class RoleMiddleware {
+        + requireRole(...roles: UserRole[]): Middleware
+    }
+
+    note bottom of RoleMiddleware
+        Reused unchanged by every module.
+        Reads req.user.roles, which is set by
+        AuthMiddleware from the DATABASE (resolveActor),
+        never from the JWT claim.
+        Grants access if the user holds ANY of
+        the required roles (multiple roles = union).
+    end note
+}
+
+' -----------------------------------------------------------------------------
+' APPLICATION LAYER
+' -----------------------------------------------------------------------------
+package "Application Layer" <<Rectangle>> {
+
+    class UserService {
+        - userRepository: IUserRepository
+        - passwordHasher: IPasswordHasher
+        - tokenService: ITokenService
+        + register(dto: RegisterUserDTO): Promise<UserResponseDTO>
+        + login(dto: LoginDTO): Promise<AuthTokenDTO>
+        + issueAuthToken(user: User): AuthTokenDTO
+        + resolveActor(token: string): Promise<AuthenticatedActor>
+        + getCurrentUser(actor: AuthenticatedActor): Promise<UserResponseDTO>
+        + assertCanAccess(user: User): void
+        + listUsers(actor: AuthenticatedActor): Promise<UserResponseDTO[]>
+        + getUserById(id: string, actor: AuthenticatedActor): Promise<UserResponseDTO>
+        + updateRoles(id: string, dto: UpdateRolesDTO, actor: AuthenticatedActor): Promise<UserResponseDTO>
+        + deactivateUser(id: string, actor: AuthenticatedActor): Promise<void>
+    }
+    note bottom of UserService
+        assertCanAccess(user) - single access-state check (D4):
+          !user.isActive()      -> 403 "Account is not active"
+          !user.hasActiveRole() -> 403 "No active role is assigned to this account"
+        Called by login() (only AFTER the password matched),
+        by resolveActor() on EVERY protected request,
+        by getCurrentUser() on the user it reloads
+        (null -> 401 "Invalid or expired token")
+        and by ExternalAuthenticationService (AA02).
+        login()/resolveActor()/getCurrentUser() never call save():
+        authentication never changes roles or the active state (BR 5).
+        listUsers/getUserById/updateRoles/deactivateUser: BCK01,
+        unchanged (role administration moves to AA06).
+    end note
+
+    class ExternalAuthenticationService {
+        - userService: UserService
+        + completeAuthorization(dto: ExternalCallbackDTO): Promise<AuthTokenDTO>
+        - assertCanStartSession(user: User): void
+    }
+    note right of ExternalAuthenticationService
+        Defined by AA02.
+        assertCanStartSession() delegates to
+        UserService.assertCanAccess(), so local and
+        external sign-in apply the same rules.
+    end note
+
+    package "DTOs" <<Rectangle>> {
+        class RegisterUserDTO <<dto>> {
+            + name: string
+            + email: string
+            + password: string
+            + marketingConsent: boolean
+        }
+
+        class LoginDTO <<dto>> {
+            + email: string
+            + password: string
+        }
+
+        class UpdateRolesDTO <<dto>> {
+            + roles: string[]
+        }
+
+        class AuthenticatedActor <<dto>> {
+            + sub: string
+            + email: string
+            + roles: string[]
+        }
+
+        class AuthTokenDTO <<dto>> {
+            + accessToken: string
+            + tokenType: string
+            + expiresIn: string
+            + user: UserResponseDTO
+        }
+
+        class UserResponseDTO <<dto>> {
+            + id: string
+            + name: string
+            + email: string
+            + roles: string[]
+            + active: boolean
+            + marketingConsent: boolean
+            + createdAt: string
+        }
+    }
+
+    class UserResponseMapper {
+        + toDTO(user: User): UserResponseDTO
+    }
+
+    interface ITokenService <<interface>> {
+        + expiresIn: string
+        + generateToken(payload: { sub: string, email: string, roles: string[] }): string
+        + verifyToken(token: string): { sub: string, email: string, roles: string[] }
+    }
+
+    interface IPasswordHasher <<interface>> {
+        + hash(plainText: string): Promise<string>
+        + compare(plainText: string, encodedHash: string): Promise<boolean>
+    }
+    note bottom of IPasswordHasher
+        Structural ports in application/ports/security.js.
+        compare() is always executed in login() (dummy hash
+        for unknown accounts) BEFORE assertCanAccess(),
+        so the 403 messages require the correct password.
+    end note
+}
+
+' -----------------------------------------------------------------------------
+' DOMAIN LAYER
+' -----------------------------------------------------------------------------
+package "Domain Layer" <<Rectangle>> {
+    class User <<entity>> <<aggregateRoot>> {
+        - id: UserId
+        - name: UserName
+        - email: Email
+        - password: Password [0..1]
+        - externalIdentities: ExternalIdentity[]
+        - roles: UserRole[]
+        - marketingConsent: MarketingConsent
+        - active: boolean
+        + create(id: UserId, name: UserName, email: Email, password: Password, consent: MarketingConsent): User
+        + createFromExternalIdentity(id: UserId, name: UserName, email: Email, identity: ExternalIdentity, consent: MarketingConsent): User
+        + restore(data: PersistedUser): User
+        + getRoles(): string[]
+        + hasRole(role: UserRole): boolean
+        + hasActiveRole(): boolean
+        + canAccess(): boolean
+        + isActive(): boolean
+        + addRole(role: UserRole): void
+        + removeRole(role: UserRole): void
+    }
+    note right of User
+        Factories take NO roles argument:
+        roles = DEFAULT_ROLES ([CUSTOMER]).
+        create(): active = true (BCK01 registration).
+        AA06 invited accounts are created inactive,
+        also with [CUSTOMER] (CUSTOMER never activates).
+        canAccess() = active && hasActiveRole().
+        addRole/removeRole are used only by AA06
+        (Administrator) and by the bootstrap command.
+    end note
+
+    enum UserRole <<enum>> {
+        ADMINISTRATOR
+        MANAGER
+        EMPLOYEE
+        CUSTOMER
+    }
+
+    class RolePolicy <<domain service>> {
+        + DEFAULT_ROLES: UserRole[] = [CUSTOMER]
+        + normalizeRoles(roles: string[]): UserRole[]
+    }
+    note bottom of RolePolicy
+        In values.js.
+        normalizeRoles: array of known roles,
+        duplicates removed, EMPTY ARRAY ALLOWED (0..*).
+        Unknown role -> domain error (fail closed).
+    end note
+
+    class UserId <<vo>>
+    class UserName <<vo>>
+    class Email <<vo>>
+    class Password <<vo>>
+    class MarketingConsent <<vo>>
+    class ExternalIdentity <<vo>>
+
+    interface IUserRepository <<interface>>  {
+        + nextId(): Promise<string>
+        + findById(id: UserId): Promise<User | null>
+        + findByEmail(email: Email): Promise<User | null>
+        + existsByEmail(email: Email): Promise<boolean>
+        + findAll(): Promise<User[]>
+        + save(user: User): Promise<User>
+    }
+}
+
+' -----------------------------------------------------------------------------
+' INFRASTRUCTURE LAYER
+' -----------------------------------------------------------------------------
+package "Infrastructure Layer" <<Rectangle>> {
+    class UserRepository  {
+        - database: Database
+        + findById(id: UserId): Promise<User | null>
+        + findByEmail(email: Email): Promise<User | null>
+        + save(user: User): Promise<User>
+    }
+
+    class UserMapper  {
+        + toDomain(row: UserRow): User
+        + toPersistence(user: User): UserRow
+    }
+    note bottom of UserMapper
+        toDomain(): any domain error raised by
+        User.restore (e.g. unknown or duplicated role)
+        is rethrown as AppError("Invalid persisted account", 500)
+        -> errorHandler answers
+        { error: { message: "Internal Server Error", status: 500 } } (D9).
+    end note
+
+    class BcryptPasswordHasher {
+        - rounds: number = 10
+        + hash(plainText: string): Promise<string>
+        + compare(plainText: string, encodedHash: string): Promise<boolean>
+    }
+
+    class UserPersistenceModel <<PostgreSQL / users>> {
+        + id: VARCHAR(32)
+        + email: string
+        + passwordHash: string | null
+        + roles: TEXT[] (0..4)
+        + active: boolean
+    }
+    note bottom of UserPersistenceModel
+        Constraint users_roles_valid relaxed by
+        migration 0017: 0..4 distinct roles
+        in {ADMINISTRATOR, MANAGER, EMPLOYEE, CUSTOMER}.
+    end note
+
+    class JwtTokenService {
+        - secret: string
+        - issuer: string
+        - audience: string
+        + expiresIn: string
+        + generateToken(payload): string
+        + verifyToken(token: string): { sub, email, roles }
+    }
+    note bottom of JwtTokenService
+        The "roles" claim is kept for compatibility
+        but is informational only: it is never
+        used for authorization (D3).
+    end note
+
+    class bootstrapManager <<command>> {
+        + bootstrapManager(database, data): Promise<UserResponseDTO>
+    }
+    note bottom of bootstrapManager
+        User.create(...) -> [CUSTOMER]
+        then addRole(MANAGER) -> [CUSTOMER, MANAGER]
+    end note
+}
+
+' -----------------------------------------------------------------------------
+' RELATIONSHIPS & DEPENDENCIES
+' -----------------------------------------------------------------------------
+
+' Front-End
+AuthProvider ..> authApi : uses >
+ProtectedRoute ..> AuthProvider : hasAnyRole >
+ProtectedRoute ..> AccessDeniedPage : renders when denied >
+authApi ..> AuthRoutes : HTTPS / JSON >
+
+' Presentation -> Application
+AuthRoutes --> AuthController : dispatches to >
+AuthRoutes ..> AuthMiddleware : applies (GET /auth/me) >
+AuthRoutes ..> ValidationMiddleware : applies >
+UserRoutes ..> ValidationMiddleware : applies >
+UserRoutes --> UserController : dispatches to >
+UserRoutes ..> AuthMiddleware : applies >
+UserRoutes ..> RoleMiddleware : applies >
+UserController --> UserService : invokes >
+UserController ..> RegisterUserDTO : creates >
+UserController ..> UpdateRolesDTO : creates >
+AuthController ..> LoginDTO : creates >
+AuthController --> UserService : invokes >
+AuthMiddleware --> UserService : resolveActor >
+RoleMiddleware ..> AuthenticatedActor : reads req.user >
+
+' Application
+UserService --> IUserRepository : loads / persists via >
+UserService --> ITokenService : uses >
+UserService --> IPasswordHasher : hash / compare >
+UserService ..> UserResponseMapper : uses >
+UserService ..> AuthenticatedActor : produces >
+UserService ..> AuthTokenDTO : produces >
+UserService ..> RegisterUserDTO : receives >
+UserService ..> User : creates / reads >
+ExternalAuthenticationService --> UserService : assertCanAccess / issueAuthToken >
+AuthTokenDTO *-- UserResponseDTO
+
+' Domain structure
+User "1" *-- "1" UserId : identified by >
+User "1" *-- "1" UserName : has >
+User "1" *-- "1" Email : has >
+User "1" *-- "0..1" Password : has >
+User "1" *-- "0..*" ExternalIdentity : authenticated through >
+User "1" *-- "1" MarketingConsent : manages >
+User "1" --> "0..*" UserRole : assigned >
+User ..> RolePolicy : uses >
+
+' Infrastructure implementations
+UserRepository ..|> IUserRepository : implements
+UserRepository --> UserPersistenceModel : queries/persists
+UserRepository ..> UserMapper : uses
+UserMapper ..> User : restore()
+JwtTokenService ..|> ITokenService : implements
+BcryptPasswordHasher ..|> IPasswordHasher : implements
+bootstrapManager ..> IPasswordHasher : hash >
+bootstrapManager ..> User : create + addRole(MANAGER)
+
+@enduml

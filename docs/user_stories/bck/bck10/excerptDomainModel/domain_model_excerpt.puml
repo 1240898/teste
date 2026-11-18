@@ -1,0 +1,72 @@
+@startuml domain_model_excerpt
+title Domain Model Excerpt - BCK10 Predefined Pizza Management
+left to right direction
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+hide methods
+
+package "Product Aggregate (BCK05)" {
+  class Product <<aggregateRoot>> {
+    +isActive : boolean
+  }
+  class SellableProduct <<entity>>
+  class PredefinedPizza <<entity>>
+  class PizzaComponent <<entity>>
+  class ProductId <<value object>> {
+    +value : string
+  }
+  class ProductCompositionItem <<value object>>
+  class Quantity <<value object>> {
+    +amount : int
+  }
+  Product <|-- SellableProduct
+  SellableProduct <|-- PredefinedPizza
+  Product <|-- PizzaComponent
+  Product "1" *-- "1" ProductId : identity >
+  Product "1" *-- "0..*" ProductCompositionItem : default recipe >
+  ProductCompositionItem "0..*" --> "1" Product : child Product >
+  ProductCompositionItem "1" *-- "1" Quantity : quantity >
+  note right of PredefinedPizza
+    A PredefinedPizza is a Sellable Product,
+    not also a Pizza Component. It uses the
+    ProductId and Product composition. It has
+    no separate ID or second configuration.
+  end note
+  note bottom of ProductCompositionItem
+    BCK10 includes each component Product at most once.
+    Its quantity is 1 in this story; the per-size
+    consumption is defined separately by BCK08.
+  end note
+}
+
+package "Pizza Component Type Aggregate (BCK07)" {
+  class PizzaComponentType <<aggregateRoot>>
+  class ComponentTypeId <<value object>> {
+    +value : string
+  }
+  PizzaComponentType "1" *-- "1" ComponentTypeId
+}
+package "Component Size Configuration Aggregate (BCK08)" {
+  class ComponentSizeConfiguration <<aggregateRoot>>
+}
+package "Pizza Size Aggregate (BCK06)" {
+  class PizzaSize <<aggregateRoot>>
+  class PizzaSizeId <<value object>> {
+    +id : string
+  }
+  PizzaSize "1" *-- "1" PizzaSizeId
+}
+
+Product "0..*" --> "0..1" PizzaComponentType : component role >
+ComponentSizeConfiguration "0..*" --> "1" Product : configures component >
+ComponentSizeConfiguration "0..*" --> "1" PizzaSize : for size >
+
+note bottom of Product
+  BCK05 owns Product identity and aggregate lifecycle.
+  BCK10 defines/validates the PredefinedPizza subtype
+  and default Product composition through a BCK05-owned
+  application contract. All IDs remain Product IDs.
+end note
+@enduml

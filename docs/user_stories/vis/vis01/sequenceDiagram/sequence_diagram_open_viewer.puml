@@ -1,0 +1,182 @@
+@startuml sequence_diagram_open_viewer
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - VIS01 Opening the 3D Kitchen Viewer inside the SPA
+
+actor User as "Restaurant Staff /\nLaPrizza Manager"
+participant Slot as "ModulePage\n(WEB01 module slot)"
+participant Auth as "AuthProvider\n(AA03 / WEB03)"
+participant Page as "KitchenViewerPage\n(lazy chunk)"
+participant Viewer as "KitchenViewer"
+participant GL as "webglSupport"
+participant Loader as "kitchenViewerLoader"
+participant VApi as "kitchenViewerApi"
+participant Req as "ModuleRequest\n+ apiClient (WEB01)"
+participant BE as "Back-End API\nGET /kitchen-configurations/active\n(WEB06)"
+participant Parser as "activeConfigurationParser"
+participant Assets as "SceneAssetLoader"
+participant Files as "Asset files\n/kitchen-assets/files/*"
+participant Engine as "ViewerEngine"
+
+note over User, Engine
+    The viewer is rendered INSIDE the common layout (WEB02). WEB06 owns the endpoint, the JSON format
+    and the viewer contract (usWEB06 3.4.5); VIS01 implements the viewer and its states.
+    Every error branch ENDS the interaction: no partial scene, no previous scene, no embedded layout.
+    401 / 403 are handled ONCE by WEB03 (Table B) inside ModuleRequest before VIS01 sees the error.
+    Engine failures (renderer, build, update, render, context loss): sequence_diagram_engine_failure.
+end note
+
+== 1. Navigation, permission check and lazy loading (WEB01 / WEB03, unchanged) ==
+
+User -> Slot : selects "Kitchen viewer" in the menu\n(or types /kitchen/viewer)
+activate Slot
+Slot -> Auth : ProtectedRoute(section "kitchen-viewer")\n+ refresh() before mounting
+activate Auth
+Auth --> Slot : roles
+deactivate Auth
+
+alt A) Guest / role without MANAGER or EMPLOYEE / denied account
+    Slot --> User : login redirect or AccessDeniedPage (WEB03)
+    note right of Slot : interaction ends: the "three" chunk is NOT\ndownloaded and no data request is sent
+else B) MANAGER or EMPLOYEE
+    Slot -> Page : lazy(() => import("./visualization/KitchenViewerPage.jsx"))\n<Page request={request} />
+    activate Page
+    note right of Slot : "Loading section..." while the chunk downloads;\nan import / render failure is contained by\nModuleErrorBoundary with "Try again"
+    Page -> Viewer : <KitchenViewer request modules=[defaults] />
+    activate Viewer
+    Viewer --> User : state "loading" (WEB04 loading indicator)
+
+    == 2. Capability check ==
+
+    Viewer -> GL : isWebGLAvailable()
+    activate GL
+    GL --> Viewer : true / false
+    deactivate GL
+
+    alt B1) WebGL not available
+        Viewer --> User : state "unsupported":\n"Your browser cannot display 3D content (WebGL)."
+        note right of Viewer : interaction ends: no request, no renderer;\nthe rest of the SPA keeps working
+    else B2) WebGL available
+
+        == 3. Active configuration (usWEB06 3.4.2 / 3.4.5) ==
+
+        Viewer -> Loader : loadActiveKitchen(request, signal)
+        activate Loader
+        Loader -> VApi : getActive(request, signal)
+        activate VApi
+        VApi -> Req : request("GET", "/kitchen-configurations/active", { signal })
+        activate Req
+        Req -> BE : GET /api/v1/kitchen-configurations/active\nAuthorization: Bearer <token>
+        activate BE
+        BE --> Req : 200 / 401 / 403 / 404 / 5xx
+        deactivate BE
+
+        alt C1) 401
+            Req -> Auth : handleAuthFailure(401) (WEB03 Table B)
+            activate Auth
+            Auth --> User : clear(); status guest;\nredirect /login?returnTo=/kitchen/viewer
+            deactivate Auth
+            Req --> VApi : throw ApiError{401}
+            VApi --> Loader : ApiError{401}
+            Loader --> Viewer : state "expired"
+            Viewer -> Viewer : renders nothing; no logout,\nno navigation, no message
+            note right of Viewer : interaction ends: ONE reaction, owned by WEB03
+        else C2) 403
+            Req -> Auth : handleAuthFailure(403) -> refresh() once (single flight)
+            activate Auth
+            Auth --> Req : roles re-read from GET /auth/me
+            deactivate Auth
+            alt C2a) Account denied / neither MANAGER nor EMPLOYEE remains
+                Slot --> User : WEB03 replaces the page by AccessDeniedPage\n(viewer unmounted, its state discarded)
+            else C2b) Same roles or a permitted role remains
+                Slot --> Viewer : keep route allowed; rebuild menu if roles changed
+                Req --> VApi : throw original ApiError{403}
+                VApi --> Loader : ApiError{403}
+                Loader --> Viewer : state "denied"
+                alt Same roles
+                    Viewer --> User : WEB04 error inside the viewer area:\n"You do not have permission to perform this operation."
+                else Roles changed, EMPLOYEE remains
+                    Viewer --> User : one WEB04 permission message
+                end
+            end
+            note right of Viewer : interaction ends: never a logout on 403,\nnever two denied messages
+        else C3) 404 with details[].code = "NO_ACTIVE_CONFIGURATION" (VIS-ALN-1)
+            Req --> VApi : throw ApiError{404, details}
+            VApi --> Loader : ApiError{404, details}
+            Loader --> Viewer : state "empty"
+            Viewer --> User : "No kitchen configuration is active.\nA Manager must activate one."
+            note right of Viewer : interaction ends: NO default layout
+        else C4) 404 without that code (route missing, wrong base URL),\n5xx, network, timeout, invalid-response
+            Req --> VApi : throw ApiError{status, kind}
+            VApi --> Loader : ApiError
+            Loader --> Viewer : state "error" (reason "request")
+            Viewer --> User : "The kitchen viewer is unavailable." + [Retry]
+            note right of Viewer : interaction ends: an integration fault is\nnever shown as an empty kitchen (BR 13)
+        else C5) 200 OK
+            Req --> VApi : body
+            deactivate Req
+            VApi --> Loader : body
+            deactivate VApi
+            Loader -> Parser : parseActiveConfiguration(body)
+            activate Parser
+            alt C5a) status != ACTIVE, schemaVersion != 1, units != meters,\nbad dimensions, unresolved / wrong-kind asset id, non-http(s) url
+                Parser --> Loader : throws
+                Loader --> Viewer : state "invalid"
+                Viewer --> User : "The active kitchen configuration\ncannot be displayed."
+                note right of Viewer : interaction ends: fail closed
+            else C5b) valid
+                Parser --> Loader : ActiveKitchenConfigurationDTO
+                deactivate Parser
+                Loader --> Viewer : state "loading-assets" (configuration)
+                deactivate Loader
+
+                == 4. All-or-nothing asset preloading (usWEB06 3.4.5 steps 3-4) ==
+
+                Viewer --> User : "Loading 3D models and textures..."
+                Viewer -> Assets : preloadAll(configuration.assets,\n{ signal, timeoutMs: 30000 })
+                activate Assets
+                par every entry of assets
+                    Assets -> Files : GET <url> (public, CORS)
+                    activate Files
+                    Files --> Assets : 200 bytes / 404
+                    deactivate Files
+                    Assets -> Assets : decode (GLTFLoader / TextureLoader)
+                end
+                alt D1) A file failed (404, decode error) or the 30 s timeout expired
+                    Assets -> Assets : cancel the others;\ndispose everything already loaded
+                    Assets --> Viewer : throw AssetLoadError{ assetId }
+                    Viewer --> User : state "error" (reason "asset-unavailable"):\n"The 3D file AST-MDL-OVEN-DOME-01 of the active\nconfiguration is unavailable." + [Retry]
+                    note right of Viewer : interaction ends: no renderer was created
+                else D2) Every asset loaded
+                    Assets --> Viewer : LoadedAssets
+                    deactivate Assets
+
+                    == 5. Scene creation and rendering ==
+
+                    Viewer -> Viewer : createElement("canvas"); append to viewport
+                    Viewer -> Engine : ViewerEngine.create(canvas, viewport, { onFatalError })
+                    activate Engine
+                    Engine -> Engine : renderer, scene, camera,\nResizeObserver, contextlost listener
+                    Engine --> Viewer : engine
+                    Viewer -> Viewer : assign engine to the effect's local variable
+                    Viewer -> Engine : await load(configuration, loadedAssets,\nmoduleFactories, signal)
+                    Engine -> Engine : take ownership of the loaded assets;\nframe the floor with the camera
+                    Engine -> Engine : for each factory: register module,\nthen build(SceneContext with signal)
+                    Engine --> Viewer : true (build complete)
+                    Viewer -> Engine : start()
+                    Engine -> Engine : render first frame; setAnimationLoop(frame)
+                    Engine --> Viewer : true
+                    Viewer --> User : state "ready": scene of "Extended assembly line"\n(KCF-00002, version 4) inside the SPA layout + [Reload]
+                    deactivate Engine
+                end
+            end
+        end
+    end
+    deactivate Viewer
+    deactivate Page
+end
+deactivate Slot
+
+@enduml

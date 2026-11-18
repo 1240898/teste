@@ -1,0 +1,143 @@
+@startuml sequence_diagram_submission_feedback
+autonumber
+skinparam shadowing false
+skinparam responseMessageBelowArrow true
+title WEB04 - Validate, Submit, and Present Feedback
+
+actor "System User" as User
+participant "Feature Page / Form" as Page
+participant "Client Validator" as Validator
+participant "FeedbackMessage / FieldError / LoadingState" as Feedback
+participant "Feature API Wrapper" as FeatureApi
+participant "errorMapper" as ErrorMapper
+participant "apiClient" as ApiClient
+participant "Feature Route + Auth/Role Middleware" as Route
+participant "Controller" as Controller
+participant "Application Service" as AppService
+participant "Domain" as Domain
+participant "Repository" as Repo
+database "PostgreSQL" as DB
+
+User -> Page : submit current draft
+activate Page
+Page -> Page : keep draft; clear previous result
+Page -> Validator : validate draft
+activate Validator
+Validator --> Page : field errors or valid
+deactivate Validator
+
+alt Client validation fails
+  Page -> Feedback : show localized field errors
+  activate Feedback
+  Feedback --> User : affected fields and correction guidance
+  deactivate Feedback
+  note over Page,Feedback
+    No API request is sent.
+    Draft values remain available.
+  end note
+else Client validation passes
+  Page -> Page : state = submitting; disable repeat submit
+  Page -> Feedback : show pending status
+  activate Feedback
+  Feedback --> User : operation is in progress
+  deactivate Feedback
+  Page -> FeatureApi : execute feature operation
+  activate FeatureApi
+  FeatureApi -> ApiClient : request using feature contract
+  activate ApiClient
+  ApiClient -> Route : HTTPS / JSON request
+  activate Route
+  Route -> Route : authenticate and authorize request
+  Route -> Controller : accepted request and actor
+  activate Controller
+  Controller -> AppService : DTO / use-case input
+  activate AppService
+  AppService -> Domain : apply authoritative rules
+  activate Domain
+  Domain --> AppService : rules applied
+  deactivate Domain
+  AppService -> Repo : load/save through port
+  activate Repo
+  Repo -> DB : feature persistence operation
+  activate DB
+  DB --> Repo : saved state or persistence result
+  deactivate DB
+  Repo --> AppService : domain data
+  deactivate Repo
+  AppService --> Controller : outcome
+  deactivate AppService
+  Controller --> Route : feature response DTO
+  deactivate Controller
+  Route --> ApiClient : HTTP response
+  deactivate Route
+  ApiClient --> FeatureApi : response or ApiError
+  deactivate ApiClient
+  FeatureApi --> Page : operation result
+  deactivate FeatureApi
+
+  alt Confirmed success
+    Page -> Feedback : show localized success
+    activate Feedback
+    Feedback --> User : saved state from response or read-back
+    deactivate Feedback
+  else Validation / business failure
+    Page -> ErrorMapper : toFeedback(ApiError)
+    activate ErrorMapper
+    ErrorMapper --> Page : allow-listed feedback state
+    deactivate ErrorMapper
+    Page -> Feedback : render mapped field/form-level message
+    activate Feedback
+    Feedback --> User : failure; retain entered values
+    deactivate Feedback
+  else Stale edit conflict (412 or code STALE_VERSION)
+    Page -> ErrorMapper : toFeedback(ApiError)
+    activate ErrorMapper
+    ErrorMapper --> Page : localized conflict message key
+    deactivate ErrorMapper
+    Page -> Feedback : show safe conflict feedback
+    activate Feedback
+    Feedback --> User : record changed; review refreshed data before saving
+    deactivate Feedback
+    Page -> FeatureApi : reload current resource for comparison
+    activate FeatureApi
+    FeatureApi -> ApiClient : GET current resource/version
+    activate ApiClient
+    ApiClient --> FeatureApi : current resource and version
+    deactivate ApiClient
+    FeatureApi --> Page : refreshed state
+    deactivate FeatureApi
+    Page -> Page : preserve draft; require review before another save
+  else Other 409 conflict
+    Page -> ErrorMapper : toFeedback(ApiError with conflict code)
+    activate ErrorMapper
+    ErrorMapper --> Page : conflict-specific message key
+    deactivate ErrorMapper
+    Page -> Feedback : show conflict-specific guidance
+    activate Feedback
+    Feedback --> User : safe guidance; retain entered values
+    deactivate Feedback
+  else Connection lost before outcome is known
+    Page -> Page : state = outcome-unknown; preserve draft and key
+    Page -> FeatureApi : reconcile operation outcome
+    activate FeatureApi
+    FeatureApi -> ApiClient : query status or re-read resource
+    activate ApiClient
+    ApiClient --> FeatureApi : confirmed outcome or still unknown
+    deactivate ApiClient
+    FeatureApi --> Page : reconciliation result
+    deactivate FeatureApi
+    alt Outcome confirmed successful
+      Page -> Feedback : show success
+      activate Feedback
+      Feedback --> User : operation confirmed successful
+      deactivate Feedback
+    else Definitively not applied and retryable
+      Page --> User : offer safe retry with same idempotency key
+    else Still unknown
+      Page --> User : explain outcome is unconfirmed; do not resubmit
+    end
+  end
+  Page -> Page : settle pending state
+end
+deactivate Page
+@enduml

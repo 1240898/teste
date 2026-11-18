@@ -1,0 +1,98 @@
+@startuml sequence_diagram_consult_search_products
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - BCK05 Search / Consult Products (GET /api/v1/products[/:id])
+
+actor "Manager / Employee" as User
+participant Routes as "ProductRoutes"
+participant AuthMW as "AuthMiddleware"
+participant RoleMW as "RoleMiddleware"
+participant Validator as "ValidationMiddleware"
+participant Controller as "ProductController"
+participant Service as "ProductService"
+participant Repo as "IProductRepository"
+participant Mapper as "ProductMapper"
+database DB as "PostgreSQL"
+
+User -> Routes : GET /api/v1/products?name=mozz&categoryId=CAT-00001\n&isPizzaComponent=true&isActive=true&excludeAllergenIds=1,7
+activate Routes
+activate User
+
+Routes -> AuthMW : verifyToken(req, res, next)
+activate AuthMW
+alt Missing / invalid token
+    AuthMW --> User : 401 Unauthorized
+end
+AuthMW --> Routes : next()
+deactivate AuthMW
+Routes -> RoleMW : requireRole("MANAGER", "EMPLOYEE")
+activate RoleMW
+alt Role not allowed
+    RoleMW --> User : 403 Forbidden
+end
+RoleMW --> Routes : next()
+deactivate RoleMW
+Routes -> Validator : validate(searchProductsQuerySchema)
+activate Validator
+alt Invalid filter value
+    Validator --> User : 400 Bad Request
+end
+Validator --> Routes : next()
+deactivate Validator
+
+Routes -> Controller : listProducts(req, res, next)
+activate Controller
+Controller -> Service : listProducts(productFilterDTO)
+activate Service
+Service -> Repo : search(filter)
+activate Repo
+Repo -> DB : SELECT p.* FROM products p\nWHERE lower(p.name) LIKE lower($name) AND ...\nAND NOT EXISTS (SELECT 1 FROM product_allergens pa\n  WHERE pa.product_id = p.id AND pa.allergen_id = ANY($excluded))\nORDER BY p.name
+DB --> Repo : rows (+ allergen rows)
+Repo --> Service : Product[]
+deactivate Repo
+Service -> Mapper : toDTOList(products)
+activate Mapper
+Mapper --> Service : ProductResponseDTO[]
+deactivate Mapper
+Service --> Controller : ProductResponseDTO[]
+deactivate Service
+Controller --> User : 200 OK [ ... ]
+deactivate Controller
+deactivate Routes
+
+== Consult a single product ==
+
+User -> Routes : GET /api/v1/products/:id
+activate Routes
+note right of Routes : same Auth / Role middlewares
+Routes -> Controller : getProductById(req, res, next)
+activate Controller
+Controller -> Service : getProductById(id)
+activate Service
+Service -> Repo : findById(productId)
+activate Repo
+Repo -> DB : SELECT ... WHERE id = $1
+Repo --> Service : product | null
+deactivate Repo
+alt not found
+    Service --> Controller : throw AppError(404, "Product not found")
+    Controller --> User : 404 Not Found
+else found
+    Service -> Mapper : toDTO(product)
+    Mapper --> Service : ProductResponseDTO
+    Service --> Controller : ProductResponseDTO
+    Controller --> User : 200 OK { ... }
+end
+deactivate Service
+deactivate Controller
+deactivate Routes
+deactivate User
+
+note over User, DB
+  Stock quantities are NOT part of the product response;
+  they are consulted through BCK09 (GET /api/v1/products/:productId/stock).
+end note
+
+@enduml

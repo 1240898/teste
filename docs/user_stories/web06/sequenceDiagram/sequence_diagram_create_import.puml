@@ -1,0 +1,165 @@
+@startuml sequence_diagram_create_import
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - WEB06 Create or Import a Kitchen Configuration (validation and rejection)
+
+actor Manager as "LaPrizza Manager"
+participant Editor as "KitchenConfigurationEditorPage\n(mode = create)"
+participant Json as "configurationJson"
+participant Api as "kitchenConfigurationApi"
+participant Req as "ModuleRequest\n(WEB01) + apiClient"
+participant Routes as "KitchenConfigurationRoutes\n(AuthMiddleware -> RoleMiddleware\n-> joi envelope)"
+participant Ctrl as "KitchenConfigurationController"
+participant Service as "KitchenConfigurationService"
+participant Catalogue as "IKitchenAssetCatalogue"
+participant AssetFiles as "IKitchenAssetFileStore\n(LocalKitchenAssetFileStore)"
+participant Validator as "KitchenLayoutValidator"
+participant UoW as "IUnitOfWork\n(PostgresUnitOfWork)"
+participant Repo as "IKitchenConfigurationRepository\n(KitchenConfigurationRepository)"
+database PG as "PostgreSQL\n(kitchen_configurations,\nkitchen_configuration_assets,\nkitchen_assets)"
+
+ref over Manager, Req : WEB03 / WEB01 SD 3 - the page is mounted only for MANAGER (route guard + /auth/me)
+
+Manager -> Editor : opens /kitchen/configurations/new
+activate Editor
+
+alt A) Import a file
+    Manager -> Editor : selects "kitchen-extended.json"
+    Editor -> Json : readImportFile(file)
+    activate Json
+    alt not ".json" or larger than 100 KB
+        Json --> Editor : rejected (reason)
+        Editor --> Manager : "Choose a .json file up to 100 KB"\n(nothing sent, nothing stored)
+    else readable
+        Json --> Editor : { suggestedName: "kitchen-extended", text }
+        Editor --> Manager : name field and JSON editor filled\n(still NOT stored)
+    end
+    deactivate Json
+else B) Write / paste the JSON
+    Manager -> Editor : types name and JSON content
+end
+
+Manager -> Editor : clicks "Save"
+Editor -> Json : parseConfigurationText(text)
+activate Json
+Json --> Editor : ParseResult
+deactivate Json
+alt C1) Syntax error: { ok: false, error: { line: 14, column: 9, message } }
+    Editor --> Manager : "Invalid JSON at line 14, column 9"\n(text kept; no request sent)
+else C2) Syntactically valid object: { ok: true, value }
+    Editor -> Editor : submitting = true (Save disabled)
+    Editor -> Api : create({ name, content: value })
+    activate Api
+    Api -> Req : request("POST", "/kitchen-configurations", { body })
+    activate Req
+    Req -> Routes : POST /api/v1/kitchen-configurations\nAuthorization: Bearer <token>
+    activate Routes
+    note right of Routes
+        401 / 403 handled as in WEB03 SD 3.
+        Envelope invalid (no name, content not an
+        object) -> 400 "Invalid request body".
+    end note
+    Routes -> Ctrl : createConfiguration(req, res)
+    activate Ctrl
+    Ctrl -> Service : createConfiguration(dto, actor)
+    activate Service
+    Service -> Service : ConfigurationName.create(dto.name)
+    Service -> Repo : existsByName(name)
+    activate Repo
+    Repo -> PG : SELECT 1 FROM kitchen_configurations\nWHERE lower(name) = lower($1)
+    PG --> Repo : 0 / 1 row
+    Repo --> Service : exists?
+    deactivate Repo
+
+    alt D1) Name already used
+        Service --> Ctrl : throw AppError("A kitchen configuration with this name already exists", 409)
+    else D2) Name free
+        Service -> Service : assetIds = collect assetId / *MapAssetId values\n(only well-formed strings)
+        Service -> Catalogue : findByIds(assetIds)
+        activate Catalogue
+        Catalogue -> PG : SELECT id, kind, format, path FROM kitchen_assets\nWHERE id = ANY($1::varchar[])
+        PG --> Catalogue : asset rows
+        Catalogue --> Service : Map<assetId, KitchenAsset>
+        deactivate Catalogue
+                loop for each asset found
+            Service -> AssetFiles : exists(asset.path)
+            activate AssetFiles
+            AssetFiles --> Service : true / false
+            deactivate AssetFiles
+        end
+        Service -> Service : assets = Map<assetId, AssetCheck { asset, fileAvailable }>
+        Service -> Validator : validate(dto.content, assets)
+        activate Validator
+        Validator -> Validator : structure, required / unknown properties,\ndimensions, placements and scales, unique element ids,\nassembly line (VIS03: composition, wall, left-to-right order),\ntexture sets (VIS04), asset existence, kind and file
+        Validator --> Service : LayoutValidationResult
+        deactivate Validator
+
+        alt E1) Issues found
+            Service --> Ctrl : throw KitchenConfigurationValidationError(issues)
+            note right of Service
+                NOTHING is written: no transaction is opened,
+                no id is taken from the sequence.
+            end note
+        else E2) Valid
+            Service -> UoW : withTransaction(tx => ...)
+            activate UoW
+            UoW -> PG : BEGIN
+            UoW -> Repo : nextId(tx)
+            activate Repo
+            Repo -> PG : SELECT 'KCF-' || lpad(...) FROM nextval('kitchen_configuration_id_seq')
+            PG --> Repo : "KCF-00003"
+            Repo --> UoW : KitchenConfigurationId
+            deactivate Repo
+            UoW -> UoW : configuration = KitchenConfiguration.create(\nid, name, layout, actor, now)\nstatus = INACTIVE, version = 1
+            UoW -> Repo : insert(configuration, tx)
+            activate Repo
+            Repo -> PG : INSERT INTO kitchen_configurations\n(id, name, status, version, content, element_count, created_*, updated_*)\nVALUES ($1, $2, 'INACTIVE', 1, $3::jsonb, $4, ...)
+            Repo -> PG : INSERT INTO kitchen_configuration_assets (configuration_id, asset_id)\nSELECT $1, unnest($2::varchar[])
+            alt concurrent insert with the same name (23505 on lower(name))\nor asset removed meanwhile (23503)
+                PG --> Repo : error
+                Repo --> UoW : throw AppError(409 name) / validation error (422 UNKNOWN_ASSET)
+                UoW -> PG : ROLLBACK
+                note right of PG : nothing stored (the sequence value is simply skipped)
+                UoW --> Service : error
+            else inserted
+                PG --> Repo : ok
+                Repo --> UoW : ok
+                UoW -> PG : COMMIT
+                UoW --> Service : configuration
+            end
+            deactivate Repo
+            deactivate UoW
+            Service --> Ctrl : KitchenConfigurationDetailDTO
+        end
+    end
+    deactivate Service
+
+    alt created
+        Ctrl --> Routes : 201 Created + Location: /api/v1/kitchen-configurations/KCF-00003
+    else 409 / 422 (errorHandler)
+        Ctrl --> Routes : { error: { message, status, details? } }
+    end
+    deactivate Ctrl
+    Routes --> Req : HTTP response
+    deactivate Routes
+    Req --> Api : DTO / throws ApiError(status, message, details)
+    deactivate Req
+    Api --> Editor : DTO / ApiError
+    deactivate Api
+    Editor -> Editor : submitting = false
+
+    alt 201
+        Editor --> Manager : "Configuration created (inactive)"\nnavigate to /kitchen/configurations/KCF-00003
+    else 422
+        Editor --> Manager : ValidationIssueList: one row per issue\n(e.g. "/elements/4/placement/scale/y - must be between 0.01 and 100")\ntext kept, nothing stored
+    else 409
+        Editor --> Manager : "Name already in use" (field error)
+    else network / timeout / 5xx
+        Editor --> Manager : WEB04 error + retry; text kept;\nnot presented as saved
+    end
+end
+deactivate Editor
+
+@enduml

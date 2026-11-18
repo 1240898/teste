@@ -1,0 +1,260 @@
+@startuml sequence_diagram_edit
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - WEB06 Edit a Kitchen Configuration (ACTIVE one included; invalid edits, concurrent-change recovery by rebase on the reloaded version, language switch)
+
+actor Manager as "LaPrizza Manager"
+participant Editor as "KitchenConfigurationEditorPage\n(mode = edit)"
+participant Panel as "ConcurrentChangePanel"
+participant Compare as "compareConfigurations"
+participant Rebase as "rebaseDraft"
+participant Api as "kitchenConfigurationApi"
+participant Req as "ModuleRequest\n(WEB01) + apiClient"
+participant Routes as "KitchenConfigurationRoutes\n(AuthMiddleware -> RoleMiddleware\n-> joi envelope)"
+participant Service as "KitchenConfigurationService"
+participant Validator as "KitchenLayoutValidator"
+participant Config as "configuration :\nKitchenConfiguration"
+participant UoW as "IUnitOfWork\n(PostgresUnitOfWork)"
+participant Repo as "IKitchenConfigurationRepository"
+database PG as "PostgreSQL"
+participant Viewer as "Kitchen viewer\n(VIS01, any user)"
+
+note over Manager, Viewer
+    The editor was opened from SD 4 (consult) with KCF-00002, version = 3;
+    base = { name, content } of version 3 is kept for the whole edit session.
+    KCF-00002 may be the ACTIVE configuration: the viewer must never receive
+    unvalidated content (AC 6) and an invalid edit must keep the last valid one (AC 4).
+end note
+
+Manager -> Editor : changes name / JSON and clicks "Save"
+activate Editor
+Editor -> Editor : parseConfigurationText(text)\n(syntax error -> shown, nothing sent, as in SD 1)
+Editor -> Editor : submitting = true
+Editor -> Api : update("KCF-00002", { name, content, version: 3 })
+activate Api
+Api -> Req : request("PUT", "/kitchen-configurations/KCF-00002", { body })
+activate Req
+Req -> Routes : PUT /api/v1/kitchen-configurations/KCF-00002 (Bearer)
+activate Routes
+Routes -> Service : updateConfiguration("KCF-00002", dto, actor)
+activate Service
+Service -> Repo : findById("KCF-00002")
+activate Repo
+Repo -> PG : SELECT ... FROM kitchen_configurations WHERE id = $1
+PG --> Repo : row / none
+Repo --> Service : configuration / null
+deactivate Repo
+
+alt A) Not found (deleted meanwhile)
+    Service --> Routes : throw AppError("Kitchen configuration not found", 404)
+else B) Found
+    Service -> Service : load referenced assets and file availability (as in SD 1)
+    Service -> Validator : validate(dto.content, assets)
+    activate Validator
+    Validator --> Service : LayoutValidationResult
+    deactivate Validator
+
+    alt B1) Content invalid
+        Service --> Routes : throw KitchenConfigurationValidationError(issues) (422)
+        note right of Service
+            Stored row untouched: the viewer keeps
+            receiving the last valid content.
+        end note
+    else B2) Content valid
+        Service -> Service : name unique (excluding KCF-00002)? else 409
+        Service -> Config : edit(name, layout, expectedVersion = 3, actor, now)
+        activate Config
+        alt stored version != 3 (already changed by another Manager)
+            Config --> Service : throw ConcurrencyConflictError (409)
+        else same version
+            Config -> Config : name, layout, updatedAt / updatedBy replaced;\nstatus NOT changed
+            Config --> Service : ok
+        end
+        deactivate Config
+
+        opt edit accepted by the aggregate
+            Service -> UoW : withTransaction(tx => ...)
+            activate UoW
+            UoW -> PG : BEGIN
+            UoW -> Repo : replace(configuration, expectedVersion = 3, tx)
+            activate Repo
+            Repo -> PG : UPDATE kitchen_configurations\nSET name = $3, content = $4::jsonb, element_count = $5,\n    updated_at = now(), updated_by = $6, version = version + 1\nWHERE id = $1 AND version = $2
+            note right of PG
+                Conditional UPDATE: only succeeds if nobody
+                changed the row since version 3 was read.
+                "status" is not in the SET list, so a concurrent
+                activation is not undone.
+            end note
+            PG --> Repo : rowCount
+            alt rowCount = 0 (version changed between read and write)
+                Repo --> UoW : false
+                UoW -> PG : ROLLBACK
+                UoW --> Service : false
+                Service --> Routes : throw ConcurrencyConflictError (409)
+            else rowCount = 1
+                Repo -> PG : DELETE FROM kitchen_configuration_assets WHERE configuration_id = $1;\nINSERT ... SELECT $1, unnest($2::varchar[])
+                PG --> Repo : ok
+                Repo --> UoW : true
+                UoW -> PG : COMMIT
+                note right of PG
+                    Readers (GET /active) use READ COMMITTED:
+                    they see either the previous valid row or
+                    the new valid row, never a mix.
+                end note
+                UoW --> Service : true
+                Service --> Routes : 200 KitchenConfigurationDetailDTO (version: 4)
+            end
+            deactivate Repo
+            deactivate UoW
+        end
+    end
+end
+deactivate Service
+
+Routes --> Req : 200 / 404 / 409 / 422
+deactivate Routes
+Req --> Api : DTO / throws ApiError(status, message, details)
+deactivate Req
+Api --> Editor : DTO / ApiError
+deactivate Api
+Editor -> Editor : submitting = false
+
+alt 200
+    Editor -> Editor : version = 4; concurrency.phase = "none"
+    Editor --> Manager : "Configuration saved" (version 4);\nif ACTIVE: "The viewer will show the new layout\nthe next time it loads (Open / reload viewer)"
+else 422
+    Editor --> Manager : ValidationIssueList; text kept;\n"The stored configuration was not changed"
+else 409 (name)
+    Editor --> Manager : "Name already in use" (field error)
+else 404
+    Editor --> Manager : "This configuration no longer exists" + link to the list
+else 409 (stale version)
+    Editor -> Editor : concurrency = { phase: "conflict", base (v3),\ndraft: { name, text }, latest: null, rebase: null,\nresolutions: {}, reviewAcknowledged: false }
+    Editor -> Panel : render(draft)
+    activate Panel
+    Panel --> Manager : "This configuration was changed by another user.\nReload it before saving. Your changes are kept below."\n[Reload latest version]  (Save disabled)
+    deactivate Panel
+end
+deactivate Editor
+
+== Recovery after a concurrent change (client clarification 15) ==
+note over Manager, Rebase
+    Example: KCF-00002 v3 had name "Compact kitchen" and width 12.
+    The other Manager changed width 12 -> 14 (now v4). This Manager only renamed it to "Kitchen B".
+    The next save is built ON THE RELOADED RECORD (v4): only this Manager's own changes
+    (draft - base) are re-applied, so the other user's width 14 is kept. The whole draft
+    (which still has width 12) is never sent with the new version.
+end note
+
+Manager -> Panel : clicks "Reload latest version"
+activate Panel
+Panel -> Editor : onReloadLatest()
+activate Editor
+Editor -> Api : getById("KCF-00002")
+activate Api
+Api -> Req : request("GET", "/kitchen-configurations/KCF-00002")
+activate Req
+Req -> Routes : GET /api/v1/kitchen-configurations/KCF-00002 (Bearer)
+activate Routes
+Routes --> Req : 200 { ..., version: 4, updatedAt, content } (as in SD 4)
+deactivate Routes
+Req --> Api : Detail (version 4)
+deactivate Req
+Api --> Editor : latest
+deactivate Api
+
+alt 404 (deleted by the other user)
+    Editor --> Manager : "This configuration no longer exists";\ndraft still shown and can be copied or saved as a new configuration (SD 1)
+else latest loaded
+    Editor -> Editor : parseConfigurationText(draft.text)
+    alt draft JSON does not parse
+        Editor --> Manager : "Fix the JSON syntax of your draft to apply it\non the latest version, or discard it" (Save disabled)
+    else draft parsed
+        Editor -> Rebase : rebaseDraft(base, draft, latest)
+        activate Rebase
+        Rebase -> Compare : compareConfigurations(base, draft)
+        activate Compare
+        Compare --> Rebase : mine = { /name: "Compact kitchen" -> "Kitchen B" }
+        Rebase -> Compare : compareConfigurations(base, latest)
+        Compare --> Rebase : theirs = { /content/kitchen/dimensions/width: 12 -> 14 }
+        deactivate Compare
+        Rebase -> Rebase : candidate = copy of latest (v4)\nfor each change in mine:\n  no change of theirs on the same / overlapping path -> apply to candidate\n  same value in theirs -> nothing to do\n  different value -> conflict { path, base, mine, theirs }\nelements matched by id; new elements appended after latest's
+        Rebase --> Editor : RebaseResult { candidate (name "Kitchen B", width 14),\napplied: [/name], theirs: [width], conflicts: [] }
+        deactivate Rebase
+        Editor -> Editor : concurrency = { phase: "reviewing", latest, rebase,\nresolutions: {}, reviewAcknowledged: false }
+        Editor -> Panel : render(latest, rebase)
+        Panel --> Manager : "Changed by the other user (v4): width 12 -> 14 (kept)"\n"Your changes re-applied on v4: name -> Kitchen B"\nConflicts: none\n[Discard my draft]  [Continue with the rebased version]\n[ ] I reviewed the other user's changes  (Save disabled)
+    end
+end
+deactivate Editor
+deactivate Panel
+
+opt conflicts exist (e.g. both users changed /content/kitchen/dimensions/width)
+    loop for each conflict
+        Panel --> Manager : "width: base 12 | yours 10 | theirs 14"\n[Keep mine] [Keep theirs]
+        Manager -> Panel : chooses
+        Panel -> Editor : onResolveConflict(path, "mine" | "theirs")
+        activate Editor
+        Editor -> Rebase : applyResolutions(rebase, resolutions)
+        Rebase --> Editor : candidate updated
+        deactivate Editor
+    end
+end
+
+alt Manager discards the draft
+    Manager -> Panel : clicks "Discard my draft"
+    Panel -> Editor : onDiscardMyDraft()
+    activate Editor
+    Editor -> Editor : name, text = latest; version = 4; base = latest;\nconcurrency.phase = "none"
+    Editor --> Manager : editor shows version 4 (nothing sent)
+    deactivate Editor
+else Manager continues with the rebased content
+    Manager -> Panel : clicks "Continue with the rebased version"
+    Panel -> Editor : onContinueWithRebased()
+    activate Editor
+    Editor -> Editor : text = candidate; version = latest.version (4); base = latest
+    Editor --> Manager : editor shows the rebased JSON (new width 14 + new name)
+    deactivate Editor
+    Manager -> Editor : optionally adjusts the rebased content
+    Manager -> Panel : ticks "I reviewed the other user's changes"
+    Panel -> Editor : onAcknowledgeReview(true)
+    activate Editor
+    Editor -> Editor : Save enabled only if every conflict is resolved\nAND reviewAcknowledged = true
+    deactivate Editor
+    Manager -> Editor : clicks "Save"
+    activate Editor
+    Editor -> Api : update("KCF-00002", { name: "Kitchen B",\ncontent: candidate (width 14), version: 4 })
+    activate Api
+    ref over Api, PG : same server path as above (validation, conditional UPDATE ... WHERE version = 4)
+    Api --> Editor : 200 (version 5) / 422 / 409 again
+    deactivate Api
+    alt 200
+        Editor -> Editor : version = 5; base = saved record; concurrency.phase = "none"
+        Editor --> Manager : "Configuration saved" (version 5):\nthe other user's width 14 AND the new name are stored
+    else 409 again (changed once more meanwhile)
+        Editor --> Manager : back to phase "conflict"; the rebased content is the new draft\nand v4 the new base (the cycle repeats; nothing is overwritten)
+    else 422
+        Editor --> Manager : issues listed; rebased content kept; review stays acknowledged
+    end
+    deactivate Editor
+end
+
+== Language switch while editing (client clarification 15) ==
+Manager -> Editor : switches PT <-> EN in the layout header (WEB02)
+activate Editor
+note right of Editor
+    LanguageContext changes; the page is NOT remounted
+    (route not keyed by language) and no effect depends
+    on the language, so nothing is fetched or reset.
+end note
+Editor -> Editor : re-render: labels via t(key);\nValidationIssueList via t(issue.code, issue params)
+Editor --> Manager : same name, same typed or imported JSON,\nsame issues and same draft / comparison,\nnow in the selected language (no request sent)
+deactivate Editor
+
+== Later: viewer load (SD 5) ==
+ref over Viewer, Routes : SD 5 - GET /api/v1/kitchen-configurations/active
+note left of Viewer : receives version 4 only if the edit was\naccepted; otherwise the previous valid version
+
+@enduml
