@@ -179,21 +179,34 @@ verify_running_images() {
 
 smoke() {
   local failed=0 api_result api_status api_body
-  if ! curl --fail --silent --show-error --max-time 10 --resolve "$PUBLIC_HOST:80:127.0.0.1" "http://$PUBLIC_HOST/api/v1/health" | python3 -c 'import json,sys; assert json.load(sys.stdin).get("status")=="ok"'; then
+  local base_url="http://127.0.0.1:2228"
+
+  if ! curl --fail --silent --show-error --max-time 10 \
+    "$base_url/api/v1/health" |
+    python3 -c 'import json,sys; assert json.load(sys.stdin).get("status")=="ok"'; then
     echo 'Smoke check failed: API health' >&2
     failed=1
   fi
-  if ! curl --fail --silent --show-error --max-time 10 --resolve "$PUBLIC_HOST:80:127.0.0.1" "http://$PUBLIC_HOST/register" | grep -q 'id="root"'; then
+
+  if ! curl --fail --silent --show-error --max-time 10 \
+    "$base_url/register" | grep -q 'id="root"'; then
     echo 'Smoke check failed: /register SPA entry' >&2
     failed=1
   fi
-  if ! curl --fail --silent --show-error --max-time 10 --resolve "$PUBLIC_HOST:80:127.0.0.1" "http://$PUBLIC_HOST/register/x/y" | grep -q 'id="root"'; then
+
+  if ! curl --fail --silent --show-error --max-time 10 \
+    "$base_url/register/x/y" | grep -q 'id="root"'; then
     echo 'Smoke check failed: nested SPA entry' >&2
     failed=1
   fi
-  if api_result=$(curl --silent --show-error --max-time 10 --resolve "$PUBLIC_HOST:80:127.0.0.1" -w '\n%{http_code}' "http://$PUBLIC_HOST/api/v1/does-not-exist"); then
+
+  if api_result=$(curl --silent --show-error --max-time 10 \
+    -w '\n%{http_code}' \
+    "$base_url/api/v1/does-not-exist"); then
+
     api_status=${api_result##*$'\n'}
     api_body=${api_result%$'\n'*}
+
     if [[ "$api_status" != 404 || "$api_body" == *'id="root"'* ]]; then
       echo 'Smoke check failed: unknown API path did not return an API 404' >&2
       failed=1
@@ -202,6 +215,7 @@ smoke() {
     echo 'Smoke check failed: unknown API path request' >&2
     failed=1
   fi
+
   return "$failed"
 }
 
