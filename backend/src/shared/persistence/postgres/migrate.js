@@ -4,6 +4,12 @@ import { createHash } from 'node:crypto';
 const defaultDirectory = new URL('../../../../migrations/', import.meta.url);
 
 const invitationMethodMigration = '0025_activation_invitation_method.sql';
+// AA05's audit migration was first released as 0025 on some branches. It is
+// now ordered after the existing 0028 migrations; retain the old name as an
+// applied-history alias so databases that already ran it do not run it twice.
+const legacyMigrationAliases = new Map([
+  ['0025_aa05_security_audit_logs.sql', '0029_aa05_security_audit_logs.sql'],
+]);
 const correctedInvitationMethodChecksum =
   'ffea9c9243455de75ff45fb5a8e790a62dcf13b63b77a2e39163bc59382f0aec';
 const originalInvitationMethodChecksums = new Set([
@@ -80,14 +86,20 @@ export async function migrate(
       'SELECT name, checksum FROM public.schema_migrations ORDER BY name',
     );
     for (const applied of rows) {
+      const migration = migrations.find(
+        (item) =>
+          item.name === applied.name ||
+          legacyMigrationAliases.get(applied.name) === item.name,
+      );
       if (
-        !migrations.some(
-          (item) =>
-            item.name === applied.name &&
-            ([item.checksum, item.legacyChecksum].includes(applied.checksum) ||
-              (item.name === invitationMethodMigration &&
-                item.checksum === correctedInvitationMethodChecksum &&
-                originalInvitationMethodChecksums.has(applied.checksum))),
+        !migration ||
+        !(
+          [migration.checksum, migration.legacyChecksum].includes(
+            applied.checksum,
+          ) ||
+          (migration.name === invitationMethodMigration &&
+            migration.checksum === correctedInvitationMethodChecksum &&
+            originalInvitationMethodChecksums.has(applied.checksum))
         )
       ) {
         throw new Error('Applied migration was changed or removed');
@@ -97,7 +109,12 @@ export async function migrate(
       ? migrations.filter((item) => item.name <= throughVersion)
       : migrations;
     const pending = scheduled.filter(
-      (item) => !rows.some((row) => row.name === item.name),
+      (item) =>
+        !rows.some(
+          (row) =>
+            row.name === item.name ||
+            legacyMigrationAliases.get(row.name) === item.name,
+        ),
     );
     if (pending.some((item) => rows.some((row) => row.name > item.name))) {
       throw new Error('New migrations must follow all applied versions');

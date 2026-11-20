@@ -1,0 +1,114 @@
+@startuml sequence_diagram_light_controls
+skinparam shadowing false
+skinparam backgroundColor white
+hide footbox
+autonumber
+
+title VIS06 – Ready scene, light edits and cleanup
+
+actor "Viewer user" as User
+participant ProtectedRoute as Route
+participant KitchenViewerPage as Page
+participant KitchenViewer as Viewer
+participant "VIS01 loader / WEB06" as Loader
+participant ViewerEngine as Engine
+participant KitchenLightingModule as Lighting
+participant LightControlsModule as Controls
+participant LightControlsPanel as Panel
+participant "Live Three.js lights / renderer" as Three
+
+User -> Route : open kitchen viewer
+Route -> Route : existing session and viewer access check
+alt Viewer access denied
+  Route --> User : existing sign-in or access feedback
+else Manager or Staff viewer access
+  Route -> Page : mount through ModulePage
+  Page -> Viewer : mount with canEditLights and factory
+  Viewer -> Loader : load active layout and preload assets
+  alt Load can proceed
+    Loader --> Viewer : configuration and loaded assets
+    Viewer -> Controls : create via factory for this attempt
+    Viewer -> Engine : load(configuration, assets, factories, signal)
+    Engine -> Lighting : build(context)
+    Lighting -> Three : attach VIS05 lights and configure shadows
+    Engine -> Controls : build(context)
+    Controls -> Controls : retain current scene reference
+    alt Scene build fails
+      Engine -> Engine : dispose()
+      Engine --> Viewer : existing build failure
+      Viewer --> User : failed viewer with Retry
+    else Build succeeds
+      Engine --> Viewer : true
+      Viewer -> Engine : start()
+      Engine -> Three : first render
+      alt First paint succeeds
+        Engine --> Viewer : true
+        Viewer -> Viewer : publish ready with current binding
+      else First paint fails
+        Engine -> Engine : dispose()
+        Engine --> Viewer : onFatalError, start returns false
+        Viewer --> User : failed viewer with Retry
+      end
+    end
+  else Empty, interrupted or failed load
+    Loader --> Viewer : existing VIS01 outcome
+  end
+end
+
+opt Ready attempt
+  alt Manager permission
+    Viewer -> Controls : bind()
+    Controls -> Three : verify named lights and initial parameters
+    alt Binding available
+      Controls --> Viewer : true
+      Viewer -> Panel : mount with current binding
+      Panel -> Controls : getSources()
+      Controls --> Panel : live snapshots
+      Panel --> User : one folder per light
+    else Missing or incompatible binding
+      Controls --> Viewer : false (or exception handled by viewer)
+      Viewer --> User : controls unavailable, canvas stays ready
+    end
+    loop Panel input if binding available
+      User -> Panel : edit a single parameter or switch
+      Panel -> Controls : apply(id, change)
+      alt Live binding and valid applicable edit
+        Controls -> Three : set the chosen light property
+        opt Shadow-casting key re-enabled or cutoff changed
+          Controls -> Three : set shadow.needsUpdate
+        end
+        Controls --> Panel : true
+      else Stale binding or invalid edit
+        Controls --> Panel : false
+      end
+      Panel -> Controls : getSources()
+      Controls --> Panel : current values and enabled states
+    end
+  else Staff without Manager
+    Viewer --> User : ready scene, no bind() call
+  end
+  loop Existing frame loop
+    Engine -> Three : render(scene, camera)
+  end
+  alt Manager revoked while Staff retains viewer access
+    Page -> Viewer : canEditLights = false
+    Viewer -> Panel : unmount and deactivate handlers
+  else Manager granted while Staff viewer is ready
+    Page -> Viewer : canEditLights = true
+    ref over Viewer, Panel : Run Manager binding flow on the same scene
+  else Attempt ends
+    alt Reload or route exit
+      Viewer -> Engine : dispose()
+    else Fatal render failure
+      Engine -> Engine : dispose()
+    end
+    Engine -> Controls : dispose()
+    Engine -> Lighting : dispose()
+    opt Fatal render failure
+      Engine --> Viewer : onFatalError
+      Viewer --> User : failed viewer with Retry
+    end
+    Viewer -> Panel : unmount if present
+  end
+end
+@enduml

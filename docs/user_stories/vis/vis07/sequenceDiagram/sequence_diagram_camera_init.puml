@@ -1,0 +1,117 @@
+@startuml sequence_diagram_camera_init
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - VIS07 Camera Initialization
+
+actor User as "LaPrizza Manager"
+participant Viewer as "KitchenViewer\n(VIS01)"
+participant Engine as "ViewerEngine\n(VIS01)"
+participant Others as "KitchenLayoutModule +\nBaseLightingModule"
+participant Module as "CameraControlsModule\n(VIS07)"
+participant Ctrl as "CameraController\n(VIS07)"
+participant Limits as "cameraLimits"
+participant Orbit as "OrbitControls\n(three/addons)"
+participant Three as "three\n(PerspectiveCamera / WebGLRenderer)"
+
+note over User, Three
+    Precondition: active configuration valid and every asset preloaded
+    (VIS01 sequence_diagram_open_viewer, step 5). Origin = centre of the floor.
+    defaultSceneModules = [layout, lighting, camera]: the camera module runs LAST.
+    camera.aspect already matches the canvas (VIS01 resize).
+end note
+
+activate Viewer
+Viewer -> Engine : await load(configuration, assets, defaultSceneModules, signal)
+activate Engine
+Engine -> Three : positionCamera(): default framing (VIS01)
+activate Three
+Three --> Engine : camera framed
+deactivate Three
+Engine -> Others : build(ctx) (room, equipment, lights; camera untouched)
+activate Others
+Others --> Engine : done
+deactivate Others
+
+Engine -> Module : modules.push(module); build(ctx)
+activate Module
+alt ctx.signal aborted or module disposed
+    Module --> Engine : return (nothing created)
+else
+    Module -> Ctrl : createCameraController(ctx.camera, ctx.domElement,\nconfiguration.content)
+    activate Ctrl
+    Ctrl -> Three : read camera.aspect
+    activate Three
+    Three --> Ctrl : aspect (lastAspect = aspect)
+    deactivate Three
+    Ctrl -> Limits : computeCameraLimits(kitchen.dimensions, aspect,\nassemblyLine.wall)
+    activate Limits
+    Limits -> Limits : computeFitDistance(): 8 corners of the room,\nhorizontal and vertical FOV, x FIT_MARGIN
+    Limits --> Ctrl : fitDistance, min/maxDistance, near, far, targetBounds
+    deactivate Limits
+    Ctrl -> Limits : computeInitialView(limits, assemblyLine.wall)
+    activate Limits
+    Limits --> Ctrl : target (0,0,0), azimuth opposite the wall,\npolar 55 deg, distance fitDistance, position
+    deactivate Limits
+    Ctrl -> Three : camera.fov = 50; near = 0.05; far = limits.far;\nupdateProjectionMatrix()
+    activate Three
+    Three --> Ctrl : projection updated
+    deactivate Three
+    Ctrl -> Orbit : createControls(camera, domElement)
+    activate Orbit
+    Orbit --> Ctrl : controls (listening on the canvas only)
+    Ctrl -> Orbit : mouseButtons = { LEFT: PAN, MIDDLE: DOLLY, RIGHT: ROTATE }
+    Ctrl -> Orbit : minDistance 0.5 / maxDistance;\npolar [5, 85] deg; azimuth free
+    Ctrl -> Orbit : enableDamping, dampingFactor 0.08;\nspeeds 0.5 / 0.8 / 0.6;\nscreenSpacePanning = false; zoomToCursor = false
+    Ctrl -> Ctrl : canvas.addEventListener("kitchen-viewer:reset-view",\nonResetView)
+    note right of Ctrl
+        No "change" listener: the target is
+        clamped in update() on every frame (D4).
+    end note
+    Ctrl -> Ctrl : applyInitialView()
+    Ctrl -> Orbit : flushMomentum(): enableDamping = false; update();\nenableDamping = true
+    Orbit --> Ctrl : no residual movement
+    Ctrl -> Three : camera.position = initialView.position
+    activate Three
+    Three --> Ctrl : position set
+    deactivate Three
+    Ctrl -> Orbit : target.set(0, 0, 0); update()
+    Orbit -> Three : camera looks at the floor centre
+    activate Three
+    Three --> Orbit : camera updated
+    deactivate Three
+    Orbit --> Ctrl : initial view applied
+    deactivate Orbit
+    Ctrl --> Module : controller
+    deactivate Ctrl
+    Module --> Engine : done
+end
+deactivate Module
+
+Engine --> Viewer : true (build complete)
+deactivate Engine
+Viewer -> Engine : start()
+activate Engine
+Engine -> Three : render first frame looking at the floor centre
+activate Three
+Three --> Engine : frame rendered
+deactivate Three
+Engine -> Three : setAnimationLoop(frame)
+activate Three
+Three --> Engine : loop started
+deactivate Three
+Engine --> Viewer : true
+deactivate Engine
+Viewer --> User : state "ready": all 8 corners of the kitchen visible,\nassembly line facing the user; "Reload" and "Reset view" available
+deactivate Viewer
+
+note right of Viewer
+    Example 12 x 8 x 3.2 m, line on NORTH, canvas 16:9:
+    fitDistance 12.97 m, maxDistance 19.45 m, far 34.2 m,
+    camera (0, 7.44, 10.62). Same kitchen in 9:16:
+    fitDistance 29.39 m, camera (0, 16.86, 24.07).
+    If build() throws, the VIS01 failure path applies
+    (sequence_diagram_engine_failure, F2).
+end note
+@enduml

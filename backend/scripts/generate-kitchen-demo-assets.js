@@ -223,7 +223,11 @@ async function main() {
   const force = process.argv.includes('--force');
   const entries = await readKitchenAssetManifest();
   let written = 0;
-  for (const entry of entries) {
+  // VIS03 recipes embed existing maps. Restore missing maps before models.
+  const ordered = [...entries].sort(
+    (a, b) => Number(b.kind === 'TEXTURE') - Number(a.kind === 'TEXTURE'),
+  );
+  for (const entry of ordered) {
     const target = path.resolve(DEFAULT_ASSETS_DIRECTORY, entry.path);
     if (!target.startsWith(path.resolve(DEFAULT_ASSETS_DIRECTORY) + path.sep))
       throw new Error(`Unsafe asset path: ${entry.path}`);

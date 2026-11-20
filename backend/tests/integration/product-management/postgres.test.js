@@ -108,7 +108,7 @@ describeDB('BCK05 PostgreSQL (isolated schema in dedicated _test database)', () 
       pizza([
         { productId: child.id, quantity: 4 },
         { productId: child.id, quantity: 1 },
-      ]),
+      ], { expectedUpdatedAt: created.updatedAt }),
     );
     expect(updated.compositionItems).toEqual([
       { productId: child.id, quantity: 5 },
@@ -131,7 +131,9 @@ describeDB('BCK05 PostgreSQL (isolated schema in dedicated _test database)', () 
     await expect(
       service.updateProduct(
         first.id,
-        pizza([{ productId: second.id, quantity: 1 }]),
+        pizza([{ productId: second.id, quantity: 1 }], {
+          expectedUpdatedAt: first.updatedAt,
+        }),
       ),
     ).rejects.toMatchObject({ status: 409 });
   });

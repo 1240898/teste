@@ -1,3 +1,4 @@
+
 import request from 'supertest';
 import { createApp } from '../../../src/app.js';
 import { createUserModule } from '../../../src/modules/user-authentication-management/index.js';
@@ -56,7 +57,7 @@ const pizza = (compositionItems, overrides = {}) =>
     ...overrides,
   });
 
-let app, products, impact, manager, employee, customer;
+let app, products, impact, manager, employee, customer, administrator, adminManager;
 
 async function tokenFor(userModule, users, roles, email) {
   const user = createUser({
@@ -91,6 +92,18 @@ beforeEach(async () => {
   manager = await tokenFor(userModule, users, ['MANAGER'], 'm@example.com');
   employee = await tokenFor(userModule, users, ['EMPLOYEE'], 'e@example.com');
   customer = await tokenFor(userModule, users, ['CUSTOMER'], 'c@example.com');
+  administrator = await tokenFor(
+    userModule,
+    users,
+    ['ADMINISTRATOR'],
+    'a@example.com',
+  );
+  adminManager = await tokenFor(
+    userModule,
+    users,
+    ['ADMINISTRATOR', 'MANAGER'],
+    'am@example.com',
+  );
 });
 
 const create = (payload = body(), token = manager) =>
@@ -156,7 +169,9 @@ describe('BCK05 HTTP contract', () => {
     const response = await request(app)
       .put(`/api/v1/products/${first.body.id}`)
       .set(auth(manager))
-      .send(pizza([{ productId: second.body.id, quantity: 1 }]));
+      .send(pizza([{ productId: second.body.id, quantity: 1 }], {
+        expectedUpdatedAt: first.body.updatedAt,
+      }));
     expect(first.status).toBe(201);
     expect(second.status).toBe(201);
     expect(response.status).toBe(409);
@@ -172,13 +187,138 @@ describe('BCK05 HTTP contract', () => {
     expect((await request(app).delete(url).set(auth(employee))).status).toBe(403);
   });
 
+  test('excluding an allergen also excludes products that only have it in their composition', async () => {
+    const child = await create(component());
+    const created = await create(
+      pizza([{ productId: child.body.id, quantity: 1 }]),
+    );
+    expect(created.status).toBe(201);
+    const search = await request(app)
+      .get('/api/v1/products?excludeAllergenIds=7')
+      .set(auth(manager));
+    expect(search.status).toBe(200);
+    const ids = search.body.map((item) => item.id);
+    expect(ids).not.toContain(child.body.id);
+    expect(ids).not.toContain(created.body.id);
+  });
+
+  test('public reads expose only active sellable data while staff retain the full view', async () => {
+    const child = await create(component());
+    const created = await create(
+      pizza([{ productId: child.body.id, quantity: 2 }]),
+    );
+    expect(child.status).toBe(201);
+    expect(created.status).toBe(201);
+
+    const publicList = await request(app).get('/api/v1/products');
+    expect(publicList.status).toBe(200);
+    expect(publicList.body.map((item) => item.id)).toEqual([created.body.id]);
+    expect(publicList.body[0]).toMatchObject({
+      id: created.body.id,
+      name: 'Margherita',
+      allergenIds: [],
+      pricingMode: 'COMPONENT_BASED',
+      basePrice: null,
+    });
+    for (const field of [
+      'acquisitionType',
+      'compositionItems',
+      'isPizzaComponent',
+      'isActive',
+      'createdAt',
+      'updatedAt',
+    ])
+      expect(publicList.body[0]).not.toHaveProperty(field);
+
+    const publicDetail = await request(app).get(
+      `/api/v1/products/${created.body.id}`,
+    );
+    expect(publicDetail.status).toBe(200);
+    expect(publicDetail.body).toEqual(publicList.body[0]);
+    expect(
+      (await request(app).get(`/api/v1/products/${child.body.id}`)).status,
+    ).toBe(404);
+
+    // Customers and Administrators without a staff role get the public view.
+    for (const token of [customer, administrator]) {
+      const list = await request(app)
+        .get('/api/v1/products')
+        .set(auth(token));
+      expect(list.body.map((item) => item.id)).toEqual([created.body.id]);
+      expect(list.body[0]).not.toHaveProperty('compositionItems');
+      expect(
+        (
+          await request(app)
+            .get(`/api/v1/products/${child.body.id}`)
+            .set(auth(token))
+        ).status,
+      ).toBe(404);
+      const detail = await request(app)
+        .get(`/api/v1/products/${created.body.id}`)
+        .set(auth(token));
+      expect(detail.body).toEqual(publicList.body[0]);
+    }
+
+    // MANAGER / EMPLOYEE (also combined with ADMINISTRATOR) keep the full view.
+    for (const token of [manager, employee, adminManager]) {
+      const list = await request(app)
+        .get('/api/v1/products')
+        .set(auth(token));
+      const detail = await request(app)
+        .get(`/api/v1/products/${child.body.id}`)
+        .set(auth(token));
+      expect(list.body.map((item) => item.id)).toContain(child.body.id);
+      expect(detail.body).toMatchObject({
+        id: child.body.id,
+        acquisitionType: 'PRODUCED',
+        compositionItems: [],
+        allergenIds: [7],
+      });
+    }
+  });
+
+  test('public searches ignore internal filters such as acquisitionType', async () => {
+    const child = await create(component());
+    const created = await create(
+      pizza([{ productId: child.body.id, quantity: 2 }]),
+    );
+    expect(created.status).toBe(201);
+
+    const baseline = await request(app).get('/api/v1/products');
+    expect(baseline.body.map((item) => item.id)).toEqual([created.body.id]);
+
+    // The pizza is PRODUCED: if the filter were applied, these would hide it
+    // or reveal internal data. Public callers must get the same result.
+    for (const query of [
+      'acquisitionType=PURCHASED',
+      'acquisitionType=PRODUCED',
+      'isPizzaComponent=true',
+      'isActive=false',
+      'isSellable=false',
+    ]) {
+      const response = await request(app).get(`/api/v1/products?${query}`);
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual(baseline.body);
+    }
+
+    // Staff searches still apply the internal filter.
+    const staff = await request(app)
+      .get('/api/v1/products?acquisitionType=PURCHASED')
+      .set(auth(manager));
+    expect(staff.body.map((item) => item.id)).not.toContain(created.body.id);
+  });
+
   test('PUT replaces editable state; DELETE and PATCH deactivate/reactivate', async () => {
     const created = await create();
     const url = `/api/v1/products/${created.body.id}`;
     const updated = await request(app)
       .put(url)
       .set(auth(manager))
-      .send(body({ name: 'Coke Zero', basePrice: 2 }));
+      .send(body({
+        name: 'Coke Zero',
+        basePrice: 2,
+        expectedUpdatedAt: created.body.updatedAt,
+      }));
     expect(updated.status).toBe(200);
     expect(updated.body).toMatchObject({ name: 'Coke Zero', basePrice: 2 });
     expect((await request(app).delete(url).set(auth(manager))).status).toBe(204);
@@ -188,13 +328,36 @@ describe('BCK05 HTTP contract', () => {
     expect(activated.body.isActive).toBe(true);
   });
 
+  test('rejects stale product edits and leaves the latest version unchanged', async () => {
+    const created = await create();
+    const url = `/api/v1/products/${created.body.id}`;
+    const originalVersion = created.body.updatedAt;
+    const firstEdit = await request(app)
+      .put(url)
+      .set(auth(manager))
+      .send(body({ name: 'First edit', expectedUpdatedAt: originalVersion }));
+    expect(firstEdit.status).toBe(200);
+
+    const staleEdit = await request(app)
+      .put(url)
+      .set(auth(manager))
+      .send(body({ name: 'Stale edit', expectedUpdatedAt: originalVersion }));
+    expect(staleEdit.status).toBe(412);
+    expect((await request(app).get(url).set(auth(manager))).body.name).toBe(
+      'First edit',
+    );
+  });
+
   test('returns 409 when an update removes a referenced component role', async () => {
     const created = await create(component());
     impact.components.add(created.body.id);
     const response = await request(app)
       .put(`/api/v1/products/${created.body.id}`)
       .set(auth(manager))
-      .send(body({ name: created.body.name }));
+      .send(body({
+        name: created.body.name,
+        expectedUpdatedAt: created.body.updatedAt,
+      }));
     expect(response.status).toBe(409);
   });
 });

@@ -35,7 +35,12 @@ function enableShadows(root) {
  * Imported models are cloned from LoadedAssets: their geometries and
  * materials stay borrowed and are never disposed here. No URL is read.
  */
-export function createSceneElementFactory({ assets, shapes, materials }) {
+export function createSceneElementFactory({
+  assets,
+  shapes,
+  materials,
+  disposeResource = (resource) => resource.dispose(),
+}) {
   function buildProcedural(element) {
     const { shape, size } = element.model;
     const geometry = shapes.geometry(shape, size);
@@ -43,7 +48,7 @@ export function createSceneElementFactory({ assets, shapes, materials }) {
     return new Mesh(geometry, material);
   }
 
-  function buildImported(element) {
+  function buildImported(element, root) {
     const { assetId } = element.model;
     const model = assets.getModel(assetId);
     if (!model?.scene) {
@@ -53,15 +58,22 @@ export function createSceneElementFactory({ assets, shapes, materials }) {
       throw new ElementBuildError(element.id, reason);
     }
     const copy = cloneSkinned(model.scene);
+    root.add(copy);
     namespaceParts(copy);
     if (element.material) materials.applyOverride(copy, element.material);
-    return copy;
+  }
+
+  /** Releases the skeletons owned by the clone, including a partial build. */
+  function release(root, dispose = disposeResource) {
+    root?.traverse((object) => {
+      if (object.isSkinnedMesh) dispose(object.skeleton);
+    });
   }
 
   return {
     /**
      * @param {object} element WEB06 SceneElement
-     * @param {{isStatic?: boolean}} [options] VIS03 keeps animated parts dynamic
+     * @param {{isStatic?: boolean}} [options] Applies only to the element root
      * @returns {import('three').Group}
      */
     create(element, { isStatic = true } = {}) {
@@ -77,9 +89,15 @@ export function createSceneElementFactory({ assets, shapes, materials }) {
       try {
         const source = element.model?.source;
         if (source === 'PROCEDURAL') root.add(buildProcedural(element));
-        else if (source === 'ASSET') root.add(buildImported(element));
+        else if (source === 'ASSET') buildImported(element, root);
         else throw new ElementBuildError(element.id, 'unknown-shape');
+
+        if (!applyPlacement(root, element.placement, { isStatic }))
+          throw new ElementBuildError(element.id, 'invalid-number');
+        enableShadows(root);
+        return root;
       } catch (error) {
+        release(root);
         if (error instanceof ElementBuildError) throw error;
         if (error instanceof ShapeError)
           throw new ElementBuildError(element.id, error.reason, {
@@ -91,18 +109,8 @@ export function createSceneElementFactory({ assets, shapes, materials }) {
           });
         throw error;
       }
-
-      if (!applyPlacement(root, element.placement, { isStatic }))
-        throw new ElementBuildError(element.id, 'invalid-number');
-      enableShadows(root);
-      return root;
     },
 
-    /** Releases what a clone owns: only the skeletons of skinned meshes. */
-    release(root, release = (resource) => resource.dispose()) {
-      root?.traverse((object) => {
-        if (object.isSkinnedMesh) release(object.skeleton);
-      });
-    },
+    release,
   };
 }

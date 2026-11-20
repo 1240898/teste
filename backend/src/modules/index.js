@@ -13,6 +13,7 @@ import { register as registerProductManagement } from './product-management/inde
 import { register as registerStockInformationManagement } from './stock-information-management/index.js';
 import { register as registerUserAuthenticationManagement } from './user-authentication-management/index.js';
 import { register as registerKitchenConfigurationManagement } from './kitchen-configuration-management/index.js';
+import { register as registerAuthorizationEnforcement } from './authorization-enforcement/index.js';
 
 export function registerModules(
   router,
@@ -29,6 +30,7 @@ export function registerModules(
     predefinedPizzaModule,
     catalogueModule,
     kitchenConfigurationModule,
+    authorizationModule,
   } = {},
 ) {
   registerUserAuthenticationManagement(router, userModule);
@@ -43,4 +45,5 @@ export function registerModules(
   registerPredefinedPizzaManagement(router, predefinedPizzaModule);
   registerProductCatalogueAndInformation(router, catalogueModule);
   registerKitchenConfigurationManagement(router, kitchenConfigurationModule);
+  registerAuthorizationEnforcement(router, authorizationModule);
 }

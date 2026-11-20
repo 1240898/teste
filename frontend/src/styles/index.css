@@ -730,6 +730,46 @@ button:disabled {
   width: auto;
 }
 
+.business-management .catalogue-search__checkbox-group {
+  flex: 1 1 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  background: var(--surface, #fff);
+}
+
+.business-management .catalogue-search__checkbox-group legend {
+  padding: 0 0.25rem;
+  font-weight: 650;
+}
+
+.business-management .catalogue-search__checkbox-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+  gap: 0.35rem 0.8rem;
+}
+
+.business-management .catalogue-search__checkbox-options label {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  min-width: 0;
+  margin: 0;
+  font-size: 0.92rem;
+  cursor: pointer;
+}
+
+.business-management .catalogue-search__checkbox-options input[type='checkbox'] {
+  width: 1rem;
+  flex: 0 0 auto;
+  min-height: 1rem;
+  margin: 0.15rem 0 0;
+  padding: 0;
+  border-radius: 0.2rem;
+}
+
 .catalogue-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
@@ -800,6 +840,116 @@ button:disabled {
 
 .catalogue-allergens__label {
   font-weight: 650;
+}
+
+.audit-page {
+  width: min(100%, 1200px);
+  margin: 2rem auto;
+  padding: clamp(1rem, 4vw, 2.5rem);
+  border: 1px solid #e9e6dc;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 18px 60px rgb(48 57 51 / 8%);
+}
+
+.audit-heading,
+.audit-results-heading,
+.audit-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.audit-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  align-items: end;
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+
+.audit-filters label {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0;
+}
+
+.audit-filters input,
+.audit-filters select {
+  min-width: 0;
+}
+
+.audit-filters button,
+.audit-results-heading button,
+.audit-pagination button {
+  min-height: 42px;
+  padding: 0.55rem 0.9rem;
+  border: 0;
+  border-radius: 8px;
+  color: #fff;
+  background: #24664b;
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.audit-table-scroll {
+  overflow-x: auto;
+  margin: 1rem 0;
+}
+
+.audit-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 0.85rem;
+}
+
+.audit-table th,
+.audit-table td {
+  padding: 0.75rem;
+  border-bottom: 1px solid #e4e2da;
+  vertical-align: top;
+}
+
+.audit-table td:last-child {
+  min-width: 220px;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, monospace;
+  font-size: 0.75rem;
+}
+
+.audit-pagination {
+  justify-content: flex-end;
+}
+
+.audit-pagination span {
+  color: #68736e;
+  font-size: 0.85rem;
+}
+
+.audit-pagination button:disabled {
+  color: #68736e;
+  background: #e4e2da;
+  cursor: not-allowed;
+}
+
+@media (max-width: 44rem) {
+  .audit-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .audit-filters {
+    grid-template-columns: 1fr;
+  }
+
+  .audit-pagination {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
 }
 
 .tag {
@@ -1536,6 +1686,7 @@ button:disabled {
 .kitchen-detail__facts dd {
   margin: 0;
 }
+
 .kitchen-viewer__toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -1548,7 +1699,7 @@ button:disabled {
   width: 100%;
   height: clamp(16rem, 65vh, 48rem);
   overflow: hidden;
-  background: #20272c;
+  background: transparent;
   border-radius: 0.5rem;
 }
 
@@ -1564,4 +1715,183 @@ button:disabled {
   display: block;
   width: 100%;
   height: 100%;
+}
+
+/* WEB05 - business management workspaces */
+.business-management {
+  display: grid;
+  gap: 1rem;
+}
+
+.business-management .management-form,
+.business-management .management-details {
+  display: grid;
+  gap: 0.8rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--surface, #fff);
+}
+
+.business-management .management-form input:not([type='checkbox']),
+.business-management .management-form select,
+.business-management .management-form textarea,
+.business-management .catalogue-search select {
+  width: 100%;
+  min-height: 2.6rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  color: inherit;
+  background: var(--surface, #fff);
+}
+
+.business-management .management-form input[type='checkbox'] {
+  width: 1.1rem;
+  flex: 0 0 auto;
+  min-height: 1.1rem;
+  margin: 0;
+  padding: 0;
+  border-radius: 0.2rem;
+  accent-color: var(--brand);
+}
+
+.business-management .management-boolean-field {
+  display: flex;
+  width: fit-content;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0;
+  cursor: pointer;
+}
+
+.business-management .management-form textarea {
+  min-height: 7rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.business-management .management-checkbox-group {
+  min-width: 0;
+  margin: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+}
+
+.business-management .management-checkbox-group legend {
+  padding: 0 0.25rem;
+  font-weight: 650;
+}
+
+.business-management .management-checkbox-group p {
+  margin: 0 0 0.6rem;
+  color: var(--muted, #68736d);
+  font-size: 0.9rem;
+}
+
+.business-management .management-checkbox-group__options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: 0.45rem 1rem;
+}
+
+.business-management .management-checkbox-group__options label {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  min-width: 0;
+  margin: 0;
+  font-size: 0.92rem;
+  cursor: pointer;
+}
+
+.business-management .management-checkbox-group__options input[type='checkbox'] {
+  width: 1rem;
+  flex: 0 0 auto;
+  min-height: 1rem;
+  margin: 0.15rem 0 0;
+  padding: 0;
+  border-radius: 0.2rem;
+}
+
+.business-management .management-composition {
+  min-width: 0;
+  margin: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+}
+
+.business-management .management-composition legend {
+  padding: 0 0.25rem;
+  font-weight: 650;
+}
+
+.business-management .management-composition > p {
+  margin: 0 0 0.75rem;
+  color: var(--muted, #68736d);
+  font-size: 0.9rem;
+}
+
+.business-management .management-composition__row {
+  display: grid;
+  grid-template-columns: minmax(12rem, 2fr) minmax(6rem, 0.7fr) auto;
+  gap: 0.4rem 0.65rem;
+  align-items: center;
+  margin-bottom: 0.65rem;
+}
+
+.business-management .management-composition__row label:first-child {
+  grid-column: 1;
+}
+
+.business-management .management-composition__row select {
+  grid-column: 1;
+}
+
+.business-management .management-composition__row label:nth-of-type(2) {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.business-management .management-composition__row input {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.business-management .management-composition__row button {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+}
+
+@media (max-width: 38rem) {
+  .business-management .management-composition__row {
+    grid-template-columns: minmax(0, 1fr) minmax(5rem, 0.5fr);
+  }
+
+  .business-management .management-composition__row button {
+    grid-column: 1 / -1;
+    grid-row: auto;
+    justify-self: start;
+  }
+}
+
+.business-management .management-details dl {
+  display: grid;
+  grid-template-columns: minmax(10rem, max-content) minmax(0, 1fr);
+  gap: 0.5rem 1rem;
+  margin: 0;
+}
+
+.business-management .management-details dt {
+  font-weight: 650;
+}
+
+.business-management .management-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.business-management .table-scroll {
+  overflow-x: auto;
 }

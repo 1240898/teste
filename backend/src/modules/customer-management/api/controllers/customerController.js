@@ -10,7 +10,13 @@ export class CustomerController {
     res.json(await this.service.search(req.query));
   }
   async getById(req, res) {
-    res.json(await this.service.getById(req.params.id));
+    try {
+      res.json(await this.service.getById(req.params.id, req.user));
+    } catch (error) {
+      if (error.authorizationOutcome)
+        res.locals.authorizationOutcome = error.authorizationOutcome;
+      throw error;
+    }
   }
   async update(req, res) {
     res.json(await this.service.update(req.params.id, req.body));

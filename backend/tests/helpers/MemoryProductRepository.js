@@ -1,3 +1,4 @@
+
 import { AppError } from '../../src/shared/errors/AppError.js';
 import { AllergenId } from '../../src/modules/allergen-management/domain/model/AllergenId.js';
 import { ProductId } from '../../src/modules/product-management/domain/model/ProductId.js';
@@ -39,7 +40,7 @@ export class MemoryProductRepository {
         ['isActive', 'is_active'],
         ['acquisitionType', 'acquisition_type'],
       ].every(([field, column]) => criteria[field] === undefined || row[column] === criteria[field]))
-      .filter((row) => !(row.allergen_ids ?? []).some((id) => excluded.has(id)))
+      .filter((row) => !excluded.size || !this.#allergensOf(row).some((id) => excluded.has(id)))
       .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()) || a.id.localeCompare(b.id))
       .map((row) => ProductRowMapper.toDomain(asDatabaseRow(row)));
   }
@@ -47,6 +48,18 @@ export class MemoryProductRepository {
     const row = ProductRowMapper.toPersistence(product);
     this.rows.set(row.id, structuredClone(row));
     return ProductRowMapper.toDomain(asDatabaseRow(row));
+  }
+
+  // Own allergens plus the allergens of every product in the composition,
+  // at any depth (same rule as the PostgreSQL recursive query).
+  #allergensOf(row, visited = new Set()) {
+    if (visited.has(row.id)) return [];
+    visited.add(row.id);
+    const nested = (row.composition_items ?? []).flatMap((item) => {
+      const child = this.rows.get(item.product_id ?? item.productId);
+      return child ? this.#allergensOf(child, visited) : [];
+    });
+    return [...(row.allergen_ids ?? []), ...nested];
   }
 }
 

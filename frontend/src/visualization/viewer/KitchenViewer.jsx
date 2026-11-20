@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useLocale } from '../../shared/locale/localeContext.js';
+import { RESET_VIEW_EVENT } from '../scene/camera/cameraSettings.js';
 import { AssetLoadError, SceneAssetLoader } from '../scene/SceneAssetLoader.js';
 import { ViewerEngine } from '../scene/ViewerEngine.js';
 import { isWebGLAvailable } from '../scene/webglSupport.js';
@@ -142,6 +143,14 @@ export default function KitchenViewer({
     setAttempt((current) => current + 1);
   }
 
+  // VIS07 (BR 11, D10): the CameraController listens for this event on the
+  // canvas; the viewer keeps no reference to the camera or the scene modules.
+  function resetView() {
+    viewport.current
+      ?.querySelector('canvas')
+      ?.dispatchEvent(new Event(RESET_VIEW_EVENT));
+  }
+
   const ready = state.status === 'ready';
   const silent = ['expired', 'cancelled'].includes(state.status);
   return (
@@ -154,13 +163,22 @@ export default function KitchenViewer({
             <strong>{state.configuration.name}</strong>{' '}
             {t('viewerVersion', state.configuration)}
           </p>
-          <button
-            className="button button--secondary"
-            type="button"
-            onClick={restart}
-          >
-            {t('viewerReload')}
-          </button>
+          <div className="kitchen-viewer__actions">
+            <button
+              className="button button--secondary"
+              type="button"
+              onClick={resetView}
+            >
+              {t('viewerResetView')}
+            </button>
+            <button
+              className="button button--secondary"
+              type="button"
+              onClick={restart}
+            >
+              {t('viewerReload')}
+            </button>
+          </div>
         </div>
       )}
       <div

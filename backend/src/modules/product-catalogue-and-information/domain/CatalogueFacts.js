@@ -123,6 +123,10 @@ export class CatalogueFacts {
     return this.#pizzas.get(identifier(productId)) ?? null;
   }
 
+    getProduct(productId) {
+    return this.#products.get(identifier(productId)) ?? null;
+  }
+
   resolveComponents(composition) {
     return composition.map((item) => {
       const productId = identifier(item.getProductId?.() ?? item);

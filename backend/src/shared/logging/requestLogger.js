@@ -12,10 +12,18 @@ export function requestLogger() {
   return morgan((tokens, req, res) =>
     [
       tokens.method(req, res),
-      req.path,
+      safeRequestPath(req),
       tokens.status(req, res),
-      tokens['response-time'](req, res),
-      'ms',
+      `${tokens['response-time'](req, res)} ms`,
     ].join(' '),
   );
+}
+
+/** Returns a matched route template, never a concrete path or query string. */
+export function safeRequestPath(req) {
+  if (typeof req.authorizationRouteTemplate === 'string')
+    return req.authorizationRouteTemplate;
+  const routePath = req.route?.path;
+  if (typeof routePath !== 'string') return '/unmatched';
+  return routePath.startsWith('/') ? routePath : `/${routePath}`;
 }

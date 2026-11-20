@@ -256,7 +256,7 @@ test('IT05 - active endpoint: 404 NO_ACTIVE_CONFIGURATION, then resolved absolut
     const first = (await create('Compact kitchen')).body;
     const second = (await create('Extended kitchen', sample('extended'))).body;
     await activate(first.id);
-    files.missing.add('models/conveyor-01.glb');
+    files.missing.add('models/conveyor-02.glb');
     for (const id of [first.id, second.id]) {
       const response = await activate(id);
       expect(response.status).toBe(422);

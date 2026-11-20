@@ -11,6 +11,7 @@ import PasswordRecoveryPage from '../features/authentication/pages/PasswordRecov
 import ChangePasswordPage from '../features/authentication/pages/ChangePasswordPage.jsx';
 import LocalRegistrationPage from '../features/authentication/pages/LocalRegistrationPage.jsx';
 import AdminUserManagementPage from '../features/user-management/AdminUserManagementPage.jsx';
+import SecurityAuditPage from '../features/security-audit/SecurityAuditPage.jsx';
 import CataloguePage from '../features/catalogue/CataloguePage.jsx';
 import CatalogueProductPage from '../features/catalogue/CatalogueProductPage.jsx';
 import PrivacyNoticePage from '../features/privacy/PrivacyNoticePage.jsx';
@@ -21,6 +22,7 @@ import { isSafeReturnPath } from './navigation/navigationPolicy.js';
 
 import {
   accountSection,
+  auditSection,
   passwordPath,
   passwordSection,
   registrationSection,
@@ -247,6 +249,26 @@ export function UserManagementRoute({ onView }) {
         <AdminUserManagementPage
           token={auth.token}
           refreshSession={auth.refresh}
+        />
+      </RouteView>
+    </ProtectedRoute>
+  );
+}
+
+export function SecurityAuditRoute({ onView }) {
+  const auth = useAuth();
+  const navigate = useNavigate();
+  return (
+    <ProtectedRoute section={auditSection} onView={onView}>
+      <RouteView
+        onView={onView}
+        kind="section"
+        titleKey={auditSection.labelKey}
+        currentSectionId={auditSection.id}
+      >
+        <SecurityAuditPage
+          token={auth.token}
+          onBack={() => navigate('/')}
         />
       </RouteView>
     </ProtectedRoute>

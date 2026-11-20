@@ -1,6 +1,12 @@
-import { useLocale } from '../../shared/locale/localeContext.js';
 
-/** WEB05 AC 4 / Table 1: allergen information is always shown. */
+import { useLocale } from '../../shared/locale/localeContext.js';
+import { allergenLabel } from '../../shared/locale/allergenLabels.js';
+
+/**
+ * WEB05 AC 4 / Table 1: allergen information is always shown.
+ * Names come from the client locale by allergen id (EU 1-14), so they follow
+ * the selected language; the API name is only a fallback.
+ */
 export function AllergenList({ allergens, showLabel = true }) {
   const { t } = useLocale();
   if (!allergens?.length)
@@ -12,7 +18,7 @@ export function AllergenList({ allergens, showLabel = true }) {
       )}
       {allergens.map((allergen) => (
         <span className="tag" key={allergen.id}>
-          {allergen.name}
+          {allergenLabel(allergen.id, allergen.name, t)}
         </span>
       ))}
     </p>

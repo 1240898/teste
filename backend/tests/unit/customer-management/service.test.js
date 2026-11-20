@@ -149,7 +149,8 @@ describe('BCK02 CustomerService', () => {
 
   test('gets and searches customers, then toggles active state', async () => {
     const { service, customer, repository } = setup();
-    expect((await service.getById('CUST-0001')).id).toBe('CUST-0001');
+    const manager = { sub: 'USR-00001', roles: ['MANAGER'] };
+    expect((await service.getById('CUST-0001', manager)).id).toBe('CUST-0001');
     expect(await service.search({ name: ' Ana ' })).toHaveLength(1);
     expect(repository.search).toHaveBeenCalledWith({ name: 'Ana' });
     await service.deactivate('CUST-0001');
@@ -157,7 +158,7 @@ describe('BCK02 CustomerService', () => {
     await service.activate('CUST-0001');
     expect(customer.active).toBe(true);
     repository.findById.mockResolvedValue(null);
-    await expect(service.getById('CUST-0001')).rejects.toMatchObject({
+    await expect(service.getById('CUST-0001', manager)).rejects.toMatchObject({
       status: 404,
     });
     await expect(service.deactivate('CUST-0001')).rejects.toMatchObject({

@@ -222,6 +222,59 @@ Docker's `json-file` logs are bounded to five 10 MB files per container; inspect
 them with `docker compose logs` during incidents and do not print environment
 values or secrets into them.
 
+## SYS02 network access restriction
+
+Nginx only serves clients whose address is allowed by
+`/etc/laprizza/access/allowed-networks.conf`. The supported format is one 
+`<address>[/<prefix>] 1;` (allow) or `<address>[/<prefix>] 0;` (deny) entry per
+line, with optional `#` comments. As in the Nginx `geo` module, the most specific
+matching network decides, and addresses that match no entry are denied. Any
+other directive (for example `default`) or value is not supported:
+`deploy.sh` and `rollback.sh` reject the list before changing the active release. Other clients receive HTTP 403 and are recorded in
+`/var/log/laprizza/access/denied.log`. Before installing a release that includes
+SYS02, the VM must have:
+
+- `/etc/laprizza/access/allowed-networks.conf`, owned by `root:root`, mode `0644`,
+  containing an entry for `172.24.0.1`;
+- `/var/log/laprizza/access`, owned by `101:root` (the unprivileged Nginx user
+  in the web image), mode `0750`.
+
+The post-deployment smoke checks run on the VM and reach Nginx from the gateway
+of the `laprizza-backend` network, so that gateway must belong to an allowed
+network. The Compose file fixes the subnet (`172.24.0.0/16`, gateway
+`172.24.0.1`) only when the network is created; Compose reuses an existing
+network without applying new IPAM settings. Before activating a release,
+`deploy.sh` therefore reads the real gateway of the existing network (or uses
+`172.24.0.1` when the network does not exist yet) and checks it against the
+list. If it is not allowed, the deployment stops before changing anything and
+reports the exact line to add.
+
+### Existing network with a different gateway
+
+No teardown is needed and the active release keeps running:
+
+1. Read the gateway reported in the deployment log, or check it with
+   `docker network inspect laprizza-backend --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}'`.
+2. Add it to `/etc/laprizza/access/allowed-networks.conf`, for example
+   `172.18.0.1    1;   # This server (smoke checks)`.
+3. Run the *DEI deployment* workflow again.
+
+### Rollback and releases before SYS02
+
+`rollback.sh` applies the SYS02 gate according to the target release. A
+release whose Compose file mounts `/etc/laprizza/access` is checked for the
+list, the log directory and an allowed gateway. A release that predates SYS02
+does not enforce the restriction and no VM-level firewall is configured, so
+rolling back to it is refused explicitly (exit code 3); select a release that
+includes SYS02 instead.
+
+During the first deployment that introduces SYS02, the automatic recovery in
+`deploy.sh` can still restore the previously active release if the candidate
+fails validation. That release predates SYS02, so the restriction is only
+absent while it remains active, which is the same state as before the
+deployment. Fix the reported problem and deploy again.
+
+
 ## Local Compose validation
 
 The deployment Compose file requires a real SHA and config revision and will

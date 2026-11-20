@@ -20,6 +20,13 @@ export class CustomerRepository {
     );
     return rows[0] ? CustomerMapper.toDomain(rows[0]) : null;
   }
+  async findByIdAndUserId(id, userId) {
+    const { rows } = await this.database.query(
+      'SELECT * FROM customers WHERE id = $1 AND user_id = $2',
+      [id.getValue(), userId],
+    );
+    return rows[0] ? CustomerMapper.toDomain(rows[0]) : null;
+  }
   async findByEmail(email) {
     const { rows } = await this.database.query(
       'SELECT * FROM customers WHERE email = $1',

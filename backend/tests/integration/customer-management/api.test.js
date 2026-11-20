@@ -1,4 +1,5 @@
 import request from 'supertest';
+import { jest } from '@jest/globals';
 import { createApp } from '../../../src/app.js';
 import { createCustomerModule } from '../../../src/modules/customer-management/index.js';
 import { createUserModule } from '../../../src/modules/user-authentication-management/index.js';
@@ -26,6 +27,11 @@ function createMemoryCustomerRepository() {
     async findById(id) {
       return customers.get(id.getValue()) ?? null;
     },
+    async findByIdAndUserId(id, userId) {
+      const customer = customers.get(id.getValue()) ?? null;
+      if (this.beforeScopedRead) await this.beforeScopedRead(customer);
+      return customer?.userId?.getValue() === userId ? customer : null;
+    },
     async findByEmail(email) {
       return (
         [...customers.values()].find(
@@ -47,6 +53,7 @@ function createMemoryCustomerRepository() {
       customers.set(customer.id.getValue(), customer);
       return customer;
     },
+    beforeScopedRead: null,
     async search(criteria) {
       return [...customers.values()].filter(
         (customer) =>
@@ -71,6 +78,9 @@ let app;
 let managerToken;
 let employeeToken;
 let customerToken;
+let otherCustomerToken;
+let customerActor;
+let otherCustomerActor;
 let repository;
 
 beforeEach(async () => {
@@ -87,8 +97,10 @@ beforeEach(async () => {
     },
     { name: 'Employee', email: 'employee@example.com', roles: ['EMPLOYEE'] },
     { name: 'Customer', email: 'customer@example.com', roles: ['CUSTOMER'] },
+    { name: 'Other Customer', email: 'other@example.com', roles: ['CUSTOMER'] },
   ];
   const tokens = [];
+  const actors = [];
   for (const account of accounts) {
     const user = createUser({ ...account, passwordHash });
     await userModule.userService.userRepository.save(user);
@@ -99,6 +111,7 @@ beforeEach(async () => {
         roles: user.getRoles(),
       }),
     );
+    actors.push(await userModule.userService.resolveActor(tokens.at(-1)));
   }
 
   repository = createMemoryCustomerRepository();
@@ -109,6 +122,13 @@ beforeEach(async () => {
       repository,
       userDirectory: {
         findById: async (id) => {
+          const actor = actors.find(({ sub }) => sub === id);
+          if (actor)
+            return {
+              email: actor.email,
+              active: true,
+              roles: actor.roles,
+            };
           if (id === linkedUserId)
             return {
               email: 'ana@example.com',
@@ -132,7 +152,8 @@ beforeEach(async () => {
       },
     }),
   });
-  [managerToken, employeeToken, customerToken] = tokens;
+  [managerToken, employeeToken, customerToken, otherCustomerToken] = tokens;
+  [, , customerActor, otherCustomerActor] = actors;
 });
 
 const customerBody = (overrides = {}) => ({
@@ -306,5 +327,43 @@ describe('BCK02 customer HTTP API', () => {
         customerBody({ email: 'staff@example.com', userId: nonCustomerUserId }),
       );
     expect(userWithoutCustomerRole.status).toBe(400);
+  });
+
+  test('customer read is owner-scoped in one canonical-ID read, including reassignment', async () => {
+    const created = await request(app)
+      .post('/api/v1/customers')
+      .set(auth(managerToken))
+      .send(
+        customerBody({
+          email: customerActor.email,
+          userId: customerActor.sub,
+        }),
+      );
+    expect(created.status).toBe(201);
+    const findById = jest.spyOn(repository, 'findById');
+
+    const owner = await request(app)
+      .get(`/api/v1/customers/${created.body.id.toLowerCase()}`)
+      .set(auth(customerToken));
+    expect(owner.status).toBe(200);
+    expect(owner.body.email).toBe(customerActor.email);
+    expect(repository.findByIdAndUserId).toBeDefined();
+    expect(findById).not.toHaveBeenCalled();
+
+    const nonOwner = await request(app)
+      .get(`/api/v1/customers/${created.body.id}`)
+      .set(auth(otherCustomerToken));
+    expect(nonOwner.status).toBe(404);
+    expect(nonOwner.body.error.message).toBe('Customer not found');
+
+    repository.beforeScopedRead = async (record) => {
+      record?.linkUser(otherCustomerActor.sub);
+    };
+    const reassigned = await request(app)
+      .get(`/api/v1/customers/${created.body.id}`)
+      .set(auth(customerToken));
+    expect(reassigned.status).toBe(404);
+    expect(reassigned.body.error.message).toBe('Customer not found');
+    expect(findById).not.toHaveBeenCalled();
   });
 });

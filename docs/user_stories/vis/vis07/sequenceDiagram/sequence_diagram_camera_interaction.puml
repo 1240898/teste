@@ -1,0 +1,162 @@
+@startuml sequence_diagram_camera_interaction
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - VIS07 Pan, Orbit, Dolly, Reset View and Per-Frame Limits
+
+actor User as "LaPrizza Manager"
+participant Viewer as "KitchenViewer\n(Reset view button)"
+participant Canvas as "Canvas\n(domElement)"
+participant Orbit as "OrbitControls"
+participant Ctrl as "CameraController"
+participant Limits as "cameraLimits"
+participant Clamp as "clampTarget"
+participant Engine as "ViewerEngine\n(frame loop)"
+participant Three as "three\n(PerspectiveCamera / WebGLRenderer)"
+
+note over User, Three
+    Precondition: state "ready" (sequence_diagram_camera_init).
+    Listeners are on the canvas only: input over the VIS06 GUI, toolbar or menus
+    never moves the camera. Mouse events only change the OrbitControls state;
+    limits are applied and the view is rendered in the next frame (section 5).
+end note
+
+== 1. Pan (left button + drag) ==
+
+User -> Canvas : left button down + drag
+activate Canvas
+Canvas -> Orbit : pointerdown / pointermove (LEFT = PAN)
+activate Orbit
+Orbit -> Orbit : accumulate pan on the floor plane (y = 0)
+Orbit --> Canvas : event handled
+deactivate Orbit
+Canvas --> User : pan applied (and clamped) on the next frame
+deactivate Canvas
+
+== 2. Orbit (right button + drag) ==
+
+User -> Canvas : right button down + drag
+activate Canvas
+Canvas -> Orbit : contextmenu (suppressed); pointermove (RIGHT = ROTATE)
+activate Orbit
+Orbit -> Orbit : accumulate rotation around the current target
+Orbit --> Canvas : event handled
+deactivate Orbit
+Canvas --> User : orbit applied on the next frame\n(polar [5, 85] deg; azimuth free)
+deactivate Canvas
+
+== 3. Dolly (mouse wheel) ==
+
+User -> Canvas : wheel up / down
+activate Canvas
+Canvas -> Orbit : wheel (DOLLY); preventDefault: page does not scroll
+activate Orbit
+Orbit -> Orbit : accumulate dolly towards / away from the target;\nFOV unchanged (50 deg), zoomToCursor = false
+Orbit --> Canvas : event handled
+deactivate Orbit
+Canvas --> User : dolly applied on the next frame\n(distance [0.5 m, maxDistance])
+deactivate Canvas
+
+== 4. Reset view (also during inertia) ==
+
+User -> Viewer : clicks "Reset view"
+activate Viewer
+Viewer -> Canvas : dispatchEvent("kitchen-viewer:reset-view")
+activate Canvas
+Canvas -> Ctrl : onResetView()
+activate Ctrl
+Ctrl -> Ctrl : resetView() -> applyInitialView()
+Ctrl -> Orbit : flushMomentum(): enableDamping = false; update();\nenableDamping = true
+activate Orbit
+Orbit --> Ctrl : residual inertia discarded
+deactivate Orbit
+Ctrl -> Three : camera.position = initialView.position
+activate Three
+Three --> Ctrl : position set
+deactivate Three
+Ctrl -> Orbit : target.set(0, 0, 0); update()
+activate Orbit
+Orbit --> Ctrl : initial view restored
+deactivate Orbit
+Ctrl --> Canvas : done
+deactivate Ctrl
+Canvas --> Viewer : event handled
+deactivate Canvas
+Viewer --> User : initial view of the current layout,\nno residual movement
+deactivate Viewer
+note right of Ctrl
+    Native controls.reset() is NOT used: it keeps the
+    damping momentum and the camera would keep drifting
+    after the reset (D10).
+end note
+
+== 5. Every frame (limits and smooth movement) ==
+
+loop each animation frame
+    Engine -> Ctrl : update(dt)  (through CameraControlsModule)
+    activate Engine
+    activate Ctrl
+    Ctrl -> Three : read camera.aspect
+    activate Three
+    Three --> Ctrl : aspect
+    deactivate Three
+    alt aspect != lastAspect (canvas resized by VIS01)
+        Ctrl -> Limits : computeCameraLimits(dimensions, aspect, wall)
+        activate Limits
+        Limits --> Ctrl : new fitDistance, maxDistance, far
+        deactivate Limits
+        Ctrl -> Orbit : applyLimits(): maxDistance = limits.maxDistance
+        Ctrl -> Three : far = limits.far; updateProjectionMatrix()
+        activate Three
+        Three --> Ctrl : projection updated
+        deactivate Three
+        opt distance to target > maxDistance
+            Ctrl -> Three : move camera closer along the SAME direction
+            activate Three
+            Three --> Ctrl : view preserved
+            deactivate Three
+        end
+        Ctrl -> Ctrl : lastAspect = aspect
+    end
+    Ctrl -> Orbit : update()  (damping 0.08)
+    activate Orbit
+    Orbit -> Three : camera position / orientation
+    activate Three
+    Three --> Orbit : camera updated
+    deactivate Three
+    Orbit --> Ctrl : updated
+    deactivate Orbit
+    Ctrl -> Clamp : clampTarget(target, camera.position, targetBounds)
+    activate Clamp
+    alt target inside x in [-w/2, w/2], z in [-d/2, d/2]
+        Clamp --> Ctrl : false (nothing changed)
+    else target outside the floor rectangle
+        Clamp -> Clamp : clamp target x/z;\nmove camera by the same correction
+        Clamp --> Ctrl : true
+        Ctrl -> Orbit : flushMomentum()
+        activate Orbit
+        Orbit --> Ctrl : residual pan discarded
+        deactivate Orbit
+        Ctrl -> Clamp : clampTarget(...) again
+        Clamp --> Ctrl : target and camera on the boundary
+    end
+    deactivate Clamp
+    Ctrl --> Engine : done
+    deactivate Ctrl
+    Engine -> Three : render(scene, camera)
+    activate Three
+    Three --> Engine : frame rendered
+    deactivate Three
+    Engine --> User : updated view shown on the canvas
+    deactivate Engine
+end
+
+note over Ctrl, Engine
+    The pan limit does not depend on the OrbitControls "change" event, which is
+    not emitted for movements below its internal threshold: the clamp runs on
+    EVERY frame, before render. Discarding the momentum at the boundary makes a
+    reversed drag respond immediately. CameraController is the single writer of
+    the camera (BR 8); no allocation per frame. Speeds 0.5 / 0.8 / 0.6.
+end note
+@enduml

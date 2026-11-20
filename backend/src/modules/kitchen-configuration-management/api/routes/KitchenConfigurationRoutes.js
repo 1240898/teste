@@ -15,7 +15,7 @@ function validateParams(schema) {
 
 /**
  * Mounted under /api/v1/kitchen-configurations. Every route:
- * verifyToken -> requireRole(...) -> joi envelope -> controller (BR 1).
+ * verifyToken -> requireOperation(...) -> joi envelope -> controller (BR 1).
  * "/active" and "/validation" are declared before "/:id".
  */
 export class KitchenConfigurationRoutes {
@@ -27,12 +27,18 @@ export class KitchenConfigurationRoutes {
     const router = Router();
     const controller = this.controller;
     const authenticate = this.authMiddleware.verifyToken;
-    const manager = RoleMiddleware.requireRole('MANAGER');
-    const viewer = RoleMiddleware.requireRole('MANAGER', 'EMPLOYEE');
+    const manager = (operationId) =>
+      RoleMiddleware.requireOperation(operationId);
+    const viewer = manager('getActiveKitchenConfiguration');
     const id = validateParams(schemas.id);
     const handle = (name) => controller[name].bind(controller);
 
-    router.get('/', authenticate, manager, handle('listConfigurations'));
+    router.get(
+      '/',
+      authenticate,
+      manager('listKitchenConfigurations'),
+      handle('listConfigurations'),
+    );
     router.get(
       '/active',
       authenticate,
@@ -42,22 +48,28 @@ export class KitchenConfigurationRoutes {
     router.post(
       '/validation',
       authenticate,
-      manager,
+      manager('validateKitchenConfiguration'),
       ValidationMiddleware.validate(schemas.validate),
       handle('validateContent'),
     );
     router.post(
       '/',
       authenticate,
-      manager,
+      manager('createKitchenConfiguration'),
       ValidationMiddleware.validate(schemas.create),
       handle('createConfiguration'),
     );
-    router.get('/:id', authenticate, manager, id, handle('getConfiguration'));
+    router.get(
+      '/:id',
+      authenticate,
+      manager('getKitchenConfiguration'),
+      id,
+      handle('getConfiguration'),
+    );
     router.put(
       '/:id',
       authenticate,
-      manager,
+      manager('updateKitchenConfiguration'),
       id,
       ValidationMiddleware.validate(schemas.update),
       handle('updateConfiguration'),
@@ -65,14 +77,14 @@ export class KitchenConfigurationRoutes {
     router.delete(
       '/:id',
       authenticate,
-      manager,
+      manager('deleteKitchenConfiguration'),
       id,
       handle('deleteConfiguration'),
     );
     router.post(
       '/:id/activation',
       authenticate,
-      manager,
+      manager('activateKitchenConfiguration'),
       id,
       handle('activateConfiguration'),
     );

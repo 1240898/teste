@@ -5,6 +5,11 @@ export class ICustomerRepository {
   async findById() {
     throw new Error('Not implemented');
   }
+  async findByIdAndUserId(id, userId) {
+    void id;
+    void userId;
+    throw new Error('Not implemented');
+  }
   async findByEmail() {
     throw new Error('Not implemented');
   }

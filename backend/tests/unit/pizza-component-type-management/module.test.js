@@ -14,37 +14,35 @@ test('requires a database or explicit persistence adapters', () => {
   ).toThrow('database or component type repository');
 });
 
-test('uses the PostgreSQL impact guard by default for cardinality updates', async () => {
+test('the default impact guard lets cardinality updates through without re-validating stored compositions', async () => {
   const current = PizzaComponentType.create(
     ComponentTypeId.create('type-05'),
     ComponentTypeName.create('Extra'),
     5,
     0,
-    2,
+    5,
   );
   const repository = {
     findByIdForUpdate: jest.fn(async () => current),
     existsByOrder: jest.fn(async () => false),
     save: jest.fn(),
   };
-  const tx = {
-    query: jest.fn().mockResolvedValue({ rows: [{ invalid: false }] }),
-  };
+  const tx = { query: jest.fn() };
   const { service, impactGuard } = createPizzaComponentTypeModule({
     repository,
     unitOfWork: { withTransaction: (work) => work(tx) },
     authMiddleware: { verifyToken() {} },
   });
 
+  // Tightening the maximum (5 -> 3) is accepted: stored predefined pizza
+  // compositions are preserved and only new or replaced compositions are
+  // validated against the new bounds (BCK10).
   await expect(
     service.update(ComponentTypeId.create('type-05'), { maxQuantity: 3 }),
   ).resolves.toMatchObject({ maxQuantity: 3 });
 
   expect(impactGuard.assertSafeUpdate).toBeDefined();
-  expect(tx.query).toHaveBeenCalledWith(
-    expect.stringMatching(/product_composition_items/i),
-    ['type-05', 0, 3],
-  );
+  expect(tx.query).not.toHaveBeenCalled();
   expect(repository.save).toHaveBeenCalledTimes(1);
 });
 

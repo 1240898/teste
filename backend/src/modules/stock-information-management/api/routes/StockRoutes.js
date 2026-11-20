@@ -20,7 +20,7 @@ export class StockRoutes {
 
   register(router) {
     const auth = this.authMiddleware.verifyToken;
-    const manager = RoleMiddleware.requireRole('MANAGER');
+    const manager = RoleMiddleware.requireOperation('stock.manage');
     const controller = this.controller;
 
     router.post(

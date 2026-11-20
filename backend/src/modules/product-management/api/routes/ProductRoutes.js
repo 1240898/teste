@@ -25,27 +25,36 @@ export class ProductRoutes {
     const router = Router();
     const controller = this.productController;
     const authenticate = this.authMiddleware.verifyToken;
-    const manager = RoleMiddleware.requireRole('MANAGER');
-    const staff = RoleMiddleware.requireRole('MANAGER', 'EMPLOYEE');
+    const authenticateOptional =
+      this.authMiddleware.verifyOptionalToken ??
+      ((req, res, next) =>
+        req.headers.authorization || req.headers['x-access-token']
+          ? authenticate(req, res, next)
+          : next());
+    const create = RoleMiddleware.requireOperation('products.create');
+    const staff = RoleMiddleware.requireOperation('products.read');
+    const update = RoleMiddleware.requireOperation('products.update');
+    const deactivate = RoleMiddleware.requireOperation('products.deactivate');
+    const activate = RoleMiddleware.requireOperation('products.activate');
     const id = validatePart('params', schemas.id);
 
     router.post(
       '/',
       authenticate,
-      manager,
+      create,
       ValidationMiddleware.validate(schemas.create),
       controller.createProduct.bind(controller),
     );
     router.get(
       '/',
-      authenticate,
+      authenticateOptional,
       staff,
       validatePart('query', schemas.search),
       controller.listProducts.bind(controller),
     );
     router.get(
       '/:id',
-      authenticate,
+      authenticateOptional,
       staff,
       id,
       controller.getProductById.bind(controller),
@@ -53,7 +62,7 @@ export class ProductRoutes {
     router.put(
       '/:id',
       authenticate,
-      manager,
+      update,
       id,
       ValidationMiddleware.validate(schemas.update),
       controller.updateProduct.bind(controller),
@@ -61,14 +70,14 @@ export class ProductRoutes {
     router.delete(
       '/:id',
       authenticate,
-      manager,
+      deactivate,
       id,
       controller.deactivateProduct.bind(controller),
     );
     router.patch(
       '/:id/activate',
       authenticate,
-      manager,
+      activate,
       id,
       controller.activateProduct.bind(controller),
     );

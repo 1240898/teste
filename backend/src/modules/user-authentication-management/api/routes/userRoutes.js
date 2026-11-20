@@ -12,7 +12,7 @@ export class UserRoutes {
 
     const controller = this.userController;
     const authenticate = this.authMiddleware.verifyToken;
-    const administrator = RoleMiddleware.requireRole('ADMINISTRATOR');
+    const administrator = RoleMiddleware.requireOperation('users.manage');
     router.use((_req, res, next) => {
       res.set('Cache-Control', 'no-store');
       next();

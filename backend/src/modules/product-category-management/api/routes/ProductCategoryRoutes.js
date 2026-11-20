@@ -11,7 +11,7 @@ export class ProductCategoryRoutes {
     const router = Router();
     const controller = this.categoryController;
     const authenticate = this.authMiddleware.verifyToken;
-    const manager = RoleMiddleware.requireRole('MANAGER');
+    const manager = RoleMiddleware.requireOperation('categories.manage');
     // BR2: reads are public; writes require an authenticated MANAGER.
     router.get('/categories', controller.getAllCategories.bind(controller));
     router.get('/categories/:id', controller.getCategoryById.bind(controller));

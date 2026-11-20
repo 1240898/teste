@@ -1,4 +1,14 @@
-import { BoxGeometry, Group, Mesh, MeshBasicMaterial, Scene, Texture } from 'three';
+import {
+  Bone,
+  BoxGeometry,
+  Group,
+  Mesh,
+  MeshBasicMaterial,
+  Scene,
+  Skeleton,
+  SkinnedMesh,
+  Texture,
+} from 'three';
 import { createKitchenMaterialFactory } from '../../../../src/visualization/scene/materials/KitchenMaterialFactory.js';
 import { ElementBuildError } from '../../../../src/visualization/scene/elements/ElementBuildError.js';
 import { createProceduralShapeFactory } from '../../../../src/visualization/scene/elements/ProceduralShapeFactory.js';
@@ -193,6 +203,35 @@ test('never reads an asset URL', () => {
   });
   expect(() => factory.create(value)).not.toThrow();
   expect(assets.getModel).toHaveBeenCalledWith('AST-MDL-FRIDGE-01');
+});
+
+test('releases a detached clone skeleton if its material override fails', () => {
+  const { model, geometry, material, assets, shapes, materials } = setup();
+  const mesh = new SkinnedMesh(geometry, material);
+  const bone = new Bone();
+  mesh.add(bone);
+  mesh.bind(new Skeleton([bone]));
+  model.scene.clear().add(mesh);
+  const release = jest.fn();
+  const factory = createSceneElementFactory({
+    assets,
+    shapes,
+    materials,
+    disposeResource: release,
+  });
+
+  expect(() =>
+    factory.create(
+      element({
+        model: { source: 'ASSET', assetId: 'AST-MDL-FRIDGE-01' },
+        material: { colorMapAssetId: 'AST-TEX-MISSING' },
+      }),
+    ),
+  ).toThrow(expect.objectContaining({ reason: 'asset-missing' }));
+  expect(release).toHaveBeenCalledTimes(1);
+  const [skeleton] = release.mock.calls[0];
+  expect(skeleton).toBeInstanceOf(Skeleton);
+  expect(skeleton).not.toBe(mesh.skeleton);
 });
 
 test('UT05b - parts of an imported model never shadow an element id (BR 3)', () => {

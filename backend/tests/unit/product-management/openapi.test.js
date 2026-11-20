@@ -9,17 +9,19 @@ const operations = [
   ['/products/{id}/activate', 'patch', 200],
 ];
 test.each(operations)(
-  'documents %s %s as an authenticated operation with its contract',
+  'documents %s %s with its contract',
   (path, method, status) => {
     const operation = openApiSpec.paths[path]?.[method];
     expect(operation).toBeDefined();
     expect(operation.responses[status]).toBeDefined();
     for (const code of [401, 403, 500])
       expect(operation.responses[code]).toBeDefined();
-    expect(operation.security).toEqual([
-      { bearerAuth: [] },
-      { accessToken: [] },
-    ]);
+    if (method === 'get') expect(operation.security).toEqual([]);
+    else
+      expect(operation.security).toEqual([
+        { bearerAuth: [] },
+        { accessToken: [] },
+      ]);
   },
 );
 test('documents acquisition and composition without exposing stock fields on Product', () => {

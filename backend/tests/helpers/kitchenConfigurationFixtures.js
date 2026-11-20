@@ -44,6 +44,26 @@ export const CATALOGUE = Object.freeze([
     y: 1.2,
     z: 0.4,
   }),
+  model('AST-MDL-DISPENSER-02', 'models/dispenser-02.glb', {
+    x: 0.6,
+    y: 0.8,
+    z: 0.6,
+  }),
+  model('AST-MDL-CONVEYOR-02', 'models/conveyor-02.glb', {
+    x: 1,
+    y: 0.1,
+    z: 0.6,
+  }),
+  model('AST-MDL-ROBOT-ARM-02', 'models/robot-arm-02.glb', {
+    x: 0.4,
+    y: 0.995,
+    z: 0.6,
+  }),
+  model('AST-MDL-OVEN-LINE-01', 'models/oven-line-01.glb', {
+    x: 1.8,
+    y: 1.6,
+    z: 1.8,
+  }),
   // WEB06 placeholders with their texture set, kept for existing layouts.
   model('AST-MDL-OVEN-DOME-01', 'models/oven-dome-01.glb', {
     x: 1.8,

@@ -146,7 +146,7 @@ describeDatabase(
       ]);
     });
 
-    test('rejects cardinality bounds that invalidate a stored BCK10 configuration', async () => {
+    test('updates bounds without rewriting or rejecting stored BCK10 compositions', async () => {
       await database.query(
         `INSERT INTO product_categories (id, name)
          VALUES ('CAT-90001', 'BCK07 impact test')`,
@@ -176,21 +176,20 @@ describeDatabase(
       );
 
       await expect(
-        service.update(ComponentTypeId.create('type-04'), { maxQuantity: 1 }),
-      ).rejects.toMatchObject({ status: 409 });
-      await expect(
-        service.update(ComponentTypeId.create('type-04'), { minQuantity: 3 }),
-      ).rejects.toMatchObject({ status: 409 });
-      await expect(
-        service.getById(ComponentTypeId.create('type-04')),
-      ).resolves.toMatchObject({ minQuantity: 0, maxQuantity: null });
-
-      await expect(
-        service.update(ComponentTypeId.create('type-04'), { maxQuantity: 2 }),
-      ).resolves.toMatchObject({ minQuantity: 0, maxQuantity: 2 });
-      await expect(
         service.update(ComponentTypeId.create('type-04'), { minQuantity: 1 }),
-      ).resolves.toMatchObject({ minQuantity: 1, maxQuantity: 2 });
+      ).resolves.toMatchObject({ minQuantity: 1, maxQuantity: null });
+      await expect(
+        service.update(ComponentTypeId.create('type-04'), { maxQuantity: 1 }),
+      ).resolves.toMatchObject({ minQuantity: 1, maxQuantity: 1 });
+      const preserved = await database.query(
+        `SELECT child_product_id FROM product_composition_items
+         WHERE parent_product_id = 'PROD-90001'
+         ORDER BY child_product_id`,
+      );
+      expect(preserved.rows.map((row) => row.child_product_id)).toEqual([
+        'PROD-90002',
+        'PROD-90003',
+      ]);
     });
   },
 );

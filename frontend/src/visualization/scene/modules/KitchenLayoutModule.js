@@ -46,6 +46,7 @@ export function createKitchenLayoutModule({
         assets: context.assets,
         shapes,
         materials,
+        disposeResource: release,
       });
 
       root = new Group();

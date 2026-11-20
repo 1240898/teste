@@ -3,6 +3,7 @@ import { CatalogueNotFoundError } from '../../../src/modules/product-catalogue-a
 import { CatalogueService } from '../../../src/modules/product-catalogue-and-information/application/CatalogueService.js';
 import { ProductId } from '../../../src/modules/product-management/domain/model/ProductId.js';
 import {
+  allergen,
   category,
   componentConfiguration,
   facts,
@@ -17,6 +18,7 @@ function catalogueContext() {
     name: 'Mozzarella Cheese',
     component: true,
     componentTypeId: 'type-03',
+    allergenIds: [7],
   });
   const pizza = product({
     id: 'PROD-00003',
@@ -30,6 +32,7 @@ function catalogueContext() {
     sellable: false,
     component: true,
     componentTypeId: 'type-03',
+    allergenIds: [7],
     pricingMode: null,
     price: null,
   });
@@ -39,6 +42,7 @@ function catalogueContext() {
     roots: [component, pizza, other],
     products: [component, pizza, hiddenComponent, other],
     categories: [category()],
+    allergens: [allergen({ id: 7, name: 'Milk' })],
     pizzas: [
       predefinedPizza({
         productId: pizza.getId().getValue(),
@@ -110,6 +114,23 @@ describe('CatalogueService', () => {
     await expect(
       service.list({ componentName: 'Mozzarella' }),
     ).resolves.toEqual([]);
+  });
+
+  test('requires all selected components and excludes any selected component or allergen', async () => {
+    const { service } = catalogueContext();
+
+    await expect(
+      service.list({ componentIds: 'PROD-00004' }),
+    ).resolves.toMatchObject([{ id: 'PROD-00003' }]);
+    await expect(
+      service.list({ componentIds: 'PROD-00004,PROD-00002' }),
+    ).resolves.toEqual([]);
+    await expect(
+      service.list({ excludeComponentIds: 'PROD-00004' }),
+    ).resolves.toMatchObject([{ id: 'PROD-00002' }, { id: 'PROD-00005' }]);
+    await expect(
+      service.list({ excludeAllergenIds: '7' }),
+    ).resolves.toMatchObject([{ id: 'PROD-00005' }]);
   });
 
   test('returns an inactive sellable product by id with unavailable status', async () => {

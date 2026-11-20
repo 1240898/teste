@@ -1,0 +1,63 @@
+@startuml VIS03-Class-Diagram
+!pragma layout smetana
+title VIS03 - Assembly line scene module
+skinparam classAttributeIconSize 0
+hide empty members
+
+class ViewerEngine <<VIS01>>
+interface SceneModule <<VIS01>> {
+  + build(context)
+  + update(deltaSeconds)
+  + dispose()
+}
+class SceneContext <<VIS01>> {
+  scene
+  configuration
+  assets
+  signal
+  disposeResource(resource)
+}
+class LoadedAssets <<VIS01>> {
+  + getModel(assetId)
+  + getTexture(assetId)
+}
+class KitchenLayoutModule <<VIS02>>
+class AssemblyLineModule <<VIS03>> {
+  - lineRoot
+  - builtElements
+  + build(context)
+  + update(deltaSeconds)
+  + dispose()
+}
+class SceneElementFactory <<VIS02>> {
+  + create(element, options): Group
+  + release(root, disposeResource)
+}
+class ProceduralShapeFactory <<VIS02>>
+class KitchenMaterialFactory <<shared>>
+class "layout:root" as LayoutRoot <<Three.js Group>>
+class "layout:assembly-line" as LineRoot <<Three.js Group>>
+class "element group" as ElementRoot <<Three.js Group>>
+
+ViewerEngine o-- SceneModule : builds and disposes
+ViewerEngine ..> SceneContext : passes to each module
+SceneContext --> LoadedAssets : provides
+SceneModule <|.. KitchenLayoutModule
+SceneModule <|.. AssemblyLineModule
+KitchenLayoutModule ..> LayoutRoot : creates
+AssemblyLineModule ..> SceneContext
+AssemblyLineModule --> SceneElementFactory : uses
+AssemblyLineModule --> LineRoot : creates and detaches
+SceneElementFactory --> LoadedAssets : borrows models / textures
+SceneElementFactory --> ProceduralShapeFactory : uses
+SceneElementFactory --> KitchenMaterialFactory : uses
+SceneElementFactory ..> ElementRoot : creates per ID
+LayoutRoot "1" *-- "0..1" LineRoot : attaches after build
+LineRoot "1" *-- "8..17" ElementRoot : assembled line
+
+note right of ElementRoot
+  Root name = configuration element ID.
+  Imported model nodes are cloned per
+  root and named part:<asset node name>.
+end note
+@enduml

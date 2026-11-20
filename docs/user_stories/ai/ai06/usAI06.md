@@ -4,8 +4,8 @@
 
 - **User story:** [AI06 (#178)](https://github.com/Departamento-de-Engenharia-Informatica/LEI-SEM5-PI-2026-27-3DE-01/issues/178)
 - **Sprint:** 2 (IARTI Sprint B)
-- **Status:** Analysis for review
-- **Repository baseline:** `main` at `d7f00fa`. The architecture and AI01 contract follow the proposed design on `ai/ai01-design` at `b81e4b2`.
+- **Status:** Analysis approved. Design for review.
+- **Repository baseline:** Backoffice endpoint inventory reviewed at `d7f00fa`. This branch integrates `origin/main` at `286fc74` and aligns the AI01 Prolog boundary in this review. [AI01 consumer contract](../ai01/usAI01.md#421-input-model)
 
 AI06 reads the data that AI01 and AI02 need and converts it to Prolog. AI01 calculates material needs and checks stock. AI02 plans daily replenishment and selects suppliers. The Manager runs the calculations through WEB07 and AI05. [AI01](../ai01/usAI01.md) · [WEB07](../../web/web07/usWEB07.md)
 
@@ -23,9 +23,9 @@ The SPA calls the Gateway in the proposed design. Catalogue, order, forecast and
 | --- | --- | --- |
 | AI06-AC01 | Retrieve pizza BOMs for the selected sizes from documented endpoints. Include products, aggregates, quantities in abstract stock units and the composition and production-or-purchase classification needed by the Prolog calculation. | AS01–AS03 |
 | AI06-AC02 | Retrieve product and consumption rules, selected orders or daily forecasts, stock snapshots and supplier offers as required by each calculation. Include WEB07 scenarios and implement or extend endpoints where needed. | AS01–AS04, AS10 |
-| AI06-AC03 | Build a Prolog knowledge base with consistent IDs, relationships and stock units. Preserve each offer's product reference, EUR price, quoted quantity and lead time. Report missing or invalid required data explicitly. | AS02–AS05, AS10 |
+| AI06-AC03 | Build a Prolog knowledge base with consistent IDs, relationships and stock units. Preserve each offer's product reference, EUR price, quoted quantity and lead time. Report missing or invalid required data explicitly. | AS02–AS05, AS10, AS12 |
 | AI06-AC04 | Support actual and identified simulated inputs in the same scenario. Record their origin and version or retrieval time, and mark the calculation as a simulation if any input is simulated. | AS03, AS04, AS08 |
-| AI06-AC05 | Refresh data for each calculation or follow a documented refresh policy. Provide a consistent input set and report incomplete refreshes. | AS06, AS08 |
+| AI06-AC05 | Refresh data for each calculation or follow a documented refresh policy. Provide a consistent input set and report incomplete refreshes. | AS06, AS08, AS11 |
 | AI06-AC06 | Access business data through authorised back-end endpoints. Each domain remains the authoritative source for its records. Request only planning data and exclude customer names, contacts and dietary profiles. | AS07, AS10 |
 | AI06-AC07 | Keep operational and scenario-input stock and purchase-order records read-only during calculations. Operational changes require separate confirmation and validation in Backoffice. | AS03, AS04, AS09 |
 
@@ -49,7 +49,7 @@ In the Sprint 2 model, `OrderItem` has an optional link to `PizzaSize` because o
 
 | Input | Existing source and access | Gap or implication for AI06 |
 | --- | --- | --- |
-| Product and classification | [BCK05](../../bck/bck05/usBCK05.md) exposes `GET /products` and `GET /products/{id}` to Managers and Employees. The response contains `id`, eligibility and role flags, `acquisitionType` and `compositionItems`. | Read the product IDs required by the selected scenario. Map Backoffice `id` to Procurement `productId` with the same value. Distinguish terminal items from aggregates and keep the applicable production or purchase classification. Generic composition does not establish a planning recipe or batch yield. |
+| Product and classification | [BCK05](../../bck/bck05/usBCK05.md) exposes `GET /products` and `GET /products/{id}` to Managers and Employees. The response contains `id`, eligibility and role flags, `acquisitionType` and `compositionItems`. | Read the product IDs required by the selected scenario and keep their values. The operational planning response also needs the stock-unit code for each tracked item. Use the source-specific classification in section 4.4. |
 | Default pizza composition | [BCK10](../../bck/bck10/usBCK10.md) exposes `GET /predefined-pizzas` and `GET /predefined-pizzas/{productId}` to Managers. The detail response contains the representative product ID and `componentIds`. | Join the composition to the selected size and the component configurations. A valid pizza must remain available as an input to calculation even if the public catalogue marks it unavailable due to low stock. |
 | Pizza size | [BCK06](../../bck/bck06/usBCK06.md) exposes public reads at `GET /pizza-sizes` and `GET /pizza-sizes/{id}`. | Resolve the selected size and check its eligibility for the selected input view. A size ID alone does not establish that all components have a configuration for it. |
 | Component consumption | [BCK08](../../bck/bck08/usBCK08.md) exposes `GET /products/{productId}/component-configurations` to Managers. Each configuration supplies `productId`, `sizeId` and `stockUnitsConsumed`. | Join by component ID and size ID. Preserve explicit zero. A null consumption value is valid for an explicitly untracked component. A missing configuration or missing consumption for a tracked component is invalid. |
@@ -57,7 +57,7 @@ In the Sprint 2 model, `OrderItem` has an optional link to `PizzaSize` because o
 | Selected order and personalisation | The [Backoffice domain model](../../../architecture/domainModel/domainmodel.puml) includes `Order`, `OrderItem` and `PersonalizedPizzaConfiguration`. There is no registered order input route at the reviewed baseline. | Provide a back-end scenario source for the demonstration. The Sprint 2 model links `OrderItem` to `PizzaSize` and preserves the component IDs on `PersonalizedPizzaConfiguration`. Confirm how the real order API will make those values available to AI06. |
 | Daily forecast | [WEB07](../../web/web07/usWEB07.md) defines saved forecasts. The reviewed Backoffice API has no forecast input route. | Backoffice supplies the selected forecast version. Keep dates, quantities and applicable sizes. Forecast demand is independent of customer orders. |
 | Supplier scenarios and offers | WEB07 defines import and confirmation. The Procurement API for these operations is still pending. | Procurement owns the scenarios, suppliers and offers. For AI02, AI06 reads the confirmed version through the planning API and keeps the supplier and product IDs, EUR price, quoted units, lead time and daily limit. |
-| Direct-sale consumption | The product response exposes catalogue roles and pricing. The size-based component configuration covers pizza consumption. | Agree where the explicit consumption per standalone sale is maintained and expose it for AI02. Missing consumption for a tracked sale yields a diagnostic with the product ID. |
+| Direct-sale consumption | The product response exposes catalogue roles and pricing. The size-based component configuration covers pizza consumption. | The operational planning endpoint exposes the Backoffice product's configured `stockUnitsPerSale`. A versioned demonstration may supply the value explicitly in its selected product data. Missing consumption for a tracked sale yields a diagnostic with the product ID. |
 | Execution history | Procurement owns the planning results and their input references in the target design. | Retain versions or an immutable copy of each input set. The Procurement planning API must let AI06 recover the exact set for a replay, including the selected product IDs. |
 | Service access and scenario metadata | The current protected Backoffice routes use user authentication and roles. | Agree on authorised service access to the Backoffice and Procurement input endpoints. Keep the scenario ID and the source, version or retrieval time of each selected dataset. |
 
@@ -69,12 +69,12 @@ A `Planning scenario` brings together the demand, BOMs and opening stock for one
 
 [Full-size diagram](./excerptDomainModel/AI06-Domain-Model-Excerpt.svg) · [PlantUML source](./excerptDomainModel/domain_model_excerpt.puml)
 
-A pizza demand line needs a BOM. The catalogue product ID is kept when the order provides one. A personalised pizza without a catalogue reference is identified by its `bomId`. A directly sold item requires a `Product` reference. The excerpt proposes `0..1` on the `Demand line`–`Product` link for this reason. The shared Procurement model currently shows `1` (OP07).
+A pizza demand line needs a BOM. Each BOM refers to one `PizzaSize` and optionally to the catalogue pizza `Product`. A personalised pizza without a catalogue reference is identified by its `bomId`. A directly sold item requires a `Product` reference. The excerpt proposes `0..1` on the `Demand line`–`Product` link. The shared Procurement model currently shows `1` (OP07). The `Opening stock set` contains the balances available at the start. The stored `Input snapshot` in the class diagram contains that set plus the other inputs and their provenance.
 
 | Input group | Required business information | Consumer |
 | --- | --- | --- |
 | Pizza demand and BOM | Demand line quantity in pizzas, selected size, product reference when catalogue-backed, and the corresponding BOM. Each BOM gives component IDs and the stock units used per pizza. The proposed AI01 contract uses a scenario-local `bomId`. Distinct personalised compositions for the same catalogue pizza and size need distinct BOM definitions. | AI01 and AI02 |
-| Planning item and preparation | Product ID, tracking status, aggregate classification, and a recipe for internally produced aggregates requiring expansion. The demonstration recipe states its output yield and each ingredient's quantity per batch. | AI01 and AI02 |
+| Planning item and preparation | Product ID, tracking status, stock-unit code for tracked products, aggregate classification, and a recipe for internally produced aggregates requiring expansion. The demonstration recipe states its output yield and each ingredient's quantity per batch. | AI01 and AI02 |
 | Stock | Opening balance in each tracked item's own abstract stock units, with the selected snapshot's origin and version or retrieval time. | AI01 and AI02 |
 | Daily forecast | Selected forecast identity and version, planning period, date, product, applicable size and quantity for each entry. Include the explicit stock consumption per sale for directly sold tracked items. | AI02. A selected forecast can also supply pizza demand for a standalone AI01 run. |
 | Supplier scenario | Selected confirmed Procurement scenario and version. For relevant offers, keep the supplier ID, product ID, price in EUR, the stock units covered by that price, whole-day lead time and optional daily capacity. | AI02 |
@@ -89,7 +89,7 @@ A pizza demand line needs a BOM. The catalogue product ID is kept when the order
 
 AI06 supplies the confirmed offers for the products AI02 may need to buy. AI02 keeps relevant products with no offer so it can report a shortage. The WEB07 export can include more products because it serves to build supplier scenarios. [Selection rules in the SAD](https://github.com/Departamento-de-Engenharia-Informatica/LEI-SEM5-PI-2026-27-3DE-01/blob/b81e4b29774a6d23a92f607535a8e4cbbcf72d38/docs/architecture/SAD.md#which-products-are-loaded)
 
-For five medium pizzas, AI06 can pass two units of cheese per pizza and six units in stock. AI01 calculates ten units of demand and a shortage of four.
+For five medium pizzas, AI06 can pass 120 g of cheese per pizza and 400 g in stock. AI01 calculates 600 g of demand and a shortage of 200 g.
 
 ### 2.6. Business Rules & Invariants
 
@@ -103,15 +103,15 @@ For five medium pizzas, AI06 can pass two units of cheese per pizza and six unit
 
 ### 2.7. Decisions for Design
 
-| ID | Decision to confirm | Coordination |
+| ID | Design decision | Coordination |
 | --- | --- | --- |
-| OP01 | Agree on the input endpoints and service access for Backoffice reads and Procurement planning reads. AI01 proposes a read by execution reference. Confirm which routes the Gateway exposes to the SPA and how AI05 returns input errors. | AI05, WEB07, back-end security |
-| OP02 | Decide how Backoffice captures a consistent view of catalogue, demand and stock, and how Procurement stores the input versions or copies for replay. Define what stays fixed when a read is retried. | WEB07, Backoffice and Procurement persistence, AI05 |
-| OP03 | Confirm how the real order API exposes the selected size from the `OrderItem`–`PizzaSize` relationship, any preserved personalised composition, and the version of the data used. Use an explicit size in a back-end order fixture for the first integrated demonstration. | Backoffice ordering, AI01 |
-| OP04 | Agree on the versioned fixture for internally produced aggregates and its yield and quantity semantics. Confirm how the AI01 input contract distinguishes terminal items, purchased aggregates and internally produced aggregates. | AI01, AI02, IARTI |
-| OP05 | Agree where direct-sale consumption is configured and how tracking status is exposed with the stock balance. | BCK05, BCK09, WEB07, AI02 |
-| OP06 | Align with WEB07 on how to select a Backoffice forecast version and a confirmed Procurement supplier scenario. Agree which offer fields the planning API returns for the selected products. | WEB07, AI02 |
-| OP07 | Align the shared Procurement model with the demand mapping. A pizza row always needs a BOM and can have a catalogue product reference. A direct-sale row always needs a product reference. | Procurement domain model, AI01, AI02 |
+| OP01 | Use the internal routes and read permissions in section 4.3. AI05 translates input diagnostics for public requests. | AI05, Backoffice and Procurement service access |
+| OP02 | Read operational inputs in one Backoffice transaction. Bind the first valid snapshot through Procurement planning records. Retries keep pinned references and reuse a sealed snapshot. | Backoffice and Procurement persistence, AI05 |
+| OP03 | Read the recorded `OrderItem.sizeId` for every pizza and preserve the order line's selected components when personalised. Reject a missing size. The first integrated order demonstration uses a versioned Backoffice fixture with these fields. The live order read follows the same contract when available. | Backoffice ordering, AI01 |
+| OP04 | Use versioned Backoffice fixtures for selected preparation recipes, explicit kinds, yields and ingredient quantities per batch. Supplier fixtures use confirmed Procurement scenario versions. Section 4.6 defines the demonstration datasets. | AI01, AI02, IARTI |
+| OP05 | Backoffice provides `tracked`, `stockUnit` and explicitly configured `stockUnitsPerSale` for tracked direct sales. Demonstration product data must also state these values. Reject missing consumption and preserve explicit zero. | BCK05, BCK09, WEB07, AI02 |
+| OP06 | Pin the forecast and confirmed supplier scenario versions. Keep one offer per supplier/product, as required by the Sprint 2 statement (WEB07, p. 7). Different pack sizes come from different suppliers. | WEB07, AI02 |
+| OP07 | A pizza row requires a BOM and can omit the catalogue product reference. A direct-sale row always requires a product reference. Apply this rule in AI06 and carry the multiplicity change into the shared model when it is updated. | Procurement domain model, AI01, AI02 |
 
 ## 3. Acceptance Scenarios and Expected Evidence
 
@@ -119,16 +119,297 @@ For five medium pizzas, AI06 can pass two units of cheese per pizza and six unit
 | --- | --- | --- |
 | AS01 | Load a selected order of five medium catalogue pizzas with an explicit size, a known composition and current or fixture stock. | The set contains five pizzas linked to the size-specific BOM and the opening balances. Omitting the order size yields an incomplete-input diagnostic. |
 | AS02 | Load two personalised lines for the same catalogue pizza and size, one with ham and one without. Repeat with the catalogue reference omitted from the second line. | Each line resolves to its own BOM and keeps its quantity and size. On the repeat, the second BOM uses the recorded components and has no `pizzaId`. |
-| AS03 | Load a versioned demonstration with an internal preparation, a purchased aggregate and identified simulated stock alongside eligible catalogue inputs. | Recipe yield, classifications and stock resolve against the same selected product references. Provenance identifies the mixed sources and marks the run as a simulation. |
-| AS04 | Load a two-day Backoffice forecast with pizzas and a tracked drink. Select a confirmed Procurement supplier scenario with offers with and without capacity limits and one offer for an unrelated product. | AI02 receives the dates, pizza sizes, drink consumption and relevant offer terms. The unrelated offer stays outside the run. An omitted capacity remains absent. A draft supplier scenario is rejected. |
-| AS05 | Supply missing component consumption, missing stock for a tracked item and an invalid supplier offer in separate runs. Include an explicit zero balance and a known untracked component in a valid run. | Errors identify their references and fields. Zero stock and explicitly untracked consumption remain valid inputs in their respective cases. |
+| AS03 | Load the versioned pizza demonstration in section 4.6, including internal dough recipes, a purchased aggregate and simulated stock alongside eligible catalogue inputs. | Check the dataset counts, recipe yields, classifications and stock units. Provenance identifies the mixed sources and marks the run as a simulation. |
+| AS04 | Load the two-day forecast with pizzas and a tracked drink and the confirmed supplier dataset in section 4.6. Include different pack sizes across suppliers, limits including zero, an omitted limit and an unrelated offer. Repeat after reordering the offers. | AI02 receives dated demand and the same ordered offers, including price in cents. Unrelated offers are excluded, zero stays zero and an omitted limit maps to `none`. A draft version is rejected. |
+| AS05 | In separate runs omit required component consumption, tracked stock or consumption per sale, use an incompatible supplier stock unit, submit two offers for one supplier/product or submit a price with more than two fractional digits. Include zero balances and a known untracked component in a valid run. | Diagnostics identify the affected references and fields. Zero stock and explicit untracked consumption remain valid in their respective cases. |
 | AS06 | Change operational stock and run the scenario again. In another run, make one source unavailable. | The new run uses the updated balance. An incomplete read stops the calculation with an error. |
 | AS07 | Start a planning request through the Gateway and read its Backoffice and Procurement inputs through authorised service access. Repeat the reads with missing or insufficient permissions. | The Gateway routes the planning request to Procurement. Authorised reads return only the required planning fields. The other reads return access errors. |
 | AS08 | Deactivate a size after saving a forecast but before its first run. Separately replay an earlier completed run using the same size. | The first execution is rejected. Replay uses the original snapshot, records the original execution and is labelled historical. A missing saved version is reported explicitly. |
-| AS09 | Run AI01 and AI02 using prepared inputs and compare stored stock and purchase-order records before and after. | Both calculations keep operational stock, scenario stock and operational purchase-order records intact. |
+| AS09 | Run the same saved inputs twice. Run two requests concurrently with different opening balances for the same product. Compare stored stock and purchase-order records before and after. | Repeated loads give the same starting balance. Concurrent runs use their own inputs. Operational stock, scenario stock and purchase-order records stay intact. |
 | AS10 | Load an order with two BOMs that share a tracked component. Include a fully stocked internal aggregate with a recipe, a purchased aggregate whose children occur only in its descriptive composition, and an unrelated catalogue product. | AI06 supplies one product record and opening balance for the shared component. The internal recipe and its ingredients are present for validation. The purchased aggregate's children and the unrelated product stay outside the input set. |
+| AS11 | Run two loads that both receive `409 INPUTS_NOT_SEALED` for one current attempt. Let one store inputs and send the other candidate after that write. Repeat with missing historical inputs, an unknown execution and unavailable storage. | Both successful loads use the same stored snapshot ID and the same Prolog input. The lookup failures are `422`, `404` and `503` respectively. Only `INPUTS_NOT_SEALED` triggers a current-data capture. |
+| AS12 | Pass the mapped cheese example to AI01's `prepare_bom/2` and `bom_requirements/2`. Separately select one day's dated rows as AI02 would and pass them with that day's stock. Attempt a first snapshot binding at `expiresAt` and with an obsolete attempt number. | Both calculation calls consume the documented `planning_input` keys and `pizza_demand/3`. The cheese example reports 600 g required and 200 g to replenish. Both stale bindings return `409 STALE_ATTEMPT` and AI05 checks the execution state. |
 
-## 4. References
+## 4. Design
+
+### 4.1. Architecture and responsibilities
+
+The Manager starts a calculation in WEB07. The Gateway sends the request to AI05 in Procurement. AI05 checks access, fixes the input references and reserves an attempt. AI06 reads and validates the data and calls the Procurement records component to bind the snapshot. AI06 maps the bound snapshot to Prolog and returns it to AI05 for AI01 or AI02. [Planning access and records](../../../architecture/SAD.md#27-planning-access-and-records)
+
+| Component | Responsibility |
+| --- | --- |
+| Backoffice input API | Read the selected order or forecast, catalogue, size configurations and stock in one consistent view. Provide versioned demonstration data through the same contract. |
+| Procurement planning records | Retain confirmed supplier scenario versions and the input snapshots used by executions. Provide access to the selected version and store one snapshot per execution. |
+| AI06 input adapter | Read both sources when needed. Check identifiers, fields and units. Map the input set to Prolog and return it with its provenance or an input diagnostic. |
+| AI05, AI01 and AI02 | AI05 handles the execution request and exposes the result. AI01 calculates the BOM requirements. AI02 uses the dated forecast and supplier terms to plan replenishment. |
+
+### 4.2. Class and sequence diagrams
+
+The adapter entry point is `load_inputs(+Execution, -Outcome)`. `Execution` contains the authorised selection, execution ID, attempt number and replay reference when applicable. `Outcome` is `ok(Input)` with the ground SWI-Prolog `planning_input{...}` dict defined in [section 4.4](#44-data-mapping-to-prolog), or `error(Diagnostic)` with the input error.
+
+![AI06 input adapter and data](./classDiagram/class_diagram_planning_inputs.svg)
+
+[PlantUML source](./classDiagram/class_diagram_planning_inputs.puml)
+
+The sequence starts when AI05 loads inputs for an authorised execution. A new execution reads the selected sources. A retry with a stored snapshot or a historical replay reads that snapshot from Procurement.
+
+![AI06 input loading sequence](./sequenceDiagram/sequence_diagram_load_planning_inputs.svg)
+
+[PlantUML source](./sequenceDiagram/sequence_diagram_load_planning_inputs.puml)
+
+### 4.3. Internal REST contracts
+
+These are the proposed paths for the internal reads. The SPA continues to use the Gateway for WEB07 and AI05 operations. The two `POST` routes accept selectors in JSON and read data without writing to orders, stock or supplier records.
+
+| Method and path | Owner | Proposed permission | Request and response |
+| --- | --- | --- | --- |
+| `POST /api/v1/internal/planning/operational-inputs` | Backoffice | `planning:operational:read` | Accepts the execution ID, calculation type, demand selector, stock selector and optional preparation fixture reference. Returns the selected demand lines, product and size records, default pizza component lists, size-specific consumption, preparation recipes, opening balances and source metadata. |
+| `POST /api/v1/internal/planning/supplier-offers` | Procurement | `planning:supplier-offers:read` | Accepts a confirmed `scenarioId`, its `version` and the relevant `productIds`. Returns the offers for those IDs and that version, including the stock-unit code recorded at confirmation. |
+| `GET /api/v1/planning/executions/{executionId}/inputs` | Procurement | `planning:inputs:read` | Returns the saved input document for an authorised execution. For a replay, it returns the original input snapshot with the replay execution metadata. The read does not assemble a new snapshot. |
+
+The operational input request has a `demand` selector with `type` (`order`, `forecast` or `fixture`) and `id`. The selector includes `version` for a forecast or fixture. For a live order without a version, Backoffice reads the order within the same view as the catalogue and stock. `stock.type` is `current` or `saved`. A saved stock selector includes `id` and `version`. The optional `preparationFixture` also uses `id` and `version`. AI02 requires a dated forecast and a confirmed supplier scenario. AI01 can use an order, a forecast's pizza lines or a pizza fixture.
+
+```json
+{
+  "executionId": "a5242c8e-526a-4b5c-9539-a84887a492d1",
+  "calculation": "BOM",
+  "demand": { "type": "fixture", "id": "iarti-order-five", "version": "1" },
+  "stock": { "type": "current" }
+}
+```
+
+The Backoffice response starts from the selected order or forecast and includes only the products needed for it.
+
+- `demandLines` contains `quantity`, `type` (`pizza` or `directSale`), `date` for a forecast, `sizeId` for a pizza and `productId` when it identifies a catalogue or directly sold item. Personalised pizzas use their recorded `selectedComponentIds`. Forecast reads also return `forecast` with `id`, `version`, `startDate` and `endDate`.
+- `products` contains the selected product IDs, eligibility, classification, `tracked`, the `stockUnit` for each tracked product and `stockUnitsPerSale` where applicable. `sizes` gives the selected size IDs and eligibility. `pizzaConfigurations` gives the default components for catalogue pizzas. `componentConfigurations` contains `productId`, `sizeId` and `stockUnitsConsumed`.
+- `recipes` gives the selected internal preparation recipes. `openingStock` gives the balance for each selected tracked stock item. `provenance` records the source and version or retrieval time for each dataset.
+
+The supplier read uses the selected tracked terminal products and purchased aggregates, including directly sold tracked items in the forecast. AI06 selects these IDs before the calculation, since demand and stock can change during the plan. The response includes `scenarioId`, `version`, `supplierIds` for the suppliers in the returned offers, the `offers` and their `provenance`. When `productIds` is empty, Procurement still checks the confirmed version and returns its identity and provenance with no offers. AI06 checks that the response matches the requested scenario and version and that each offer refers to a requested product and a listed supplier.
+
+#### Service access and errors
+
+AI05 checks the Manager's access to the execution and referenced inputs before calling AI06. Internal HTTP reads use a service credential in the `Authorization: Bearer` header over HTTPS. For this design, use a dedicated opaque credential per service identity, configured on the servers, with permission only for the relevant planning reads. The API checks the credential and permission on each request. The Gateway exposes the public planning operations to the SPA. All three input routes stay on the service network, including the snapshot `GET`. Service credentials are separate from Manager sessions. AI06 hands a validated snapshot to the Procurement records component through its internal interface. That component uses its own `planning:records:write` permission to call the private Backoffice storage adapter.
+
+| HTTP status | Use |
+| --- | --- |
+| 400 | The request shape or selectors are invalid. |
+| 401 | The service credential is missing or invalid. |
+| 403 | The service credential is valid but cannot perform the requested read. |
+| 404 | The execution or a selected source record does not exist. Return `EXECUTION_NOT_FOUND` or `SOURCE_NOT_FOUND` as applicable. |
+| 409 | `INPUTS_NOT_SEALED` means the recognised current execution has no sealed snapshot yet. `SUPPLIER_VERSION_NOT_CONFIRMED` means the requested version exists but is not confirmed. Only `INPUTS_NOT_SEALED` on the snapshot read starts a current capture. |
+| 409 | `STALE_ATTEMPT` on the private snapshot binding operation means the attempt number is no longer current, its expiry has been reached or the execution is no longer `RUNNING`. AI06 returns the diagnostic to AI05, which reads the stored execution state before offering a retry. |
+| 422 | Required data in the selected source is missing or invalid. Use `HISTORICAL_INPUTS_UNAVAILABLE` if the replay selection exists but its original snapshot cannot be recovered. |
+| 503 | `INPUT_SOURCE_UNAVAILABLE` means an input source or snapshot storage is unavailable. |
+
+The error response uses `error.status`, `error.code` and `error.message`. Include `error.field` and `error.reference` when they locate the problem. The current Backoffice error handler returns `message` and `status` and maps server errors to `500`. The new input route must map expected input failures and `503` explicitly to this contract. AI06 converts unexpected source server errors and timeouts to source diagnostics for AI05, which owns the public response. [Backoffice error handler](../../../../backend/src/shared/errors/errorHandler.js)
+
+```json
+{
+  "error": {
+    "status": 422,
+    "code": "MISSING_STOCK",
+    "message": "Opening stock is missing for a tracked product.",
+    "field": "openingStock",
+    "reference": "PROD-90003"
+  }
+}
+```
+
+### 4.4. Data mapping to Prolog
+
+| Input | Mapping |
+| --- | --- |
+| Order or forecast | Keep the quantity and selected size. Use the default components for a catalogue pizza and the recorded components for a personalised order. For AI02, keep dates and standalone sales. |
+| Pizza definition | Reuse a `bomId` within the scenario when the catalogue reference, size and resolved component quantities match. For a pizza without a catalogue reference, use the size and resolved components. Include `pizzaId` when available. Join by `productId` and `sizeId` to get `unitsPerPizza`. Apply any explicit component multiplicity once. |
+| Products and recipes | Keep the catalogue ID as `productId` and use one item per referenced ID. The live pizza BOM comes from the selected component configurations. A live component maps to `terminal` even if Backoffice marks it as `PRODUCED` or lists a descriptive composition. A fixture must declare each item's `kind` and each aggregate's acquisition type. Include the yield and ingredient quantities per batch for a produced aggregate. A purchased aggregate remains a single item. |
+| Stock and eligibility | Carry one balance per selected tracked stock item and the product and size eligibility from the same view. Distinguish zero balance, untracked item and missing balance. An explicitly untracked pizza component may have null consumption. A known tracked item needs a value. |
+| Direct sales | Preserve date, `productId` and sale quantity for AI02. Attach the configured `stockUnitsPerSale` to the tracked product item. Missing consumption for a tracked sale is an error. |
+| Supplier offers | Select the offers for products AI02 may replenish from the confirmed scenario version. Keep `supplierId`, `productId`, `stockUnit`, `priceEur`, `coveredUnits`, `leadTimeDays` and optional `dailyLimit`. An omitted limit remains absent in JSON. |
+
+The adapter checks that references resolve within the snapshot, sizes match their configurations and required quantities are present and valid. A current forecast run rejects inactive products or sizes. A replay uses the saved eligibility. Stock and consumption quantities are integers in the relevant product's stock units. Demand and available stock can be zero. A recipe's yield and each ingredient quantity per batch are positive. A supplier offer has a non-negative EUR price, a positive integer quoted quantity and a non-negative lead time in whole days. A recorded daily capacity is a non-negative integer in stock units. There is no default for a missing required value.
+
+The selection walk visits each product ID once, including ingredients of internal preparations even when their opening stock covers demand. It supplies the recipe graph to AI01, which checks for recipe cycles and calculates how much of each aggregate needs production.
+
+#### Request-local Prolog knowledge base
+
+AI06 opens each HTTP response stream with `http_open/3` and reads it with `json_read_dict/2`. It closes the stream after decoding. `http_read_json_dict/2` is for JSON requests received by an SWI-Prolog HTTP handler. Validate response shapes and field types before building the terms. Back-end IDs and dates arrive as JSON strings. IDs stay SWI-Prolog strings with their original case. Calendar dates become `date(Year, Month, Day)` after validation. Controlled values such as `terminal`, `aggregate`, `produced`, `purchased`, `true`, `false` and `none` are atoms.
+
+`Input` in `ok(Input)` is a ground dict tagged `planning_input`. The mapping below defines each field. Collection fields are lists, including empty lists. Fields specific to AI02 use empty lists or `none` in an AI01 run, as indicated below. AI05 passes this dict to the selected calculation.
+
+| Validated JSON | Key and Prolog value in `planning_input` |
+| --- | --- |
+| `pizzaDemand[]` | `pizza_demand`: list of `pizza_demand(Date, BomId, Qty)`. `Date` is `none` for standalone AI01 and `date(Year, Month, Day)` for AI02. |
+| `pizzaBoms[]` | `pizza_boms`: list of `bom(BomId, PizzaId, SizeId, Components)`. An absent catalogue reference maps to `none`. Components are `component(ProdId, Units)` terms. Explicit null consumption for an untracked component maps to `none`. |
+| `items[]` | `items`: list of `item(ProdId, Kind, Tracked, AcqType, StockUnit, UnitsPerSale)`. Absent fields that do not apply map to `none`. Stock units are strings. Required fields are validated before mapping. |
+| `recipes[]` | `recipes`: list of `recipe(ProdId, Yield, Ingredients)` with `ingredient(ProdId, UnitsPerBatch)` terms. |
+| `openingStock[]` | `opening_stock`: list of `stock(ProdId, Units)`. Each balance is in the stock unit on its item. Explicit zero is a balance. |
+| `directSaleDemand[]` | `direct_sale_demand`: list of `direct_sale(Date, ProdId, Qty)` for AI02. Empty for AI01. |
+| `supplierScenario.offers[]` | `offers`: list of `offer(SupId, ProdId, PriceCents, CoveredUnits, LeadDays, Limit, StockUnit)` for AI02. Absent `dailyLimit` maps to `none`. Empty for AI01. |
+| `eligibility.products[]`, `eligibility.sizes[]` | `eligibility`: dict with `products` and `sizes` lists of `product_active(ProdId, Active)` and `size_active(SizeId, Active)` respectively. |
+| `forecast`, `referenceDate` | `forecast`: `forecast(Id, Version, StartDate, EndDate)` and `reference_date`: `date(Year, Month, Day)` for AI02. Both are `none` for AI01. |
+| Execution and provenance fields | `meta`: dict with `executionId`, `scenarioId`, `snapshotId`, `schemaVersion`, `calculation`, `mode`, `simulation` and `provenance`. Include `replayedFrom` and `supplierScenario` identity and version when applicable. Preserve the validated JSON values. |
+
+AI01's `prepare_bom/2` consumes `pizza_demand/3`, `bom/4`, `item/6`, `recipe/3` and `stock/2` under these exact keys. AI02 selects one day's `pizza_demand/3` rows and replaces `opening_stock` in a local copy with that day's hypothetical balances before calling AI01. It keeps the terms' dates. AI01 totals the pizza rows supplied by the caller. AI02 owns the day selection and supplier planning. [AI01 input and daily handoff](../ai01/usAI01.md#421-input-model)
+
+`part/1` in `pizza-BOM.pl` corresponds to terminal items. Its `setp/2` represents assemblies, which AI06 supplies as pizza BOMs or preparation recipes with explicit quantities. For example, two occurrences of `lock` become one `ingredient("lock", 2)`. AI06 consolidates multiplicity once. Equal numbers on different products still use each product's own stock unit.
+
+The teacher's `attend_request` calls `retract/1` and `asserta/1` to consume dynamic `stock/2` facts. In a shared HTTP server, one run would then see another run's withdrawals. Sequential replays would also start with depleted balances. Here `stock/2` terms are values in the request's `opening_stock` list. AI01 and AI02 pass hypothetical balances through their calculation predicates. Each call starts from its own immutable input, which preserves AI06-AC07 and makes the AI01 scenarios reproducible.
+
+The knowledge base consists of the validated demand, BOM, item, recipe, eligibility and stock terms for the selected scenario. The calculation predicates query those terms through the dict's lists and prepared indexes. The dict carries the knowledge available to one execution, and the Prolog predicates perform the inference and stock-first expansion. This is the representation to explain in the IARTI demonstration.
+
+#### Offer units, price and package sizes
+
+Each tracked product has a Backoffice stock-unit code, such as `g`, `ml` or `unit`, or an explicit abstract unit configured for that product. The WEB07 export supplies that code. On confirmation, Procurement records the basis for each quote from the selected export. If the imported quote also states a unit, it must agree with that basis. The versioned offer stores `stockUnit` so AI06 can compare it with the selected item's unit even if the catalogue changes. Missing units or a mismatch such as an offer in `kg` for a product tracked in `g` yield a `422` diagnostic identifying the product and field. The supplier data must express the quote and daily limit in the canonical stock unit before confirmation.
+
+The internal supplier endpoint carries `priceEur` as a non-negative decimal string with at most two fractional digits. AI06 converts it to integer cents by parsing the digits and padding the fractional part on the right. For example, `"8.50"` becomes `850`. Reject extra fractional digits and malformed prices. Procurement must preserve exact decimal values when normalising a WEB07 import. Calculations use integer cents.
+
+In `stock_supplier(Prod, N, WeightPerPack, Price)`, `Prod` maps to `productId`, `WeightPerPack` to `coveredUnits` in the product's stock unit, and `Price` to `priceEur` at the JSON boundary and `PriceCents` in the term. The teaching example identifies the supplier outside the fact. AI06 carries `supplierId` explicitly. `N` is total packs available in that example. The project has no equivalent field. `dailyLimit` is independently configured as stock units per day for that offer. Lead time is supplied separately in whole days. The fixture must state any limit explicitly. If absent, AI02 applies no cap and reports that assumption.
+
+The Sprint 2 statement (WEB07, p. 7) requires rejection of duplicate supplier/product offers. A confirmed scenario has one offer per supplier and product, and AI06 checks uniqueness on that pair. Different pack sizes for the same product come from different suppliers. The IARTI packaging example is demonstrated with pack sizes from different suppliers. [WEB07 BR09](../../web/web07/usWEB07.md#24-business-rules--invariants)
+
+Order the mapped offers by product ID ascending, covered units descending and supplier ID ascending. Compare ID strings case-sensitively. Apply the same order when rebuilding a replay. This gives AI02 a stable input order. AI02 still compares price, package quantities, lead times and capacity when choosing a plan.
+
+#### Example for AI01
+
+This example shows the cheese projection of an order fixture with catalogue data and current stock. The fixture marks the run as a simulation. The complete demonstration includes the other pizza components.
+
+```json
+{
+  "executionId": "a5242c8e-526a-4b5c-9539-a84887a492d1",
+  "scenarioId": "five-medium-pizzas",
+  "snapshotId": "inputs-001",
+  "schemaVersion": 1,
+  "calculation": "BOM",
+  "mode": "current",
+  "simulation": true,
+  "provenance": [
+    { "dataset": "demand", "source": "iarti-order-five", "version": "1", "simulated": true },
+    { "dataset": "catalogue", "source": "backoffice", "retrievedAt": "2026-11-17T10:00:00Z", "simulated": false },
+    { "dataset": "stock", "source": "backoffice", "retrievedAt": "2026-11-17T10:00:00Z", "simulated": false }
+  ],
+  "pizzaDemand": [{ "bomId": "medium-cheese", "quantity": 5 }],
+  "pizzaBoms": [{
+    "bomId": "medium-cheese",
+    "pizzaId": "PROD-90020",
+    "sizeId": "PSIZE-0002",
+    "components": [{ "productId": "PROD-90003", "unitsPerPizza": 120 }]
+  }],
+  "eligibility": {
+    "products": [{ "productId": "PROD-90020", "isActive": true }, { "productId": "PROD-90003", "isActive": true }],
+    "sizes": [{ "sizeId": "PSIZE-0002", "isActive": true }]
+  },
+  "items": [{ "productId": "PROD-90003", "kind": "terminal", "tracked": true, "stockUnit": "g" }],
+  "recipes": [],
+  "openingStock": [{ "productId": "PROD-90003", "availableUnits": 400 }]
+}
+```
+
+The mapped input passed to `bom_requirements/2` has the following shape. It yields 600 g required, 400 g withdrawn and 200 g to replenish for `PROD-90003`.
+
+```prolog
+planning_input{
+    meta: meta{
+        executionId: "a5242c8e-526a-4b5c-9539-a84887a492d1",
+        scenarioId: "five-medium-pizzas",
+        snapshotId: "inputs-001",
+        schemaVersion: 1,
+        calculation: "BOM",
+        mode: "current",
+        simulation: true,
+        provenance: [
+            provenance{dataset: "demand", source: "iarti-order-five",
+              version: "1", simulated: true},
+            provenance{dataset: "catalogue", source: "backoffice",
+              retrievedAt: "2026-11-17T10:00:00Z", simulated: false},
+            provenance{dataset: "stock", source: "backoffice",
+              retrievedAt: "2026-11-17T10:00:00Z", simulated: false}
+        ]
+    },
+    eligibility: eligibility{
+        products: [product_active("PROD-90020", true),
+                   product_active("PROD-90003", true)],
+        sizes: [size_active("PSIZE-0002", true)]
+    },
+    pizza_demand: [pizza_demand(none, "medium-cheese", 5)],
+    pizza_boms: [bom("medium-cheese", "PROD-90020", "PSIZE-0002",
+                     [component("PROD-90003", 120)])],
+    items: [item("PROD-90003", terminal, true, none, "g", none)],
+    recipes: [],
+    opening_stock: [stock("PROD-90003", 400)],
+    direct_sale_demand: [],
+    offers: [],
+    forecast: none,
+    reference_date: none
+}
+```
+
+#### Additional data for AI02
+
+For `REQUIREMENTS_PLANNING`, keep the forecast ID, version and period. AI05 fixes the planning `referenceDate` when creating the execution, defaulting to the execution date as specified by AI02. AI06 retains it when saving or replaying the inputs. Each pizza demand line keeps its `date`. The following fragment shows a directly sold drink and a confirmed offer. The full input also carries the pizza demand if present and provenance for the confirmed supplier scenario.
+
+```json
+{
+  "forecast": {
+    "id": "forecast-001",
+    "version": "2",
+    "startDate": "2026-11-18",
+    "endDate": "2026-11-19"
+  },
+  "referenceDate": "2026-11-17",
+  "directSaleDemand": [{ "date": "2026-11-19", "productId": "PROD-90030", "quantity": 6 }],
+  "items": [{ "productId": "PROD-90030", "kind": "terminal", "tracked": true, "stockUnit": "unit", "stockUnitsPerSale": 2 }],
+  "openingStock": [{ "productId": "PROD-90030", "availableUnits": 4 }],
+  "supplierScenario": {
+    "id": "supplier-scenario-001",
+    "version": "3",
+    "supplierIds": ["SUP-001"],
+    "offers": [{
+      "supplierId": "SUP-001",
+      "productId": "PROD-90030",
+      "stockUnit": "unit",
+      "priceEur": "8.50",
+      "coveredUnits": 10,
+      "leadTimeDays": 1,
+      "dailyLimit": 30
+    }]
+  }
+}
+```
+
+The example encodes the sale and its quote as `direct_sale(date(2026, 11, 19), "PROD-90030", 6)` and `offer("SUP-001", "PROD-90030", 850, 10, 1, 30, "unit")`.
+
+### 4.5. Snapshot and replay
+
+For a new execution, AI05 fixes the demand, stock and any supplier or preparation scenario references before calling AI06. Only `409 INPUTS_NOT_SEALED` on a current execution starts a capture. Backoffice reads the operational inputs on one database connection within a read-only `REPEATABLE READ` transaction. AI06 reads the exact confirmed supplier version if needed and checks its offers against that operational view. A failed source read or any other unsuccessful snapshot lookup stops preparation. Before sealing, a retry rereads the entire input set using the pinned references and versions. A different selection requires a new execution ID.
+
+Procurement stores the validated input document and its provenance with `snapshotId` and a schema version, using the shared PostgreSQL persistence through a server-side adapter. The snapshot is a copy for execution and replay. The APIs that own the catalogue, stock and supplier records remain the sources for new runs. Prolog has no direct database access.
+
+The Procurement records component supplies the `attemptNo` when it binds inputs through Backoffice. The storage adapter locks the execution row and seals and links the first validated candidate in one transaction. Only the current unexpired attempt can make the first binding. If two loads submit candidates, the second store returns the snapshot already bound to the execution, with its ID and stored document. Both loads build their Prolog input from that stored document. If there is still no binding and the attempt is no longer current or has expired, the store returns `409 STALE_ATTEMPT` to AI05.
+
+Backoffice assigns `expiresAt` when claiming the attempt, using its server clock and the configured duration covering input loading, calculation and result storage. An attempt is unexpired while the Backoffice time is strictly earlier than `expiresAt`. AI05 passes the assigned attempt number to AI06. Backoffice checks the attempt number, `RUNNING` state and expiry within the binding transaction. [Attempt claim and completion rules in SAD §2.7](../../../architecture/SAD.md#27-planning-access-and-records)
+
+After sealing, a retry reads that exact snapshot. A replay uses a new execution ID. The snapshot read resolves the completed source execution from the replay selection. The records component binds its original snapshot to the replay using the same storage rule. AI06 sets `mode` to `historicalReplay` and records `replayedFrom`, keeping the original calculation type, inputs, reference date and simulation flag. A missing original snapshot is `422 HISTORICAL_INPUTS_UNAVAILABLE`. A later stock or catalogue change is picked up by a new current execution.
+
+Each dataset records its origin, version or retrieval time and whether it is simulated. A saved catalogue version and the live stock can be used in one run if the references resolve in the selected input set and the sources are recorded. A simulated dataset marks the entire run as a simulation.
+
+### 4.6. Verification and integration
+
+| Check | Evidence to collect |
+| --- | --- |
+| BOM inputs | Run AS01–AS03, AS05, AS10 and AS12. Check the exact dict keys and term arities at the AI06–AI01 boundary, recorded sizes, recipe quantities and diagnostics for missing data. |
+| Forecast and offers | Run AS04 and AS05. Check dates, direct-sale consumption, exact prices in cents, unit compatibility, offer order and confirmed version. Keep a product with no offer and check the difference between `none` and zero capacity. |
+| Access and refresh | Run AS06 and AS07. Check authorised reads and errors. Change stock during an operational read and verify that the response uses one Backoffice view. |
+| Replay and concurrency | Run AS08, AS11 and AS12. Compare the original and replayed inputs and AI02 reference dates. Verify that both successful loads in the store race use the bound snapshot. Check expired attempts, missing historical data, unknown IDs and unavailable storage. |
+| Calculation isolation and operational records | Run AS09 and compare stock and purchase-order records before and after the calculations. Verify that running requests together gives the same results as running each one independently. |
+
+#### Versioned demonstration data
+
+- **AS03, BOM.** Provide at least three pizza sizes, two doughs or bases, 20 ingredients and eight pizza types. Model the doughs as produced aggregates with recipes, measured ingredients and an explicit batch yield. Include a partly stocked preparation and a purchased aggregate. Record the fixture ID, version, stock units and expected material requirements. See IARTI part 1, slide 13.
+- **AS04, requirements planning.** Use a confirmed supplier scenario with at least three distinct suppliers per product type, for example meats, cheeses, vegetables, and flours and yeasts. A supplier can cover several types. Use a two-day forecast and realistic pack sizes, prices, lead times and capacity assumptions. Include an expected plan showing why a selected combination covers the shortfall and what remains unmet when delivery is too late. The Sprint 2 proposal demonstrates different pack sizes across suppliers. See IARTI part 2, slide 10.
+
+OP01–OP07 have design decisions in section 2.7. The live order and product planning fields still need to be implemented in Backoffice.
+
+## 5. References
 
 - *LEI-2026-27-Sem5-Project_v1-Sprint2US.pdf*, AI01 and AI02 on printed pp. 15–17 and AI05 and AI06 on printed pp. 18–19.
 - [AI06 parent issue](https://github.com/Departamento-de-Engenharia-Informatica/LEI-SEM5-PI-2026-27-3DE-01/issues/178), [Sprint 2 plan](../../../Planning/Sprint2/sprintPlanning.md) and Paulo Matos's clarifications on BOM scope, stock at execution, forecast eligibility and supplier capacity.

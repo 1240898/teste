@@ -18,7 +18,7 @@ export class KitchenAssetRoutes {
     router.get(
       '/',
       this.authMiddleware.verifyToken,
-      RoleMiddleware.requireRole('MANAGER'),
+      RoleMiddleware.requireOperation('listKitchenAssets'),
       this.controller.listAssets.bind(this.controller),
     );
     if (this.filesDirectory)

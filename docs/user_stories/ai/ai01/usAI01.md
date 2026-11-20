@@ -172,12 +172,12 @@ AI06 uses a separate read-only service identity for the operational input endpoi
 
 [PlantUML source](classDiagram/class_diagram_bom.puml)
 
-The diagram uses a class-style view for data shapes and dependencies. The implementation represents them as Prolog data and predicates. The public calculation predicate can be invoked with an in-memory scenario for the IARTI demonstration and through the same entry point after the AI06 input adapter maps the selected scenario. A demand line can be represented as `pizza_demand(BomId, Quantity)`, and a recipe as `recipe(ProductId, YieldUnits, Ingredients)` with `ingredient(ProductId, UnitsPerBatch)` entries. Look up pizza definitions by scenario-local BOM ID. Per-item lookups and accumulated quantities use the product ID as the key.
+The diagram uses a class-style view for Prolog data and predicates. The public calculation predicate accepts the ground `planning_input{...}` dict built by AI06. An in-memory demonstration uses the same shape. A demand line is `pizza_demand(Date, BomId, Quantity)`, with `Date = none` for standalone AI01. A recipe is `recipe(ProductId, YieldUnits, Ingredients)` with `ingredient(ProductId, UnitsPerBatch)` entries. Look up pizza definitions by scenario-local BOM ID. Per-item lookups and accumulated quantities use the product ID as the key.
 
 | Proposed predicate | Role |
 | --- | --- |
 | `bom_requirements(+Input, -Outcome)` | Run the calculation for one ground input. Return exactly one `ok(Lines)` or `error(Diagnostic)`. |
-| `prepare_bom(+Input, -Prepared)` | Validate the demand and relevant definitions, build a lookup by BOM ID, index items and stock by product ID, and produce the initial component demand and parent-first item order. |
+| `prepare_bom(+Input, -Prepared)` | Read the `planning_input` keys defined below. Validate `pizza_demand/3`, `bom/4`, `item/6`, `recipe/3` and `stock/2`, build lookups and produce initial component demand and parent-first item order. |
 | `net_requirements(+Prepared, -Lines)` | Traverse that order with an accumulated demand map. Calculate stock coverage and production, propagate ingredient requirements and produce one row per item with positive demand. |
 
 The second and third predicates are internal responsibilities. They separate the validation of a complete input set from arithmetic on a prepared graph. `Lines` is sorted by product ID. A withdrawal list and a replenishment list can both be projected from the rows by taking only positive quantities in the relevant field. This retains the intent of `manage_stock/4` and `join_equals/2` from the professor's example while tracking one balance and one requirement total per item. The calculation passes values through predicates for each request. The adapter handles expected validation errors separately from unexpected runtime failures.
@@ -185,6 +185,19 @@ The second and third predicates are internal responsibilities. They separate the
 #### 4.2.1. Input model
 
 This is the proposed normalised model at the AI01 boundary. AI06 owns its transport contract and provides the source records needed to construct it. IDs refer to the selected input set throughout. Quantities are integers, with one product-specific abstract stock unit per item. A pizza demand line uses counts of pizzas.
+
+AI06's `load_inputs/2` returns `ok(Input)` where `Input` has tag `planning_input`. The calculation reads these exact keys and terms. Business identifiers are case-sensitive strings. Classification, tracking flags and `none` are atoms. [Complete producer mapping and example](../ai06/usAI06.md#44-data-mapping-to-prolog)
+
+| Dict key | Value consumed by `prepare_bom/2` |
+| --- | --- |
+| `pizza_demand` | List of `pizza_demand(Date, BomId, Qty)`. Date is `none` or a validated `date(Year, Month, Day)`. AI01 totals the supplied rows. |
+| `pizza_boms` | List of `bom(BomId, PizzaId, SizeId, Components)` with `component(ProdId, Units)` terms. An absent catalogue pizza ID is `none`. Untracked component consumption is `none`. |
+| `items` | List of `item(ProdId, Kind, Tracked, AcqType, StockUnit, UnitsPerSale)`. Kinds are `terminal` or `aggregate`. Aggregate acquisition is `produced` or `purchased`. Optional fields that do not apply are `none`. |
+| `recipes` | List of `recipe(ProdId, Yield, Ingredients)` with `ingredient(ProdId, UnitsPerBatch)` terms. |
+| `opening_stock` | List of `stock(ProdId, Units)` in each tracked item's stock unit. |
+| `eligibility` | Dict with `products` and `sizes` lists of `product_active(ProdId, Active)` and `size_active(SizeId, Active)`. |
+
+The same input carries `meta`, `direct_sale_demand`, `offers`, `forecast` and `reference_date` as defined by AI06. AI01 validates and calculates the pizza graph from the fields above. AI05 uses `meta` to associate the result with the execution, while AI02 handles direct sales, supplier terms and calendar planning. The JSON fields below describe the transport representation. AI06 maps them to this dict before the call.
 
 | Element | Fields and invariants |
 | --- | --- |
@@ -221,7 +234,7 @@ remainingUnits = unspentOpeningUnits + surplusUnits
 
 `unspentOpeningUnits` is derived as `availableUnits − withdrawnUnits`. A calculation with deficits has a successful result. The remaining stock is a hypothetical result, conditional on obtaining any missing inputs for planned production. Items without demand retain their opening balances.
 
-AI02 can reuse the AI01 calculation for each day's pizza demand. Positive `replenishmentUnits` identify pizza-driven shortages in each product's own stock units. Supplier selection and the daily replenishment plan belong to AI02.
+AI02 selects one day's `pizza_demand/3` rows and supplies that day's hypothetical balances in `opening_stock` on a local copy of `planning_input`. It passes the dated terms unchanged to `bom_requirements/2`. AI01 totals the supplied rows and returns the day's pizza requirements. AI02 owns date selection, direct-sale demand, supplier selection and the progression of feasible balances. Positive `replenishmentUnits` identify pizza-driven shortages in each product's own stock units.
 
 ### 4.3. Integration contract proposal
 
@@ -231,7 +244,7 @@ AI02 can reuse the AI01 calculation for each day's pizza demand. Positive `reple
 
 #### 4.3.1. Demand mapping in AI06
 
-For a first run, AI06 calls Backoffice `POST /api/v1/internal/planning/operational-inputs` with the authorised selection and prepares the input before the calculation. The proposed `GET /api/v1/planning/executions/{executionId}/inputs` reads a snapshot already stored by Procurement. AI06 converts `pizzaDemand` and `pizzaBoms` to Prolog. [AI06 REST and snapshot design](https://github.com/Departamento-de-Engenharia-Informatica/LEI-SEM5-PI-2026-27-3DE-01/blob/7231b23c53152e9914bbd6e55e6105f7338f6bf0/docs/user_stories/ai/ai06/usAI06.md#43-internal-rest-contracts)
+For a first run, AI06 calls Backoffice `POST /api/v1/internal/planning/operational-inputs` with the authorised selection and prepares the input before the calculation. The proposed `GET /api/v1/planning/executions/{executionId}/inputs` reads a snapshot already stored by Procurement. AI06 maps the bound snapshot to the `planning_input` dict above. [AI06 REST and snapshot design](../ai06/usAI06.md#43-internal-rest-contracts)
 
 An `OrderItem` links to `PizzaSize`. `PersonalizedPizzaConfiguration` holds the selected components. Simulated orders provide these values directly. How AI06 reads them from the order API is open (OP06). [Sprint 2 domain model](https://github.com/Departamento-de-Engenharia-Informatica/LEI-SEM5-PI-2026-27-3DE-01/blob/a5a622a15cda51400a56d630533e5383cc05281a/docs/architecture/domainModel/domainmodel.puml)
 
@@ -410,7 +423,7 @@ All opening stock values remain persisted as entered. In this result, production
 | S09 | Prolog | Introduce a self-cycle and then a multi-level cycle such as base → premix → base. Return the cycle path, including when sufficient base stock would cover demand. A recipe with a shared child, as in S05, remains valid. |
 | S10 | Integration | Run S03 twice from identical saved inputs and compare the quantities and input references. Verify stored scenario and backend stock before and after success and failure. Run two cases concurrently to check snapshot isolation. In a current-stock case, change live stock through its normal back-end operation, then run a new forecast and verify that it reads the new balance. |
 | S11 | Integration | Save a forecast while the product and size are active, then deactivate either before its first execution. Verify rejection. For a separate completed run, verify that its result is preserved and a replay with its saved inputs works and is labelled historical. |
-| S12 | Integration | Exercise AI05 with AI06 input using catalogue and simulated scenarios, checking consistent identifiers, provenance, successful shortages and structured error categories for invalid input, missing information, denied access and unavailable service. Verify absence of stock writes and purchase orders during the calculation. |
+| S12 | Integration | Pass the exact `planning_input` dict from AI06 AS12 through `prepare_bom/2` and `bom_requirements/2`. Verify 600 g of cheese demand and 200 g to replenish. Repeat with one day's dated `pizza_demand/3` rows and the AI02 daily stock. Check catalogue and simulated scenarios, provenance, structured diagnostics and absence of operational stock writes or purchase orders. |
 | S13 | Prolog and integration | Supply a selected simulated customer order of 5 medium ham and cheese pizzas with the medium size explicitly recorded. The BOM consumes 2 mozzarella units and 1 ham unit per pizza. With 6 mozzarella and 5 ham units in stock, these two lines require 10 and 5 units respectively. AI01 reports 4 mozzarella units to replenish and no ham shortage. Supply the same demand through a forecast and verify identical quantities with the same BOM and stock. Remove the size from the order line and verify an incomplete-input diagnostic. |
 | S14 | Prolog and integration | Use the example in [section 4.3.1](#431-demand-mapping-in-ai06) with 5 medium ham and cheese pizzas and 2 medium cheese pizzas from the same catalogue pizza and size. Verify two BOM IDs and requirements of 7 bases, 14 cheese units and 5 ham units. With opening stock of 7 bases, 10 cheese units and 4 ham units, replenish 4 cheese units and 1 ham unit. Remove one referenced BOM and verify a missing-data diagnostic. |
 | S15 | Integration | Revoke a Manager's session after a successful planning request. Reuse its still unexpired bearer for execution, replay and saved-result reads. Each request returns `401` before any input load, execution write or result disclosure. |

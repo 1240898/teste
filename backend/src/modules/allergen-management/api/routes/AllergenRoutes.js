@@ -11,7 +11,7 @@ export class AllergenRoutes {
     const router = Router();
     const controller = this.allergenController;
     const authenticate = this.authMiddleware.verifyToken;
-    const manager = RoleMiddleware.requireRole('MANAGER');
+    const manager = RoleMiddleware.requireOperation('allergens.manage');
     // BR2: reads are public; writes require an authenticated MANAGER.
     router.get('/allergens', controller.getAllAllergens.bind(controller));
     router.get('/allergens/:id', controller.getAllergenById.bind(controller));

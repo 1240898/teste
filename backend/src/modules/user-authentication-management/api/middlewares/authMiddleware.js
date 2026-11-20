@@ -1,12 +1,20 @@
 import { AppError } from '../../../../shared/errors/AppError.js';
+import { captureRouteTemplate } from '../../../../shared/logging/routeTemplate.js';
 
 export class AuthMiddleware {
   constructor(userService) {
     this.userService = userService;
     this.verifyToken = this.verifyToken.bind(this);
+    this.verifyOptionalToken = this.verifyOptionalToken.bind(this);
+  }
+
+  verifyOptionalToken(req, res, next) {
+    if (!req.headers.authorization && !req.headers['x-access-token']) return next();
+    return this.verifyToken(req, res, next);
   }
 
   async verifyToken(req, _res, next) {
+    captureRouteTemplate(req);
     const authorization = req.headers.authorization;
     const match = /^Bearer ([^\s]+)$/i.exec(authorization ?? '');
     const legacy = req.headers['x-access-token'];

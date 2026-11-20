@@ -11,7 +11,7 @@ export class ComponentConfigurationRoutes {
   setupRoutes() {
     const router = Router();
     const auth = this.authMiddleware.verifyToken;
-    const manager = RoleMiddleware.requireRole('MANAGER');
+    const manager = RoleMiddleware.requireOperation('componentConfigurations.manage');
     const controller = this.controller;
 
     router.post(

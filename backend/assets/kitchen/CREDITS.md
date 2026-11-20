@@ -12,6 +12,10 @@ a CC BY file must keep the author, the source URL and the licence below.
 | AST-MDL-DISPENSER-01 | models/dispenser-01.glb | Overhead crust dispenser (placeholder box) | LaPrizza team | `npm run kitchen:demo-assets` | Project licence |
 | AST-MDL-CONVEYOR-01 | models/conveyor-01.glb | Conveyor belt segment (placeholder box) | LaPrizza team | `npm run kitchen:demo-assets` | Project licence |
 | AST-MDL-ROBOT-ARM-01 | models/robot-arm-01.glb | Robotic arm (placeholder box) | LaPrizza team | `npm run kitchen:demo-assets` | Project licence |
+| AST-MDL-DISPENSER-02 | models/dispenser-02.glb | Overhead dispenser with a hinged release gate | LaPrizza team | `npm run kitchen:models` (embedded steel colour and normal maps from this catalogue) | Project licence |
+| AST-MDL-CONVEYOR-02 | models/conveyor-02.glb | Conveyor frame and separate belt surface | LaPrizza team | `npm run kitchen:models` (embedded steel colour and normal maps from this catalogue) | Project licence |
+| AST-MDL-ROBOT-ARM-02 | models/robot-arm-02.glb | Articulated ingredient dispenser arm | LaPrizza team | `npm run kitchen:models` (embedded steel colour and normal maps from this catalogue) | Project licence |
+| AST-MDL-OVEN-LINE-01 | models/oven-line-01.glb | Wood-fired dome oven with recessed conveyor intake | LaPrizza team | `npm run kitchen:models` (embedded steel and tile maps from this catalogue) | Project licence |
 | AST-MDL-OVEN-DOME-01 | models/oven-dome-01.glb | Dome wood-fired oven (placeholder box) | LaPrizza team | `npm run kitchen:demo-assets` | Project licence |
 | AST-MDL-OVEN-DOME-02 | models/oven-dome-02.glb | Dome wood-fired oven: base, hearth, dome, mouth arch and chimney | LaPrizza team | `npm run kitchen:models` (scripts/kitchen-models) | Project licence |
 | AST-MDL-FRIDGE-01 | models/fridge-01.glb | Refrigerator (placeholder box) | LaPrizza team | `npm run kitchen:demo-assets` | Project licence |

@@ -33,6 +33,19 @@ function allergenList(value) {
   }
 }
 
+// Filters a public (unauthenticated / non-staff) caller may use. Internal
+// fields such as acquisitionType, isPizzaComponent or pizzaComponentTypeId
+// are not in the public DTO, so filtering by them would reveal them.
+const PUBLIC_FILTER_KEYS = ['name', 'categoryId', 'excludeAllergenIds'];
+
+const publicFilter = (filter) =>
+  Object.fromEntries(
+    PUBLIC_FILTER_KEYS.filter((key) => filter[key] !== undefined).map(
+      (key) => [key, filter[key]],
+    ),
+  );
+
+
 /**
  * Application service of BCK05. Authentication and roles are enforced by the route
  * middlewares; local invariants live in the Product aggregate; this service checks
@@ -86,6 +99,14 @@ export class ProductService {
       const product = found(
         await this.productRepository.findByIdForUpdate(productId, tx),
       );
+      if (
+        typeof dto.expectedUpdatedAt !== 'string' ||
+        new Date(dto.expectedUpdatedAt).getTime() !== product.updatedAt.getTime()
+      )
+        throw new AppError(
+          'Product changed since it was loaded. Reload and review the current version before saving.',
+          412,
+        );
       await this.#ensureReferencesExist(props, tx);
       await this.#ensureCompositionIsValid(productId, props, tx);
       await this.#ensureNoBrokenReferences(product, props, tx);
@@ -103,11 +124,32 @@ export class ProductService {
     );
   }
 
+    /** Public catalogue data contains active sellable products only. */
+  async listPublicProducts(filter = {}) {
+    const criteria = this.#toSearchCriteria({
+      ...publicFilter(filter),
+      isSellable: true,
+      isActive: true,
+    });
+    return this.productMapper.toPublicDTOList(
+      await this.productRepository.search(criteria),
+    );
+  }
+
   /** SD4 - Consult one product. */
   async getProductById(id) {
     return this.productMapper.toDTO(
       found(await this.productRepository.findById(ProductId.create(id))),
     );
+  }
+
+  async getPublicProductById(id) {
+    const product = found(
+      await this.productRepository.findById(ProductId.create(id)),
+    );
+    if (!product.isSellable() || !product.isActive())
+      throw new AppError(PRODUCT_NOT_FOUND, 404);
+    return this.productMapper.toPublicDTO(product);
   }
 
   /** SD3 - Soft deactivation (AC9, BR9, D6). Never calls BCK09. */

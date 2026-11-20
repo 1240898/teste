@@ -11,10 +11,13 @@ class "AI01 BOM module" as Module <<Prolog module>> {
   net_requirements(Prepared, Lines)
 }
 
-class "BOM input" as Input <<Prolog data>> {
-  pizza and size eligibility
-  selected pizza demand
-  scenario item definitions and opening stock
+class "planning_input" as Input <<ground SWI-Prolog dict>> {
+  eligibility: product_active/2 and size_active/2 lists
+  pizza_demand: pizza_demand/3 list
+  pizza_boms: bom/4 list with component/2 terms
+  items: item/6 list
+  recipes: recipe/3 list with ingredient/2 terms
+  opening_stock: stock/2 list
 }
 
 class "Prepared BOM" as Prepared <<Prolog data>> {
@@ -24,6 +27,7 @@ class "Prepared BOM" as Prepared <<Prolog data>> {
 }
 
 class "Pizza demand line" as Demand <<Prolog data>> {
+  Date: none or date(Year, Month, Day)
   bomId
   quantity
 }
@@ -40,6 +44,8 @@ class "Planning item" as Item <<Prolog data>> {
   kind: terminal or aggregate
   acquisitionType
   tracked
+  stockUnit
+  stockUnitsPerSale when applicable
 }
 
 class "Preparation recipe" as Recipe <<Prolog data>> {

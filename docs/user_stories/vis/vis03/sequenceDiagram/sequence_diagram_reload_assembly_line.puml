@@ -1,0 +1,34 @@
+@startuml VIS03-Reload-Assembly-Line
+title VIS03 - Reload after a WEB06 configuration change
+
+actor "Manager" as Manager
+participant "WEB06 API" as API
+participant "VIS01 viewer" as Viewer
+participant "Old ViewerEngine" as Old
+participant "New ViewerEngine" as New
+
+Manager -> API : activate extended layout
+API --> Manager : activation confirmed
+Manager -> Viewer : open or reload kitchen viewer
+opt previous viewer attempt exists
+  Viewer -> Old : dispose previous attempt
+  Old -> Old : abort pending work and stop frames
+  Old -> Old : detach line, release module resources and loaded assets
+end
+Viewer -> API : GET /api/v1/kitchen-configurations/active
+API --> Viewer : extended configuration and asset references
+Viewer -> Viewer : validate response and preload referenced assets
+alt response or asset load fails
+  Viewer --> Manager : show VIS01 failure status
+else response and assets ready
+  Viewer -> New : load new attempt (see SD 1)
+  alt build completes
+    New --> Viewer : ready for first render
+    Viewer -> New : start and render
+    Viewer --> Manager : show extended room and SOUTH line
+  else build fails
+    New --> Viewer : failure
+    Viewer --> Manager : show VIS01 failed state
+  end
+end
+@enduml

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { kitchenModelGlb } from '../../../scripts/kitchen-models/index.js';
 import { KitchenAsset } from '../../../src/modules/kitchen-configuration-management/domain/model/KitchenAsset.js';
 import { KitchenLayoutValidator } from '../../../src/modules/kitchen-configuration-management/domain/services/KitchenLayoutValidator.js';
 import { GltfModelInspector } from '../../../src/modules/kitchen-configuration-management/infrastructure/files/GltfModelInspector.js';
@@ -90,3 +91,36 @@ describe('VIS02 asset compatibility with existing layouts', () => {
     });
   });
 });
+
+test.each([
+  ['AST-MDL-DISPENSER-02', ['housing', 'release-gate']],
+  ['AST-MDL-CONVEYOR-02', ['belt-surface']],
+  [
+    'AST-MDL-ROBOT-ARM-02',
+    ['base', 'base-yaw', 'shoulder', 'elbow', 'end-effector', 'release-gate'],
+  ],
+  ['AST-MDL-OVEN-LINE-01', ['hearth']],
+])(
+  'VIS03 - %s can be regenerated and preserves its textured part hierarchy',
+  async (id, parts) => {
+    const { path } = manifest.find((entry) => entry.id === id);
+    const file = new URL(`files/${path}`, assetsDirectory);
+    const bytes = readFileSync(file);
+    expect(kitchenModelGlb(id).equals(bytes)).toBe(true);
+    const gltf = JSON.parse(
+      bytes.toString('utf8', 20, 20 + bytes.readUInt32LE(12)),
+    );
+    let candidates = gltf.scenes[gltf.scene].nodes;
+    for (const name of parts) {
+      const part = candidates
+        .map((index) => gltf.nodes[index])
+        .find((node) => node.name === name);
+      expect(part).toBeDefined();
+      candidates = part.children ?? [];
+    }
+    const inspector = new GltfModelInspector();
+    expect(
+      (await inspector.inspect(fileURLToPath(file))).embeddedTextureSet,
+    ).toBe(true);
+  },
+);

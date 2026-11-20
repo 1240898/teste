@@ -5,6 +5,7 @@ import { LocaleContext } from '../../../src/shared/locale/localeContext.js';
 import { translate } from '../../../src/shared/locale/messages.js';
 import { AssetLoadError } from '../../../src/visualization/scene/SceneAssetLoader.js';
 import KitchenViewer from '../../../src/visualization/viewer/KitchenViewer.jsx';
+import { RESET_VIEW_EVENT } from '../../../src/visualization/scene/camera/cameraSettings.js';
 
 const modules = [];
 const configuration = {
@@ -223,4 +224,21 @@ test('leaving the page releases a late asset set without creating a renderer', a
   await act(async () => preload.resolve(assets));
   expect(assets.dispose).toHaveBeenCalledTimes(1);
   expect(dependencies.createEngine).not.toHaveBeenCalled();
+});
+
+
+test('IT-4: "Reset view" dispatches the reset event on the viewer canvas', async () => {
+  await mount();
+  const onReset = jest.fn();
+  host.querySelector('canvas').addEventListener(RESET_VIEW_EVENT, onReset);
+
+  await click(translate('en-GB', 'viewerResetView'));
+
+  expect(onReset).toHaveBeenCalledTimes(1);
+});
+
+test('IT-4: "Reset view" is not shown while the viewer is not ready', async () => {
+  dependencies.loadConfiguration.mockReturnValue(new Promise(() => {}));
+  await mount();
+  expect(button(translate('en-GB', 'viewerResetView'))).toBeUndefined();
 });

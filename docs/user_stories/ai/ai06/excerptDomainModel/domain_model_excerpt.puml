@@ -25,7 +25,7 @@ package "Scenario and demand (AI06 inputs)" as ScenarioInputs {
         Date for daily demand
         BOM reference for pizza demand
     }
-    class "Stock snapshot" as Snapshot
+    class "Opening stock set" as StockSet
     class "Opening stock" as Opening {
         Available units for the product
     }
@@ -36,12 +36,13 @@ package "Scenario and demand (AI06 inputs)" as ScenarioInputs {
         ProductId
         Terminal item or aggregate
         Acquisition type and stock tracking status
+        Stock unit for tracked products
     }
 
     Scenario "1" *-- "1..*" Provenance : identifies inputs
     Scenario "1" *-- "0..*" Demand : selects
-    Scenario "1" *-- "1" Snapshot : starts with
-    Snapshot "1" *-- "0..*" Opening : captures
+    Scenario "1" *-- "1" StockSet : starts with
+    StockSet "1" *-- "0..*" Opening : captures
     Opening "0..*" --> "1" Product : balance for
     Demand "0..*" --> "0..1" Product : requested product when identified
     Product "1" *-- "0..1" SalesFactor : configured for direct sale
@@ -49,8 +50,10 @@ package "Scenario and demand (AI06 inputs)" as ScenarioInputs {
 
 package "Bill of materials and preparation recipes" as BomInputs {
     class "Pizza BOM" as Bom {
-        Scenario-local BOM ID and size
-        Catalogue pizza when applicable
+        Scenario-local BOM ID
+    }
+    class "Pizza size" as PizzaSize {
+        SizeId
     }
     class "BOM component" as Component {
         Stock units per pizza
@@ -63,6 +66,7 @@ package "Bill of materials and preparation recipes" as BomInputs {
     }
 
     Bom "1" *-- "1..*" Component : lists
+    Bom "0..*" --> "1" PizzaSize : resolved for
     Recipe "1" *-- "1..*" Ingredient : contains
 }
 
@@ -73,6 +77,7 @@ package "Supplier scenario inputs" as SupplierInputs {
     class Supplier
     class "Supplier offer" as Offer {
         Price in EUR and stock units covered
+        Stock unit recorded at confirmation
         Lead time in whole calendar days
         Optional daily capacity in stock units
     }
@@ -84,6 +89,7 @@ package "Supplier scenario inputs" as SupplierInputs {
 
 Scenario "0..*" --> "0..1" SupplierScenario : selected for replenishment
 Demand "0..*" --> "0..1" Bom : resolves by BOM ID for pizzas
+Bom "0..*" -up-> "0..1" Product : catalogue pizza
 Component "0..*" -up-> "1" Product : requires
 Product "1" *-- "0..1" Recipe : prepared using
 Ingredient "0..*" -up-> "1" Product : refers to

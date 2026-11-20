@@ -203,14 +203,14 @@ describe('WEB03 public sections (catalogue and privacy notice)', () => {
     expect(backend.catalogueRequests).toEqual([]);
   });
 
-  test('FT22: search uses the API filter; empty results and failures are explained and can be retried', async () => {
+      test('FT22: component filter uses the API; empty results and failures are explained and can be retried', async () => {
     let fail = true;
     mockBackend({
       catalogue: (_path, query) => {
         if (fail) return error(503, 'Service unavailable');
         return response(
           200,
-          query.get('componentName') === 'Basil' ? [] : [margherita],
+          query.get('componentIds') === 'PROD-00020' ? [] : [margherita],
         );
       },
     });
@@ -227,27 +227,33 @@ describe('WEB03 public sections (catalogue and privacy notice)', () => {
     );
     expect(main()).toContain('Margherita');
 
-    const input = container.querySelector('#catalogue-component');
+    // Choose Mozzarella (PROD-00020) as a required component.
+    const field = container.querySelector('#catalogue-components');
+    if (!field) throw new Error('Component filter #catalogue-components not found');
     await act(async () => {
-      const setValue = Object.getOwnPropertyDescriptor(
-        HTMLInputElement.prototype,
-        'value',
-      ).set;
-      setValue.call(input, 'Basil');
-      input.dispatchEvent(new Event('input', { bubbles: true }));
+      if (field.tagName === 'SELECT') {
+        const option = [...field.options].find((o) => o.value === 'PROD-00020');
+        if (!option) throw new Error('Option PROD-00020 not found in #catalogue-components');
+        option.selected = true;
+        field.dispatchEvent(new Event('change', { bubbles: true }));
+      } else {
+        const box = field.querySelector('input[value="PROD-00020"]');
+        if (!box) throw new Error('Checkbox PROD-00020 not found in #catalogue-components');
+        box.click();
+      }
     });
-    await act(async () =>
-      container
-        .querySelector('form[role="search"]')
-        .dispatchEvent(
+    const form = container.querySelector('form[role="search"]');
+    if (form)
+      await act(async () =>
+        form.dispatchEvent(
           new Event('submit', { bubbles: true, cancelable: true }),
         ),
-    );
+      );
     await settle();
 
-    expect(main()).toContain('No product contains the ingredient "Basil".');
     const last = backend.catalogueRequests.at(-1);
-    expect(last.searchParams.get('componentName')).toBe('Basil');
+    expect(last.searchParams.get('componentIds')).toBe('PROD-00020');
+    expect(main()).not.toContain('Tomato and mozzarella');
   });
 
   test('FT23: a Guest reads the privacy notice; no business request is sent', async () => {

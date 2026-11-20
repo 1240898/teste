@@ -1,0 +1,110 @@
+@startuml LaPrizza-VIS03-Domain-Model
+!pragma layout smetana
+title VIS03 - Automated Pizza Assembly Line\nLaPrizza domain model excerpt
+skinparam classAttributeIconSize 0
+skinparam shadowing false
+hide empty members
+
+package "Kitchen Configuration Aggregate (WEB06)" {
+    class KitchenConfiguration <<aggregate root>> {
+        id : KitchenConfigurationId
+        status : ConfigurationStatus
+    }
+    class KitchenLayout <<value object>> {
+        schemaVersion : Integer
+        units : String
+    }
+    class KitchenDimensions <<value object>> {
+        width : Decimal
+        depth : Decimal
+        height : Decimal
+    }
+    class AssemblyLine <<value object>>
+    enum KitchenWall {
+        NORTH
+        SOUTH
+        EAST
+        WEST
+    }
+    class SceneElement <<entity>> {
+        id : String
+        name : String [0..1]
+    }
+    enum ElementCategory {
+        EQUIPMENT
+        ASSEMBLY_LINE
+    }
+    class ElementType <<value object>> {
+        value : String
+    }
+    class Placement <<value object>> {
+        position : Vector3
+        rotation : Vector3
+        scale : Vector3
+    }
+    abstract class ModelReference <<value object>> {
+        source : ASSET | PROCEDURAL
+    }
+    class AssetModelReference <<value object>> {
+        assetId : KitchenAssetId
+    }
+    class ProceduralModelReference <<value object>> {
+        shape : ProceduralShape
+        size : Vector3
+    }
+    class MaterialProperties <<value object>> {
+        color : String [0..1]
+        roughness : Decimal [0..1]
+        metalness : Decimal [0..1]
+        colorMapAssetId : KitchenAssetId [0..1]
+        roughnessMapAssetId : KitchenAssetId [0..1]
+        normalMapAssetId : KitchenAssetId [0..1]
+        bumpMapAssetId : KitchenAssetId [0..1]
+    }
+
+    KitchenConfiguration "1" *-- "1" KitchenLayout : content >
+    KitchenLayout "1" *-- "1" KitchenDimensions : dimensions >
+    KitchenLayout "1" *-- "1" AssemblyLine : assemblyLine >
+    AssemblyLine "1" --> "1" KitchenWall : wall >
+    KitchenLayout "1" *-- "9..300" SceneElement : elements >
+    SceneElement "1" --> "1" ElementCategory : category >
+    SceneElement "1" *-- "1" ElementType : type >
+    SceneElement "1" *-- "1" Placement : placement >
+    SceneElement "1" *-- "1" ModelReference : model >
+    SceneElement "1" *-- "0..1" MaterialProperties : material >
+    ModelReference <|-- AssetModelReference
+    ModelReference <|-- ProceduralModelReference
+
+    note right of AssemblyLine
+      Wall selected by the active layout.
+      Line members are the layout elements
+      with category ASSEMBLY_LINE.
+    end note
+    note right of ElementType
+      ASSEMBLY_LINE composition
+      1 ASSEMBLY_COUNTER
+      1 RECEIVING_PLATFORM
+      1 DISPENSER
+      1 CONVEYOR_BELT
+      1 WOOD_FIRED_OVEN
+      3..12 ROBOTIC_ARM
+    end note
+}
+
+package "Kitchen Asset Aggregate (WEB06)" {
+    class KitchenAsset <<aggregate root>> {
+        id : KitchenAssetId
+        format : String
+        size : Vector3 [0..1]
+        embeddedTextureSet : Boolean [0..1]
+    }
+    enum AssetKind {
+        MODEL
+        TEXTURE
+    }
+    KitchenAsset "1" --> "1" AssetKind : kind >
+}
+
+AssetModelReference ..> KitchenAsset : references MODEL >
+MaterialProperties ..> KitchenAsset : references TEXTURE maps >
+@enduml

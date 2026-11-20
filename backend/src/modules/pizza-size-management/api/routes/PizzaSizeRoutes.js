@@ -11,7 +11,7 @@ export class PizzaSizeRoutes {
   setupRoutes() {
     const router = Router();
     const auth = this.authMiddleware.verifyToken;
-    const manager = RoleMiddleware.requireRole('MANAGER');
+    const manager = RoleMiddleware.requireOperation('pizzaSizes.manage');
     const controller = this.controller;
     router.use((_req, res, next) => {
       res.set('Cache-Control', 'no-store');

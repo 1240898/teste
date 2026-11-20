@@ -1,3 +1,4 @@
+
 const ref = (name) => ({ $ref: `#/components/schemas/${name}` });
 const json = (schema) => ({ 'application/json': { schema } });
 const object = (properties, required = Object.keys(properties)) => ({
@@ -48,6 +49,7 @@ export const catalogueSchemas = {
     name: { type: 'string' },
     description: { type: 'string' },
     available: { type: 'boolean' },
+    isPizzaComponent: { type: 'boolean' },
     category: ref('CatalogueCategory'),
     price: { allOf: [ref('CatalogueMoney')], nullable: true },
     allergens: { type: 'array', items: ref('CatalogueAllergen') },
@@ -84,6 +86,27 @@ export const cataloguePaths = {
           description:
             'Exact full component name match, case-insensitive. Returns sellable component products and sellable pizzas containing the component.',
           schema: { type: 'string', minLength: 1, maxLength: 100 },
+        },
+        {
+          name: 'componentIds',
+          in: 'query',
+          required: false,
+          description: 'Comma-separated component Product IDs. A result must contain every selected component.',
+          schema: { type: 'string', example: 'PROD-00001,PROD-00002' },
+        },
+        {
+          name: 'excludeComponentIds',
+          in: 'query',
+          required: false,
+          description: 'Comma-separated component Product IDs. Results containing any selected component are omitted.',
+          schema: { type: 'string', example: 'PROD-00003' },
+        },
+        {
+          name: 'excludeAllergenIds',
+          in: 'query',
+          required: false,
+          description: 'Comma-separated allergen IDs. Results containing any selected allergen are omitted.',
+          schema: { type: 'string', example: '1,7' },
         },
       ],
       responses: responses('Catalogue products', [400]),

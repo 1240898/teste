@@ -1,0 +1,45 @@
+@startuml VIS03-Build-Assembly-Line
+title VIS03 - Build the line in the active kitchen
+
+participant "VIS01 viewer" as Viewer
+participant "ViewerEngine" as Engine
+participant "KitchenLayoutModule" as Room
+participant "AssemblyLineModule" as Line
+participant "SceneElementFactory" as Factory
+participant "LoadedAssets" as Assets
+
+Viewer -> Viewer : load active configuration and preload assets
+alt asset cannot be loaded
+  Viewer -> Viewer : show asset-unavailable
+else configuration and assets ready
+  Viewer -> Engine : load(configuration, assets, moduleFactories, signal)
+  Engine -> Room : build(context)
+  Room --> Engine : room and equipment attached under layout:root
+  Engine -> Line : build(context)
+  Line -> Line : check abort signal, find layout:root and create detached group
+  loop each ASSEMBLY_LINE element, until failure or cancellation
+    Line -> Factory : create(element, {isStatic: true})
+    alt procedural
+      Factory -> Factory : create configured primitive and material
+    else imported
+      Factory -> Assets : getModel(assetId)
+      Assets --> Factory : preloaded GLB scene
+      Factory -> Factory : clone scene, namespace parts, apply material override if present
+    end
+    Factory -> Factory : apply placement to element root
+    Factory --> Line : element group or construction error
+  end
+  alt build completes and signal is active
+    Line -> Line : attach layout:assembly-line under layout:root
+    Line --> Engine : complete
+    Engine -> Engine : finish remaining modules
+    Engine --> Viewer : loaded
+    Viewer -> Engine : start and render complete scene
+  else build fails or attempt is cancelled
+    Line --> Engine : error or cancelled build
+    Engine -> Line : dispose() including partial resources
+    Engine -> Engine : release other modules and loaded assets
+    Engine --> Viewer : failed or cancelled attempt
+  end
+end
+@enduml

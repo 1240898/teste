@@ -28,7 +28,7 @@ WEB05 concerns **the business pages that make the Sprint 1 capabilities usable t
 WEB05 owns:
 
 1. One group of pages (list, detail, create / edit forms, as the Sprint 1 API allows) per business area: **customers, product categories, allergens, products, pizza sizes, pizza component types, size-dependent component configurations, stock information, predefined pizzas, sellable catalogue**.
-2. One `<feature>Api` HTTP adapter per area on top of `apiClient` (one function per Sprint 1 endpoint, DTO in / DTO out).
+2. One `<feature>Api` HTTP adapter per management area; `ModulePage` injects `ModuleRequest` into the module and adapter, which delegates requests to `apiClient` (one function per Sprint 1 endpoint, DTO in / DTO out).
 3. Client-side form validation of required data, as a convenience that mirrors the back-end rules.
 4. Search and filtering as supported by the Sprint 1 endpoints.
 5. Display of allergen information in product and predefined-pizza views.
@@ -36,7 +36,7 @@ WEB05 owns:
 7. Refresh of the displayed data after every successful change.
 8. Restricted display of customer information and dietary restrictions.
 
-WEB05 explicitly **does not** add: order processing, personalized-pizza pricing rules, or supplier-management operations beyond what the Materials and Requirements Planning stories need (those are WEB07 / AI06). It does not change back-end business rules; "existing business invariants remain enforced" means the SPA must not bypass or contradict them.
+WEB05 explicitly **does not** add order processing, personalized-pizza pricing rules, or supplier-management operations beyond what the Materials and Requirements Planning stories need (those are WEB07 / AI06). The review fixes below include coordinated API-contract changes in BCK05 and the catalogue service, plus the clarified BCK07 rule for preserving existing configurations; WEB05 does not own those domain rules.
 
 ---
 
@@ -74,13 +74,13 @@ Criteria from related stories and architecture that constrain WEB05 (not owned, 
 
 ### 2.3. Client Clarifications & Questions
 
-Based on the client clarifications (§15 of the specification), three operational expectations affect WEB05 and have explicit dependencies on the current Sprint 1 REST APIs:
+Based on the client clarifications (section 15 of the specification), the following operational expectations affect WEB05. They were first registered as API dependencies; the API now supports them and WEB05 uses that support:
 
-| Topic | Client Clarification (§15) | Current Sprint 1 API Capability & Dependency | Expected WEB05 Design Behaviour |
+| Topic | Client Clarification (section 15) | API support used by WEB05 | WEB05 behaviour |
 | :--- | :--- | :--- | :--- |
-| **Multi-ingredient inclusion filter** | Searching the catalogue or products by multiple selected ingredients must return only items containing **all** selected ingredients (conjunctive `AND` semantics). | `GET /catalogue` currently supports only a single `componentName` query parameter; `GET /products` filters by `name`, `categoryId`, and `active`. | WEB05 exposes the single `componentName` filter supported by Sprint 1 (BR 3) without faking conjunctive multi-ingredient filtering client-side over partial pages. Multi-ingredient filtering is registered as an **API dependency** (`BCK-catalogue` / `BCK05`). |
-| **Allergen & component exclusion filter** | Users must be able to exclude products or pizzas containing **any** selected allergen or excluded component (disjunctive `OR` exclusion). | Neither `GET /catalogue` nor `GET /products` currently exposes `excludeAllergenIds` or `excludeComponentIds` query parameters. | Registered as an **API dependency** (`BCK-catalogue` / `BCK05`). Until the back end supports server-side exclusion parameters, the SPA does not advertise unsupported exclusion filters as server queries (BR 3). |
-| **Concurrent edit detection** | If another user modifies a record while a Manager is editing it, the save must be rejected and the user must reload the latest version before re-applying changes. | `PUT /products/:id` (and the remaining Sprint 1 `PUT`/`PATCH` endpoints) do not currently accept an `If-Match` / `version` field or return `409 Conflict` on stale updates (last-write-wins). | Registered as an **API dependency** (optimistic concurrency control in BCK endpoints). In WEB05, whenever any endpoint returns `409 Conflict` (or when the user triggers a manual refresh), the form blocks overwriting, preserves the user's unsaved values for comparison, and prompts a reload of the current server record via WEB04 feedback. |
+| **Multi-ingredient inclusion filter** | Products or pizzas containing **any** excluded allergen or component are removed (disjunctive `OR` exclusion). | `GET /catalogue?excludeComponentIds=&excludeAllergenIds=`; allergens are the direct ones plus those derived from the whole composition. | The catalogue exclusion filters are sent to the API (BR 3, BR 19). |
+| **Concurrent edit detection** | An edit based on a stale version is rejected; the current server data is shown and the user's draft is retained for review. | `PUT /products/:id` with `expectedUpdatedAt`; a stale edit returns `412`. | The draft is kept, the current record is shown and a new save is allowed only after the user reviews it (SD 1). |
+| **Component-type quantity bounds** | Changing component-type bounds preserves existing pizza configurations; the new bounds apply when a configuration is created or replaced. | `PATCH /pizza-component-types/:id` (BCK07) keeps stored compositions; BCK10 validates new or replaced configurations. | A rejected creation or replacement is explained with safe, localized feedback (BR 4). |
 
 ### 2.4. Business Rules & Invariants
 
@@ -110,15 +110,15 @@ The rules are split by **where their authority comes from**, so that a team choi
 
 | ID | Rule | Source |
 | --- | --- | --- |
-| **BR 11** | Every request goes through `<feature>Api` → `apiClient`; no page calls `fetch` directly; identifiers are used exactly as issued by the back end (`CUST-…`, `PROD-…`, `CAT-…`, `COMP-…`, `STOCK-…`, the pizza-size id, and the integer allergen id) without generating, rewriting or deriving them, including in routes. | WEB01 BR 3, BR 4 |
-| **BR 12** | A feature must not import implementation modules directly from another feature. When a page requires data belonging to another business area (e.g., allergens in a customer dietary-restriction form or products in a composition form), that data must be obtained through the appropriate API integration, using the shared `apiClient` and respecting the feature-isolation rules defined by WEB01. | WEB01 BR 2 |
-| **BR 13** | Business data, and especially customer data, is not persisted in `localStorage`, `sessionStorage` or IndexedDB. | WEB01 BR 5 |
+| **BR 11** | Management requests go through `<feature>Api` → injected `ModuleRequest` → `apiClient`; the public catalogue uses its existing public adapter → `apiClient`. No page calls `fetch` directly. Identifiers are used as issued by the back end (`CUST-…`, `PROD-…`, `CAT-…`, `COMP-…`, `STOCK-…`, pizza-size ID, integer allergen ID), without generating or rewriting them, including in routes. | WEB01 BR 3, BR 4 |
+| **BR 12** | A feature never imports another feature. Data needed by two areas (e.g. allergens listed in the customer dietary-restriction form, products in a composition form) is obtained through the page's own adapter from the back end. | WEB01 BR 2 |
+| **BR 13** | Business data, and especially customer data, is not persisted in `localStorage`, `sessionStorage` or IndexedDB. Exception (BR 25): a pending-operation marker (operation, record id and, only for operations verified against the API – stock adjustment and start tracking – the entered values and the previous balance) is kept in `sessionStorage` for the current tab and removed once the outcome is confirmed; customer data is never stored. | WEB01 BR 5 |
 | **BR 14** | Hiding an action or route is not authorization: the back end decides. `401` and `403` are handled differently (re-authentication vs access denied) and the access-denied message reveals no protected information. | WEB03; AA05 AC 3; WEB01 BR 17 |
 | **BR 15** | Roles are read from the authenticated session provided by the back end, never chosen or sent by the client. If roles cannot be confirmed, protected pages stay unavailable. | AA03 AC 8 / AC 9 |
 | **BR 16** | A user must not gain access to customer information outside their authorized responsibilities by changing a customer identifier in a URL or request. Customer-specific access restrictions are enforced by the back end, and the SPA displays the corresponding authorization error without exposing protected information. | AA05 AC 4; WEB03 |
 | **BR 17** | WEB05 uses the shared WEB04 components to provide loading indicators, success messages, validation feedback, confirmation of significant actions, duplicate-submission prevention and safe retry. When the back-end response identifies specific invalid fields, the corresponding errors are displayed next to those fields. If field-level details are not available, the failure is presented as a safe, localized form-level message. Failures must not expose internal technical details or be presented as successful operations, and user input is preserved where appropriate. | WEB04 AC 1–7 |
 | **BR 18** | All texts (labels, messages, empty states) exist in PT and EN, forms are keyboard-usable and controls are labelled. | WEB02 |
-| **BR 19** | Allergen information, availability, prices and stock values displayed by the SPA must correspond to the values provided by the back end. The SPA must not independently calculate, derive or modify these business values. Stock quantities are displayed using the abstract stock units defined by the back end. | WEB01 (Back-end authority); domain model |
+| **BR 19** | Availability, prices and stock values are those provided by the back end and are not recomputed by the SPA. Product management obtains component products from the API and resolves their direct allergen IDs through the composition graph for display; those references are fetched again on each list refresh. Catalogue allergens and pizza availability remain sourced from the catalogue API, which returns the direct allergens of each entry plus those derived from its whole composition. Stock quantities use the abstract stock units of the back end. | WEB01 (back-end authority); domain model |
 
 ##### Sprint 1 invariants the pages must respect (from the domain model; enforced by the back end, BR 4)
 
@@ -158,7 +158,7 @@ The rules are split by **where their authority comes from**, so that a team choi
 | **BR 22** | List, detail and form pages follow one common interaction pattern (same actions, same feedback). | BR 7, BR 17, BR 18 | D3 |
 | **BR 23** | Actions that remove or deactivate follow the Sprint 1 API semantics of each resource and always request confirmation. | BR 17 | D4 |
 | **BR 24** | Permission checks in pages use the capability / role helper provided by WEB03, not ad hoc role comparisons. | BR 7, BR 14 | D5 |
-| **BR 25** | **Safe recovery on timeout or 5xx of non-idempotent mutations:** `POST /stock/:productId/adjustments` applies a relative delta (`direction` + `units`) and the creation endpoints (`POST /customers`, `POST /products`, `POST /stock`) are not idempotent. If a timeout, network drop or `5xx` occurs, the page must **not** retry automatically or let the user blindly re-submit. It marks the outcome as unknown/unconfirmed and blocks duplicate submission until the API allows confirming the operation (idempotency key or adjustment log). Re-reading the stock balance does not prove whether a given adjustment was applied; for creations, the user checks the list/detail view. | BR 4, BR 17 | D6 |
+| **BR 25** | **Safe recovery on unknown mutation outcome:** Non-idempotent creates and relative stock adjustments (`POST /stock/:productId/adjustments`, `POST /customers`, `POST /products`, `POST /stock`) whose outcome is unknown (`timeout`, network drop, or `5xx`) are never retried automatically or resubmitted blindly. They remain blocked—including after navigating away and returning within the same tab—until the outcome can be confirmed against the API (or left blocked if the API cannot confirm it), while keeping re-read checks (stock balance / list or detail view) separate from blind resubmission. | BR 4, BR 17 | D6 |
 
 #### 2.4.4. Open points
 
@@ -186,9 +186,11 @@ PlantUML source: [`excerptDomainModel/domain_model_excerpt.puml`](./excerptDomai
 | **ComponentSizeConfiguration** | Aggregate Root (existing, unchanged) | Size-dependent component configuration pages (OP2); one per product + pizza size pair. |
 | **StockInformation** | Aggregate Root (existing, unchanged) | Stock pages, in abstract stock units (BR 19). |
 
+
 The excerpt has no separate aggregate for the **sellable catalogue**: it is the public catalogue of `SellableProduct`s, which includes the `PredefinedPizza`s. `UserRole` is not part of this excerpt; roles are consumed through WEB03 (BR 7), never decided by WEB05.
 
-WEB05 introduces **no new domain concept** and **no back-end change**. The `<feature>Api` adapters, page components and form validation are technical concepts of the SPA (`frontend/src/features`), not domain concepts. **DDD stays on the back-end side:** aggregates, value objects, repositories and domain rules exist only in the Back-End API. The SPA receives their **DTO representations** (plain JSON objects) and does not re-model them.
+WEB05 introduces **no new domain concept**. Its only back-end changes are the coordinated API-contract and catalogue-service fixes described in this document (stale product edits, catalogue filters, direct and derived catalogue allergens, omission of products with inconsistent catalogue data). The `<feature>Api` adapters, page components and form validation are technical concepts of the SPA (`frontend/src/features`), not domain concepts. **DDD stays on the back-end side:** aggregates, value objects, repositories and domain rules exist only in the Back-End API. The SPA receives their **DTO representations** (plain JSON objects) and does not re-model them.
+
 
 ---
 
@@ -200,13 +202,11 @@ This User Story operates within the established **C4 Model** of the system ([SAD
 
 *   **C4 Level 1 (System Context):** the actors of Table 1 use the *LaPrizza Information System* through the single Web Application over HTTP. The primary actor of WEB05 is the LaPrizza Manager.
 *   **C4 Level 2 (Containers):** the *Front-End* (React SPA) presents the Sprint 1 business capabilities; the *Back-End API* remains the only authority over business rules, validation and authorization (*Back-end authority* principle). Communication is REST / JSON over `/api/v1` ([ADR-003](../architecture/ADR.md)); the database is accessed only by the back end ([ADR-007](../architecture/ADR.md)).
-*   **C4 Level 3 (Components):** in the Front-End, WEB05 adds the business feature components under `src/features/`, each with its `<feature>Api` adapter and its pages. They use the shared HTTP client (`apiClient`, `ApiError`, in `src/shared/api`), the navigation policy of WEB03 and the feedback components of WEB04. The Back-End needs **no new component**; the Sprint 1 routers are reused unchanged.
+*   **C4 Level 3 (Components):** in the Front-End, WEB05 adds business feature components under `src/features/`, each with its `<feature>Api` adapter and pages. `ModulePage` injects a `ModuleRequest` into each management module; the module passes it to its adapter, which uses it for requests through the shared `apiClient` and receives normalized `ApiError` failures. The pages also use WEB03 navigation and WEB04 feedback components. The Back-End reuses the Sprint 1 routers, with the product update contract extended to reject stale writes.
 
 #### Code base of WEB05
 
-WEB05 is built on `main`, which already contains the layered structure (`src/app`, `src/features`, `src/shared`), `apiClient` / `ApiError`, the WEB03 `navigationPolicy` and the public catalogue page. The WEB05 sections (`/manage/...`) are already declared in `navigationPolicy` with owner `WEB05` and `enabled: false`; WEB05 enables them as each page is delivered.
-
-The shared feedback and validation components of WEB04 are on branch `web/WEB04-implementation` (`abf53c8`) and are **not yet merged** into `main`. WEB05 therefore depends on the merge of WEB04 to consume them (BR 17). The class and sequence diagrams below follow the code of `main`.
+WEB05 uses the repository's layered structure (`src/app`, `src/features`, `src/shared`), `apiClient` / `ApiError`, the WEB03 `navigationPolicy`, and the existing public catalogue page. `ModulePage` creates the authenticated `ModuleRequest`; `createManagementModule` and feature modules inject it into their adapters without importing `apiClient` directly. The catalogue adapter remains the existing public read path. WEB05 enables its management sections and uses the shared feedback and validation components already present in the integrated SPA.
 
 ---
 
@@ -221,13 +221,13 @@ Key design points:
 *   **Existing and reused:**
     *   Front end: `apiClient` / `ApiError` (`src/shared/api`), `navigationPolicy` (`src/app/navigation`), and the catalogue page (`src/features/catalogue`: `CataloguePage`, `CatalogueProductPage`, `catalogueApi`).
     *   Back end: the Sprint 1 routers, with `AuthMiddleware` and `RoleMiddleware`.
-*   **API pattern (aligned with `main`):** `Page → <feature>Api → apiClient`. Each `<feature>Api` adapter imports `apiClient` directly and passes relative paths without repeating `/api/v1` (since `apiClient` prepends the configured base URL `/api/v1`). Protected endpoints pass `{ accessToken }` to `apiClient`; public read endpoints (`catalogueApi`, `GET /categories`, `GET /allergens`, `GET /pizza-sizes`) omit the token and pass `{ skipAuthFailureHandler: true }`. Dynamic path segments are encoded with `encodeURIComponent` and filters go in `query`.
-*   **Catalogue (AC 1, AC 4, AC 7):** the public catalogue page already exists and is **reused, not rebuilt**. WEB05 verifies and, where needed, extends it to meet AC 4 (allergen information) and AC 7 (explained empty and unavailable states). `catalogueApi.list` supports only the filter `componentName`, so the catalogue filtering offered by WEB05 is limited to it (BR 3).
-*   **Predefined pizzas data composition (AC 4, AC 7):** the back-end endpoint `BCK10` (`GET /predefined-pizzas` and `GET /predefined-pizzas/:id`) returns only `{ id, componentIds }`. It does **not** return allergens, per-size availability, product names, or active status directly. To satisfy AC 4 and AC 7 without violating BR 12 or BR 19:
+*   **API pattern:** management pages call their injected feature adapter; `ModulePage` supplies `ModuleRequest`, which attaches the authenticated session token and delegates to `apiClient`. Adapters do not import `apiClient` directly. The public catalogue retains its public request path without an authorization token. Relative API paths omit `/api/v1`; adapters encode dynamic path segments and pass filters as query parameters.
+*   **Catalogue (AC 1, AC 4, AC 7):** the public catalogue page is reused and extended. Its filters include every selected component, exclusion of any selected component, and exclusion of any selected allergen. The inclusive `componentIds` and exclusion parameters are supported by the catalogue endpoint; the legacy `componentName` query remains available. The allergens of a catalogue entry are its **direct allergens plus those derived from its whole composition** (components of components), computed by `CataloguePolicy`; the same set is used for display and for `excludeAllergenIds`. A sellable product with inconsistent catalogue data (e.g. a component-based product without a predefined pizza yet) is **omitted** from the list and logged, instead of failing the whole catalogue; `GET /catalogue/:productId` answers `404` for it.
+*   **Predefined pizzas data composition (AC 4, AC 7):** the back-end endpoint `BCK10` (`GET /predefined-pizzas` and `GET /predefined-pizzas/:id`) returns only `{ id, componentIds }`. It does **not** return allergens, per-size availability, product names, or active status directly. To satisfy AC 4 and AC 7:
     *   `predefinedPizzaApi` exposes feature-scoped lookup helpers (`GET /products`, `GET /allergens`, and `GET /catalogue/:id`) to assemble the view model in the management page.
-    *   **Allergens & component labels:** resolved from the back-end product and allergen payloads (`GET /products` and `GET /allergens`) corresponding to `componentIds` (never computed from client-side heuristics).
-    *   **Per-size availability & unavailable pizzas:** for predefined pizzas that appear in `GET /catalogue/:id`, per-size availability and prices come directly from the catalogue response. If a predefined pizza is absent from the catalogue (`404`), the management page keeps it visible in the Manager list with the localized key `catalogue.unavailableInPublic` (WEB02 i18n). The `404` does not distinguish "inactive" from "no valid size"; if `GET /products` returns `isActive`, it is used to separate the two cases.
-*   **Stock adjustment contract (BCK09):** `stockApi.adjust(token, productId, payload)` sends `{ direction, units }` (where `direction` is `"INCREASE"` | `"DECREASE"` and `units` is a positive integer) to `POST /stock/:productId/adjustments`, matching the BCK09 REST contract.
+    *   **Allergens & component labels:** component labels and direct allergen identifiers are read from the product payloads for the pizza's component IDs; allergen IDs are displayed using localized names.
+    *   **Per-size availability & unavailable pizzas:** per-size availability and prices come from `GET /catalogue/:id`. A `404` is followed by a product lookup that tells the manager whether the pizza is missing, inactive, not sellable, or active and sellable but not offered by the catalogue; in the last case the cause is not guessed, because the `404` does not state it. Other catalogue lookup errors are shown separately as a lookup failure. If catalogue data is unavailable, the page uses the component products already loaded to show their available allergen identifiers instead of rendering a misleading dash.
+*   **Stock adjustment contract (BCK09):** `stockApi.adjust(productId, payload)` sends `{ direction, units }` (`INCREASE` or `DECREASE`, with positive integer units) to `POST /stock/:productId/adjustments` through the injected `ModuleRequest`. `stockOutcome` verifies an unknown adjustment or start-tracking result against `GET /stock` (BR 25).
 *   **Feature isolation (BR 12):** a page uses only the adapter of its own feature. Reference data from another area is read through dedicated methods on the feature's own adapter (e.g., `customerApi.listAllergenOptions()`, `predefinedPizzaApi` reference lookups, and `componentConfigurationApi` reference product/size lookups).
 *   **Size-dependent component configurations (OP2):** they are not a separate feature; they belong to `products`, matching the route `/manage/products/:productId/component-configurations` of `navigationPolicy`. They are addressed by the composite pair `(productId, sizeId)`.
 *   **DTOs are plain data** and no domain behaviour is modelled (BR 11). `AllergenDTO.id` is an integer `1..14`, while the remaining identifiers are strings.
@@ -237,11 +237,11 @@ Key design points:
 
 ### 3.3. Sequence Diagrams (SD)
 
-The areas share one interaction pattern (BR 22), so three representative scenarios are documented. All diagrams follow the exact `Page → <feature>Api → apiClient` architecture on `main` (relative paths without duplicated `/api/v1` prefix in `apiClient` calls).
+The areas share one interaction pattern (BR 22), so three representative scenarios are documented. The management request path is `Page → <feature>Api → injected ModuleRequest → apiClient`; the public catalogue keeps its public read adapter. Relative paths omit the `/api/v1` prefix.
 
 #### SD 1 — Creation of a New Product (Manager Action)
 
-The page validates the form and, if valid, calls `productApi.create(token, payload)`, which calls `apiClient.post("/products", { accessToken, body: payload })`. In `ProductRoutes`, `AuthMiddleware`, `RoleMiddleware` (`MANAGER`) and `ValidationMiddleware` run before the controller. Branches: client-side validation failure, back-end body validation failure (`400`), domain or business validation failure (`400` / `409`), server error (`5xx`), timeout / network drop without response (BR 25) and success (`201`). After success the page shows localized feedback (`WEB04`) and re-reads the list with `productApi.search` (BR 9).
+The page validates the form and, if valid, calls `productApi.create(payload)` through the injected `ModuleRequest`. In `ProductRoutes`, `AuthMiddleware`, `RoleMiddleware` (`MANAGER`) and `ValidationMiddleware` run before the controller. Branches: client-side validation failure, back-end body validation failure (`400`), domain or business validation failure (`400` / `409`), server error (`5xx`), timeout / network drop without response (BR 25) and success (`201`). After success the page shows localized feedback (WEB04) and re-reads the list (BR 9). Product edits also send the `updatedAt` value read when editing as `expectedUpdatedAt`; the API rejects stale edits with `412`. WEB05 preserves the draft, shows the current server record, and allows saving again only after the user reviews that current version.
 
 ![Sequence Diagram — Product Creation](./sequenceDiagram/sequence_diagram_product_creation.svg)
 
@@ -249,9 +249,9 @@ The page validates the form and, if valid, calls `productApi.create(token, paylo
 
 #### SD 2 — Stock Adjustment & Timeout/5xx Recovery
 
-The Manager submits an adjustment on the stock page, which calls `stockApi.adjust(token, productId, { direction, units })` → `apiClient.post("/stock/" + encodeURIComponent(productId) + "/adjustments", { accessToken, body })`. After authentication, role and validation checks, `StockManagementService` runs the adjustment in a transaction (`PostgresUnitOfWork`), reading the current stock with `findCurrentByProductIdForUpdate` and saving the updated stock. The page displays the stock returned by the back end (BR 19).
+The Manager submits an adjustment on the stock page, which calls `stockApi.adjust(productId, { direction, units })` through the injected `ModuleRequest`. After authentication, role and validation checks, `StockManagementService` runs the adjustment in a transaction (`PostgresUnitOfWork`), reading the current stock with `findCurrentByProductIdForUpdate` and saving the updated stock. The page displays the stock returned by the back end (BR 19).
 
-*   **Timeout / 5xx recovery (BR 25):** because `POST /stock/:productId/adjustments` applies a relative delta (`direction`, `units`) without an idempotency key, a network timeout, a dropped connection or a `5xx` leaves the outcome ambiguous (the server may have committed the change before the connection dropped). On such failures the diagram and page keep the result as **unknown/unconfirmed** and block automatic or accidental re-submission until the API allows confirming the operation (idempotency key or adjustment log). Re-reading the balance (`GET /stock/:productId`) does not prove whether the adjustment was applied, because concurrent adjustments change the same balance.
+*   **Timeout / 5xx recovery (BR 25):** because `POST /stock/:productId/adjustments` applies a relative delta without an idempotency key, a timeout, dropped connection, or `5xx` leaves the outcome ambiguous. The workspace records the operation as pending (with the direction, units and the balance shown before sending) and blocks it, also after leaving and returning to the page in the same tab. **"I checked the result"** first re-reads the stock from the API and compares it with the recorded balance: *previous ± units* → applied (unblocked, nothing resent); *previous* → not applied (unblocked and the entered values are restored for review); any other value or an unreachable API → **stays blocked**, because a concurrent adjustment makes the outcome undecidable. Start-tracking (create) is confirmed by the presence of a current stock record for the product.
 
 ![Sequence Diagram — Stock Adjustment](./sequenceDiagram/sequence_diagram_stock_adjustment.svg)
 
@@ -259,7 +259,7 @@ The Manager submits an adjustment on the stock page, which calls `stockApi.adjus
 
 #### SD 3 — Sellable Catalogue Consultation (Public Access)
 
-A Guest or any signed-in user opens the existing catalogue page, which calls `catalogueApi.list({ componentName, signal })` → `apiClient.get("/catalogue", { query, signal, skipAuthFailureHandler: true })`. The request carries **no access token** (`AuthMiddleware` is not applied on `CatalogueRoutes`, per WEB03 ALN-1). `CatalogueService` loads the sellable facts, `CataloguePolicy` evaluates the entries and filters, and `CatalogueResponseMapper` builds the `CatalogueDTO[]`, which includes allergen information (BR 5) and excludes internal stock counts or customer data.
+A Guest or signed-in user opens the existing catalogue page, which calls its public adapter with the selected component/allergen filters. The request carries no access token (`AuthMiddleware` is not applied on `CatalogueRoutes`, per WEB03 ALN-1). `CatalogueService` loads sellable facts with their whole composition, evaluates each product with `CataloguePolicy` (direct and derived allergens; products with inconsistent data are omitted and logged), applies all-required component and any-excluded component/allergen filtering, and `CatalogueResponseMapper` builds the `CatalogueDTO[]` with allergen information (BR 5), without internal stock counts or customer data.
 
 ![Sequence Diagram — Catalogue Consultation](./sequenceDiagram/sequence_diagram_catalogue_consultation.svg)
 
@@ -269,7 +269,7 @@ A Guest or any signed-in user opens the existing catalogue page, which calls `ca
 
 ### 3.4. REST API Specification (ARC03)
 
-WEB05 **adds no endpoint**. It consumes the Sprint 1 REST API (`/api/v1`, prefix added automatically by `apiClient`) through the `<feature>Api` adapters and exposes only the operations and filters that API supports (BR 3). Methods, paths and roles below come from the routers on `main`; request and response bodies are defined by each BCK story and Swagger.
+WEB05 adds no business endpoint of its own. It consumes the Sprint 1 REST API (`/api/v1`) through feature adapters and the injected `ModuleRequest`; the product update version field and catalogue query filters are coordinated API-contract changes documented below. Methods, paths and roles reflect the current routers; request and response bodies are defined by each BCK story and Swagger.
 
 | Feature | Adapter | Method and path (relative to `/api/v1`) | Role |
 | :--- | :--- | :--- | :--- |
@@ -285,7 +285,7 @@ WEB05 **adds no endpoint**. It consumes the Sprint 1 REST API (`/api/v1`, prefix
 | | | `POST /allergens`, `PUT /allergens/:id`, `DELETE /allergens/:id` | `MANAGER` |
 | Products (BCK05) | `productApi` | `POST /products` | `MANAGER` |
 | | | `GET /products`, `GET /products/:id` | `MANAGER`, `EMPLOYEE` |
-| | | `PUT /products/:id`, `DELETE /products/:id`, `PATCH /products/:id/activate` | `MANAGER` |
+| | | `PUT /products/:id` (includes `expectedUpdatedAt`; stale edit returns `412`), `DELETE /products/:id`, `PATCH /products/:id/activate` | `MANAGER` |
 | Pizza sizes (BCK06) | `pizzaSizeApi` | `GET /pizza-sizes` (query), `GET /pizza-sizes/:id` | Public (no token) |
 | | | `POST /pizza-sizes`, `PUT /pizza-sizes/:id`, `DELETE /pizza-sizes/:id` | `MANAGER` |
 | Component types (BCK07) | `pizzaComponentTypeApi` | `POST /pizza-component-types`, `GET /pizza-component-types`, `GET /pizza-component-types/:id`, `PATCH /pizza-component-types/:id`, `DELETE /pizza-component-types/:id` | `MANAGER` |
@@ -294,7 +294,7 @@ WEB05 **adds no endpoint**. It consumes the Sprint 1 REST API (`/api/v1`, prefix
 | Stock (BCK09) | `stockApi` | `POST /stock`, `GET /stock`, `GET /stock/:productId`, `DELETE /stock/:productId` | `MANAGER` |
 | | | `POST /stock/:productId/adjustments` | `MANAGER` |
 | Predefined pizzas (BCK10) | `predefinedPizzaApi` | `POST /predefined-pizzas`, `GET /predefined-pizzas`, `GET /predefined-pizzas/:id`, `PUT /predefined-pizzas/:id` | `MANAGER` |
-| Sellable catalogue | `catalogueApi` | `GET /catalogue` (`?componentName=`), `GET /catalogue/:productId` | Public (no token, ALN-1) |
+| Sellable catalogue | `catalogueApi` | `GET /catalogue` (`?componentIds=`, `?excludeComponentIds=`, `?excludeAllergenIds=`; legacy `?componentName=`), `GET /catalogue/:productId` | Public (no token, ALN-1) |
 
 ---
 
@@ -309,6 +309,133 @@ All API errors (`ApiError`) and network failures are handled exclusively through
 | **401 Unauthorized** | Handled globally by `apiClient` / `AuthProvider` (`WEB03`) | Clears expired session and redirects to `LoginPage` with safe `returnTo`. Does not show a false success state. |
 | **403 Forbidden** | `AuthProvider.refresh()` (`WEB03`) + `FeedbackMessage` (`error`) | Triggers role refresh; displays a generic, localized access-denied message without disclosing protected data or required roles (BR 14). |
 | **404 Not Found** | Empty / Unavailable state panel (`WEB04`) | Explains clearly in PT/EN that the requested record does not exist or is unavailable (e.g., a predefined pizza absent from the public catalogue). |
-| **409 Conflict** (business invariant / stale edit) | Form-level `FeedbackMessage` (`error`) | Explains the domain conflict (e.g., duplicate `(productId, sizeId)` configuration, cyclic composition, negative stock, or concurrent modification) in safe localized text; preserves user input and prompts reload if stale. |
+| **409 Conflict** (business invariant) / **412 Precondition Failed** (stale product edit) | Form-level `FeedbackMessage` (`error`) | Explains the domain conflict safely and preserves user input. For a stale product edit, shows the current record and requires the user to review it before a new save can use its version. |
 | **5xx Server Error / Network Error (non-mutating GET / PUT / DELETE or idempotent)** | Form/Page `FeedbackMessage` (`error`) + WEB04 safe retry | Displays a generic localized service-unavailable message without internal details; preserves form input and offers safe retry via WEB04. |
-| **Timeout / Network Error or 5xx on non-idempotent POST (creations, stock adjustments)** | Warning `FeedbackMessage` (`warning`) + Block submission | **No blind retry (BR 25).** Marks the outcome as unknown/unconfirmed, disables duplicate submission until the API allows confirming the operation, and says that re-reading the balance does not prove an adjustment was applied; for creations, instructs checking the list/detail view. |
+| **Timeout / Network Error or 5xx on non-idempotent POST (creations, stock adjustments)** | Warning `FeedbackMessage` (`warning`) + pending-operation list | **No blind retry (BR 25).** Marks the outcome as unknown and blocks resubmission in the current tab, across navigation. "I checked the result" consults the API before releasing the block: stock operations are compared with the recorded state (applied / not applied / undecidable → still blocked); other creates are released only after the list was re-read successfully. Not-applied stock operations get their values back. |
+
+---
+
+## 4. Tests (WEB05)
+
+### 4.1. Test Plan & Scenarios
+
+| Test ID | Level / Source | Scenario / Description | Expected Result |
+| ------- | -------------- | ---------------------- | --------------- |
+| UT01 | Unit — `frontend/test/navigation/navigationPolicy.test.js` | Verify all WEB05 management sections are registered with Table 1 roles and enabled | Passes for all enabled sections |
+| UT02 | Unit — `frontend/test/business-management/businessManagementAdapters.test.js` | API adapters and DTO mappers (including `productToPayload`) use `/api/v1` endpoints and preserve back-end identifiers (`CUST-…`, `PROD-…`, etc.) unchanged | Endpoints called accurately; IDs preserved as opaque values; DTO fields parsed and normalized |
+| UT03 | Unit — `frontend/test/business-management/formValidation.test.jsx` | Client-side validation for required fields and domain value constraints (e.g., non-negative stock adjustments) | Invalid inputs blocked with field feedback; valid inputs pass |
+| UT04 | Component — `frontend/test/business-management/ManagementWorkspace.test.jsx` | Timeout on create / stock adjustment, leaving and returning to the page; stale product edit (`412`) | The block survives navigation; "I checked the result" releases it only after consulting the API (applied → nothing resent; not applied → values restored; API unreachable or undecidable → still blocked); stale edit draft stays intact until the current record is reviewed |
+| UT05 | Unit — `frontend/test/business-management/businessManagementAdapters.test.js` | Product references refresh allergens; predefined-pizza catalogue lookup distinguishes `404` from `5xx` | Updated allergen IDs are read on refresh; unavailable and failed offer reads have distinct states |
+| UT06 | Unit — `backend/tests/unit/product-catalogue-and-information/application.test.js` | Inclusive multi-component filter and exclusion by component/allergen | All selected components are required; any excluded component or allergen removes the result |
+| UT07 | Unit — `frontend/test/business-management/stockOutcome.test.js` | Stock outcome verification against the API | Increase / decrease applied, not applied, changed by someone else (unconfirmed), no current record, failing lookup |
+| UT08 | Unit — `backend/tests/unit/product-catalogue-and-information/catalogueAllergens.test.js` | Allergen declared on the pizza itself; allergen of a sub-component; fixed-price product with composition | Direct and derived allergens are shown once each; missing composition data is rejected |
+| UT09 | Unit — `backend/tests/unit/product-catalogue-and-information/catalogueResilience.test.js` | A sellable component-based product without predefined pizza | The catalogue list still answers without it; its detail returns `404` |
+| FT01 | SPA — `frontend/test/navigation/roleBasedNavigation.test.js` | Manager sees and accesses all authorized business management sections; Guest, Customer, and Employee see only permitted entries | Menu and routes match role permissions (ALLOW vs FORBIDDEN) |
+| FT02 | SPA — `frontend/test/catalogue/CataloguePage.test.js` & `test/catalogue/catalogueFormat.test.js` | Guest and authenticated roles read the public sellable catalogue, prices, and product/allergen details | Products, prices, and allergens displayed without token |
+| IT01 | HTTP (back end) — `backend/tests/integration/*-management/api.test.js` | Sprint 1 REST endpoints for customers, categories, allergens, products, sizes, component types, configurations, stock, and predefined pizzas enforce domain invariants and role permissions | Statuses conform to Table 1 (`200` / `201` / `401` / `403` / `409`) |
+| IT02 | HTTP (back end) — `backend/tests/integration/product-management/api.test.js` | Two Managers edit the same product version; the second submits after the first update | The stale update receives `412` and the first Manager's saved state remains intact |
+| IT03 | Integration (back end) — `backend/tests/integration/pizza-component-type-management/postgres.test.js` | Component-type bounds change while stored pizza compositions fall outside the new bounds | The change succeeds and all stored composition rows remain unchanged |
+| MT01 | Manual | Log in as Manager, Staff, and Customer; navigate through all business management areas, create/edit/deactivate records, and inspect empty/error states | UI renders role-appropriate actions, refreshes state after mutations, and displays allergen and dietary information accurately |
+
+Acceptance-criteria traceability:
+
+| AC | Main scenarios |
+| --- | --- |
+| AC1 | UT01, FT01, FT02, IT01, MT01 |
+| AC2 | UT02, UT03, UT04, UT07, IT01, IT02, MT01 |
+| AC3 | UT06, FT02, IT01, MT01 |
+| AC4 | UT08, FT02, MT01 |
+| AC5 | Scope boundary check (no order processing, personalized-pizza pricing rules, or supplier management added) |
+| AC6 | UT01, FT01, IT01, MT01 |
+| AC7 | UT05, UT09, FT01, FT02, MT01 |
+| AC8 | MT01 |
+| AC9 | UT01, FT01, IT01, MT01 |
+
+---
+
+## 5. Implementation
+
+### 5.1. File Structure
+
+```text
+frontend/
+├── src/
+│   ├── features/
+│   │   └── business-management/
+│   │       ├── allergens/                        (AllergensModule.jsx, AllergensPage.jsx, allergenApi.js, allergenDTO.js)
+│   │       ├── categories/                       (CategoriesModule.jsx, CategoriesPage.jsx, categoryApi.js, categoryDTO.js)
+│   │       ├── component-configurations/         (ComponentConfigurationsModule.jsx, ComponentConfigurationsPage.jsx, componentConfigurationApi.js, componentConfigurationDTO.js)
+│   │       ├── component-types/                  (ComponentTypesModule.jsx, ComponentTypesPage.jsx, componentTypeApi.js, componentTypeDTO.js)
+│   │       ├── customers/                        (CustomersModule.jsx, CustomersPage.jsx, customerApi.js, customerDTO.js)
+│   │       ├── pizza-sizes/                      (PizzaSizesModule.jsx, PizzaSizesPage.jsx, pizzaSizeApi.js, pizzaSizeDTO.js)
+│   │       ├── predefined-pizzas/                (PredefinedPizzasModule.jsx, PredefinedPizzasPage.jsx, predefinedPizzaApi.js, predefinedPizzaDTO.js)
+│   │       ├── products/                         (ProductsModule.jsx, ProductsPage.jsx, productApi.js, productDTO.js)
+│   │       ├── stock/                            (StockModule.jsx, StockPage.jsx, stockApi.js, stockDTO.js, stockOutcome.js)
+│   │       └── createManagementModule.jsx
+│   ├── shared/
+│   │   ├── feedback/
+│   │   │   └── ManagementWorkspace.jsx           (shared workspace, form, feedback, confirmation, refresh and pending-outcome handling)
+│   │   ├── hooks/                                (useSubmission.js – duplicate-submit and unknown-outcome guard; pendingOutcomes.js – tab-scoped pending operations, BR 25)
+│   │   └── locale/                                (PT/EN messages and localized allergen labels)
+│   ├── app/
+│   │   └── navigation/
+│   │       └── navigationPolicy.js               (extended: enabled WEB05 management sections)
+│   └── styles/index.css                          (extended: management workspace styles)
+└── test/
+    ├── business-management/                      (adapter, workspace, stock outcome and validation tests)
+    ├── catalogue/                                (catalogue tests and formatting)
+    └── navigation/                               (navigation policy and role-based route tests)
+
+backend/
+├── src/modules/product-catalogue-and-information/
+│   ├── application/CatalogueService.js           (extended: products with inconsistent data omitted and logged)
+│   ├── domain/CataloguePolicy.js                 (extended: direct and derived allergens of the whole composition)
+│   ├── domain/CatalogueFacts.js                  (extended: getProduct)
+│   └── infrastructure/PostgresCatalogueReader.js (extended: recursive composition of the sellable products)
+└── tests/unit/product-catalogue-and-information/ (catalogueAllergens.test.js, catalogueResilience.test.js)
+```
+
+### 5.2. Core Implementation Highlights
+
+- **Unified business workspace**: all ten Sprint 1 areas use feature modules, their own adapters/DTOs, and the shared `ManagementWorkspace` for forms, feedback, confirmations and refreshed lists.
+- **Injected request path**: `ModulePage` supplies `ModuleRequest`; each management module injects it into its feature adapter. Adapters do not import `apiClient` directly, and preserve back-end identifiers.
+- **Stale product writes**: the editor sends its loaded `updatedAt` as `expectedUpdatedAt`. The API compares the version while holding the product row lock and returns `412` if it changed. The form retains its draft, displays the current record, and requires review before another save.
+- **Unknown outcomes (BR 25)**: network/timeout/aborted/invalid responses, and `5xx` on create or stock adjustment, register a pending operation in the current tab and block it across navigation. "I checked the result" re-reads the API before releasing it: `stockOutcome.js` compares the stock with the balance recorded before sending (applied / not applied / undecidable). Not-applied stock operations get their values back; undecidable ones stay blocked. Values are kept only for operations verified against the API, so customer data never reaches `sessionStorage` (BR 13).
+- **Catalogue filters and allergen labels**: catalogue requests support all-selected component matching and exclusion by any selected component/allergen. Product component references are fetched again for each list refresh; product and pizza screens use localized allergen labels.
+- **Catalogue allergens and resilience**: `CataloguePolicy` collects direct and derived allergens through the whole composition (cycles visited once) for display and exclusion; `PostgresCatalogueReader` loads that composition recursively. Products with inconsistent catalogue data are omitted and logged instead of failing the catalogue.
+- **Pizza offer state and component-type limits**: a catalogue `404` is explained as missing, inactive, not sellable, or active and sellable without an offer (cause not guessed); other lookup failures have separate feedback. Loaded component data supplies the allergen fallback. Component-type bound updates preserve existing pizza compositions, while BCK10 validates newly created or replaced configurations against the current bounds.
+- **Navigation, authorization and validation**: routes follow Table 1, with back-end authorization remaining authoritative. Client-side checks supplement back-end validation; errors are presented without internal details.
+- **Localization**: page labels, feedback, filter empty states and allergen labels are available in PT and EN.
+
+---
+
+## 6. Integration, Verification & Demonstration
+
+### 6.1. Running the Automated Tests
+
+```bash
+cd frontend
+npm test -- test/navigation test/catalogue test/business-management
+cd ../backend
+npm test -- tests/unit/product-catalogue-and-information tests/integration
+```
+
+### 6.2. Manual Verification
+
+1. Start the back-end server (`npm run dev` in `backend/`) and the frontend SPA (`npm start` in `frontend/`).
+2. Sign in as a LaPrizza Manager and navigate through each of the business management areas in the side menu.
+3. Verify that lists load via `ManagementWorkspace`, search/filtering options follow Sprint 1 endpoint capabilities, and forms persist changes with immediate view refreshes.
+4. Create a predefined pizza with milk declared on the pizza product and another whose sauce component contains a milk ingredient; in the public catalogue both show milk and both disappear when milk is excluded. A sellable component-based product without a predefined pizza does not break the catalogue.
+5. Switch to a Customer or Restaurant Staff account and attempt to access restricted management routes, confirming access is denied with clear feedback.
+6. Open a private window (Guest) and verify that the sellable catalogue and product/allergen information remain accessible without authentication.
+
+---
+
+## 7. Observations, Dependencies & Limitations
+
+- **Dependencies**: WEB01 (routing, `apiClient`), WEB02 (layout, PT/EN i18n), WEB03 (role-based navigation guards), WEB04 (standardized loading, success, error, and confirmation feedback), AA05 (back-end permission enforcement), and the Sprint 1 REST API back-end endpoints.
+- **Enabled Sections**: Unlike in WEB03 where management sections were disabled pending implementation, WEB05 activates these sections in `navigationPolicy.js` as the feature modules are delivered.
+- **Known Limitations**:
+  - The stock adjustment endpoint has no idempotency key or operation lookup. The outcome is inferred by comparing the balance with the one recorded before sending; when another adjustment changed it meanwhile, the outcome cannot be decided and the operation stays blocked until the user checks the stock history. If a concurrent change happens to produce exactly the expected balance, the inference can be wrong.
+  - The pending block is kept per browser tab (`sessionStorage`); another tab or browser does not see it.
+  - Products omitted from the catalogue because of inconsistent data are only reported in the back-end log and as "not offered" in the predefined-pizza page.

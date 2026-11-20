@@ -52,7 +52,10 @@ export class CataloguePolicy {
       throw new InvalidCatalogueData(
         `Fixed-price Product ${product.getId().getValue()} has no base price`,
       );
-    const allergens = this.#resolveAllergens(product.getAllergenIds(), facts);
+    const allergens = this.#resolveAllergens(
+    this.#allergenIdsOf([product], facts),
+    facts,
+    );
     const stockAvailable = this.#availableStock(product, facts, 1);
     return new CatalogueEntry({
       product,
@@ -70,11 +73,11 @@ export class CataloguePolicy {
         `Predefined pizza ${pizza.getId().getValue()} contains a non-component Product`,
       );
 
-    const allergenIds = new Map();
-    for (const component of components)
-      for (const allergenId of component.getAllergenIds())
-        allergenIds.set(idValue(allergenId), allergenId);
-    const allergens = this.#resolveAllergens([...allergenIds.values()], facts);
+        // Direct allergens of the pizza and derived ones of its whole composition.
+    const allergens = this.#resolveAllergens(
+      this.#allergenIdsOf([product, ...components], facts),
+      facts,
+    );
     const sizes = facts
       .getSizes()
       .map((size) => this.#evaluateSize(components, size, product, facts))
@@ -153,6 +156,38 @@ export class CataloguePolicy {
       throw new InvalidCatalogueData('Component price cannot be represented');
     }
   }
+
+    /**
+   * Direct allergens of the given products plus the derived allergens of their
+   * whole composition (components of components). Same rule as the product
+   * management view; sorted by id; cycles are visited once.
+   */
+  #allergenIdsOf(products, facts) {
+    const seen = new Set();
+    const ids = new Map();
+    for (const product of products) this.#collectAllergens(product, facts, seen, ids);
+    return [...ids.values()].sort(
+      (a, b) => Number(idValue(a)) - Number(idValue(b)),
+    );
+  }
+
+  #collectAllergens(product, facts, seen, ids) {
+    const key = idValue(product.getId());
+    if (seen.has(key)) return;
+    seen.add(key);
+    for (const allergenId of product.getAllergenIds())
+      ids.set(idValue(allergenId), allergenId);
+    for (const item of product.getCompositionItems?.() ?? []) {
+      const childId = item.getProductId?.() ?? item;
+      const child = facts.getProduct(childId);
+      if (!child)
+        throw new InvalidCatalogueData(
+          `Product ${key} references missing Product ${idValue(childId)}`,
+        );
+      this.#collectAllergens(child, facts, seen, ids);
+    }
+  }
+
 
   #resolveAllergens(allergenIds, facts) {
     const allergens = facts.getAllergens(allergenIds);

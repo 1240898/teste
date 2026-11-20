@@ -85,10 +85,18 @@ export class CustomerService {
     }
     return CustomerResponseMapper.toDTO(await this.repository.save(customer));
   }
-  async getById(id) {
-    return CustomerResponseMapper.toDTO(
-      found(await this.repository.findById(CustomerId.create(id))),
-    );
+  async getById(id, actor) {
+    const customerId = CustomerId.create(id);
+    const isManager = actor?.roles?.includes('MANAGER') === true;
+    const customer = isManager
+      ? await this.repository.findById(customerId)
+      : await this.repository.findByIdAndUserId(customerId, actor?.sub);
+    if (!customer) {
+      const error = new AppError('Customer not found', 404);
+      if (!isManager) error.authorizationOutcome = 'OWNERSHIP_DENIED';
+      throw error;
+    }
+    return CustomerResponseMapper.toDTO(customer);
   }
   async search(criteria) {
     return CustomerResponseMapper.toDTOList(

@@ -134,6 +134,73 @@ done
 [[ -n "$TARGET_REV" ]] || { echo "No retained config revision for $SHA was validated against database schema $CURRENT_SCHEMA" >&2; exit 3; }
 TARGET_ENV="/etc/laprizza/config/$TARGET_REV.env"
 [[ -r "$TARGET_ENV" ]] || { echo 'Target runtime configuration is unavailable' >&2; exit 2; }
+
+# SYS02: the network restriction gate depends on the target release.
+ACCESS_LIST="/etc/laprizza/access/allowed-networks.conf"
+SYS02_DEFAULT_GATEWAY="172.24.0.1"
+sys02_gateway() {
+  if docker network inspect laprizza-backend >/dev/null 2>&1; then
+    docker network inspect laprizza-backend \
+      --format '{{range .IPAM.Config}}{{if .Gateway}}{{.Gateway}} {{end}}{{end}}' | awk '{print $1}'
+  else
+    printf '%s\n' "$SYS02_DEFAULT_GATEWAY"
+  fi
+}
+sys02_allows() {
+  # Same precedence as the Nginx geo module: the most specific matching network
+  # wins (0 = deny, 1 = allow). Exit codes: 0 allowed, 1 denied, 2 invalid list.
+  python3 - "$ACCESS_LIST" "$1" <<'PY'
+import ipaddress, re, sys
+path, raw_address = sys.argv[1], sys.argv[2]
+address = ipaddress.ip_address(raw_address)
+best = None
+with open(path) as entries:
+    for number, line in enumerate(entries, 1):
+        entry = line.split('#', 1)[0].strip()
+        if not entry:
+            continue
+        # Only "<address>[/<numeric prefix>] 0;" or "... 1;" is supported.
+        match = re.fullmatch(r'([0-9A-Fa-f:.]+)(?:/([0-9]{1,3}))?\s+([01]);', entry)
+        network = None
+        if match:
+            try:
+                text = match.group(1) if match.group(2) is None else f'{match.group(1)}/{match.group(2)}'
+                network = ipaddress.ip_network(text, strict=False)
+            except ValueError:
+                network = None
+        if network is None:
+            print(f'SYS02: unsupported entry on line {number} of {path}; '
+                  'expected "<address>[/<prefix length>] 0;" or "<address>[/<prefix length>] 1;"', file=sys.stderr)
+            sys.exit(2)
+        if network.version == address.version and address in network:
+            if best is None or network.prefixlen >= best[0]:
+                best = (network.prefixlen, match.group(3))
+sys.exit(0 if best is not None and best[1] == '1' else 1)
+PY
+}
+if grep -q '/etc/laprizza/access:/etc/nginx/access' "$TARGET_COMPOSE"; then
+  # The target release enforces SYS02: validate its network prerequisites.
+  [[ -r "$ACCESS_LIST" ]] || { echo 'SYS02 allowed-networks file unavailable' >&2; exit 2; }
+  [[ -d /var/log/laprizza/access ]] || { echo 'SYS02 denied-access log directory missing' >&2; exit 2; }
+  SMOKE_GATEWAY=$(sys02_gateway)
+  [[ "$SMOKE_GATEWAY" =~ ^[0-9]+(\.[0-9]+){3}$ ]] || {
+    echo 'SYS02: could not determine the laprizza-backend network gateway' >&2
+    exit 2
+  }
+  if sys02_allows "$SMOKE_GATEWAY"; then sys02_rc=0; else sys02_rc=$?; fi
+  case "$sys02_rc" in
+    0) ;;
+    1) echo "SYS02: rollback smoke checks would reach Nginx from $SMOKE_GATEWAY, which is denied by $ACCESS_LIST. Allow it (for example '$SMOKE_GATEWAY 1;') and remove any more specific '0;' entry that covers it, then run the rollback again; no release was changed." >&2
+       exit 2 ;;
+    *) echo "SYS02: $ACCESS_LIST is not in the supported format; fix it and run the rollback again; no release was changed." >&2
+       exit 2 ;;
+  esac
+else
+  # The target release predates SYS02 and would serve every client.
+  echo "SYS02: rollback to $SHA refused. This release predates the DEI network/VPN access restriction, and no VM-level enforcement is configured to keep the restriction in place. Roll back to a release that includes SYS02 instead." >&2
+  exit 3
+fi
+
 install -m 0750 "$0" "$OPT_RELEASES/$SHA/$TARGET_REV/rollback.sh"
 
 export RELEASE_SHA="$SHA" DEI_CONFIG_REVISION="$TARGET_REV"
@@ -169,21 +236,34 @@ verify_running_images() {
 
 smoke() {
   local failed=0 api_result api_status api_body
-  if ! curl --fail --silent --show-error --max-time 10 --resolve "$PUBLIC_HOST:80:127.0.0.1" "http://$PUBLIC_HOST/api/v1/health" | python3 -c 'import json,sys; assert json.load(sys.stdin).get("status")=="ok"'; then
+  local base_url="http://127.0.0.1:2228"
+
+  if ! curl --fail --silent --show-error --max-time 10 \
+    "$base_url/api/v1/health" |
+    python3 -c 'import json,sys; assert json.load(sys.stdin).get("status")=="ok"'; then
     echo 'Smoke check failed: API health' >&2
     failed=1
   fi
-  if ! curl --fail --silent --show-error --max-time 10 --resolve "$PUBLIC_HOST:80:127.0.0.1" "http://$PUBLIC_HOST/register" | grep -q 'id="root"'; then
+
+  if ! curl --fail --silent --show-error --max-time 10 \
+    "$base_url/register" | grep -q 'id="root"'; then
     echo 'Smoke check failed: /register SPA entry' >&2
     failed=1
   fi
-  if ! curl --fail --silent --show-error --max-time 10 --resolve "$PUBLIC_HOST:80:127.0.0.1" "http://$PUBLIC_HOST/register/x/y" | grep -q 'id="root"'; then
+
+  if ! curl --fail --silent --show-error --max-time 10 \
+    "$base_url/register/x/y" | grep -q 'id="root"'; then
     echo 'Smoke check failed: nested SPA entry' >&2
     failed=1
   fi
-  if api_result=$(curl --silent --show-error --max-time 10 --resolve "$PUBLIC_HOST:80:127.0.0.1" -w '\n%{http_code}' "http://$PUBLIC_HOST/api/v1/does-not-exist"); then
+
+  if api_result=$(curl --silent --show-error --max-time 10 \
+    -w '\n%{http_code}' \
+    "$base_url/api/v1/does-not-exist"); then
+
     api_status=${api_result##*$'\n'}
     api_body=${api_result%$'\n'*}
+
     if [[ "$api_status" != 404 || "$api_body" == *'id="root"'* ]]; then
       echo 'Smoke check failed: unknown API path did not return an API 404' >&2
       failed=1
@@ -192,6 +272,7 @@ smoke() {
     echo 'Smoke check failed: unknown API path request' >&2
     failed=1
   fi
+
   return "$failed"
 }
 restore_active_release_images() {

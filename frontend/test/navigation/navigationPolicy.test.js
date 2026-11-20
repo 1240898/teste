@@ -23,7 +23,8 @@ const allModules = {
   planning: () => {},
 };
 
-// Section matrix of usWEB03.md (Table 1). Guest-only sections are excluded.
+// WEB03 Table 1 plus the AA05 Administrator-only security audit section.
+// Guest-only sections are excluded.
 const TABLE_1 = {
   GUEST: ['catalogue', 'privacyNotice'],
   CUSTOMER: ['catalogue', 'privacyNotice', 'account', 'myPrivacy'],
@@ -50,7 +51,13 @@ const TABLE_1 = {
     'kitchenConfigurations',
     'planning',
   ],
-  ADMINISTRATOR: ['catalogue', 'privacyNotice', 'account', 'users'],
+  ADMINISTRATOR: [
+    'catalogue',
+    'privacyNotice',
+    'account',
+    'users',
+    'securityAudit',
+  ],
 };
 
 // Menu the SPA renders today (getVisibleSections), with every lazy module
@@ -69,7 +76,13 @@ const ENABLED_MENU = {
     'kitchenConfigurations',
     'planning',
   ],
-  ADMINISTRATOR: ['catalogue', 'privacyNotice', 'account', 'users'],
+  ADMINISTRATOR: [
+    'catalogue',
+    'privacyNotice',
+    'account',
+    'users',
+    'securityAudit',
+  ],
 };
 
 const authFor = (role) => (role === 'GUEST' ? guest : signedIn(role));
@@ -142,6 +155,13 @@ describe('WEB03 navigation policy', () => {
     expect(getSection('privacyNotice').enabled).toBe(true);
   });
 
+  test('AA05: only Administrator can see and open the security audit section', () => {
+    expect(menuIds(signedIn('ADMINISTRATOR'))).toContain('securityAudit');
+    expect(menuIds(signedIn('MANAGER'))).not.toContain('securityAudit');
+    expect(getSection('securityAudit').roles).toEqual(['ADMINISTRATOR']);
+    expect(findSectionByPath('/admin/security-audit').id).toBe('securityAudit');
+  });
+
   test.each([
     [
       ['CUSTOMER', 'MANAGER'],
@@ -208,8 +228,9 @@ describe('WEB03 navigation policy', () => {
         ({ id }) => id,
       ),
     ).toEqual(['catalogue', 'privacyNotice', 'account', 'planning']);
-    expect(getSection('stock').enabled).toBe(false);
+    expect(getSection('myPrivacy').enabled).toBe(false);
     expect(getSection('users').enabled).toBe(true);
+    expect(getSection('stock').enabled).toBe(true);
   });
 
     test('several roles give the union of the enabled menus, in declared order', () => {
@@ -222,6 +243,7 @@ describe('WEB03 navigation policy', () => {
       'account',
       'kitchenViewer',
       'users',
+      'securityAudit',
     ]);
   });
 

@@ -1,5 +1,4 @@
 import { jest } from '@jest/globals';
-import { AppError } from '../../../src/shared/errors/AppError.js';
 import { PostgresComponentTypeImpactGuard } from '../../../src/modules/pizza-component-type-management/infrastructure/persistence/PostgresComponentTypeImpactGuard.js';
 import { PizzaComponentType } from '../../../src/modules/pizza-component-type-management/domain/model/PizzaComponentType.js';
 import {
@@ -17,68 +16,31 @@ const type = ({ min = 0, max = null } = {}) =>
   );
 
 describe('BCK07 PostgreSQL component type impact guard', () => {
-  test('checks stored predefined pizza component counts against candidate bounds', async () => {
-    const tx = {
-      query: jest.fn().mockResolvedValue({ rows: [{ invalid: false }] }),
-    };
+  test('preserves existing configurations when bounds are changed', async () => {
+    const tx = { query: jest.fn() };
     const guard = new PostgresComponentTypeImpactGuard();
 
     await expect(
       guard.assertSafeUpdate(type(), type({ max: 3 }), tx),
     ).resolves.toBeUndefined();
 
-    expect(tx.query).toHaveBeenCalledWith(
-      expect.stringMatching(
-        /product_composition_items[\s\S]*pizza_component_type_id/i,
-      ),
-      ['type-04', 0, 3],
-    );
-  });
-
-  test('returns 409 when a stored predefined pizza would exceed the new maximum', async () => {
-    const tx = {
-      query: jest.fn().mockResolvedValue({ rows: [{ invalid: true }] }),
-    };
-    const guard = new PostgresComponentTypeImpactGuard();
-
-    await expect(
-      guard.assertSafeUpdate(type(), type({ max: 0 }), tx),
-    ).rejects.toMatchObject({
-      status: 409,
-      message: expect.stringMatching(/predefined pizza/i),
-    });
-  });
-
-  test('returns 409 when a stored predefined pizza would fall below the new minimum', async () => {
-    const tx = {
-      query: jest.fn().mockResolvedValue({ rows: [{ invalid: true }] }),
-    };
-    const guard = new PostgresComponentTypeImpactGuard();
-
-    await expect(
-      guard.assertSafeUpdate(type(), type({ min: 2 }), tx),
-    ).rejects.toBeInstanceOf(AppError);
-    expect(tx.query.mock.calls[0][1]).toEqual(['type-04', 2, null]);
-  });
-
-  test('does not query BCK10 when cardinality bounds are unchanged', async () => {
-    const tx = { query: jest.fn() };
-    const guard = new PostgresComponentTypeImpactGuard();
-
-    await guard.assertSafeUpdate(type(), type(), tx);
-
     expect(tx.query).not.toHaveBeenCalled();
   });
 
-  test('preserves the existing create and removal protections', async () => {
+  test('new bounds do not block type creation', async () => {
     const tx = { query: jest.fn() };
     const guard = new PostgresComponentTypeImpactGuard();
 
     await expect(
       guard.assertSafeCreate(type({ min: 1 }), tx),
-    ).rejects.toMatchObject({
-      status: 409,
-    });
+    ).resolves.toBeUndefined();
+    expect(tx.query).not.toHaveBeenCalled();
+  });
+
+  test('allows a zero minimum and preserves mandatory-type removal protection', async () => {
+    const tx = { query: jest.fn() };
+    const guard = new PostgresComponentTypeImpactGuard();
+
     await expect(guard.assertSafeCreate(type(), tx)).resolves.toBeUndefined();
     await expect(
       guard.assertSafeRemoval(

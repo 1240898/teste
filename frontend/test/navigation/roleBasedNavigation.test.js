@@ -68,6 +68,8 @@ function mockBackend({ roles, me, business = () => response(200, {}) } = {}) {
       if (me) return me(backend.meCalls);
       return response(200, { ...user, roles: backend.roles });
     }
+    if (path === '/security/audit-logs')
+      return response(200, { items: [], total: 0, limit: 25, offset: 0 });
     if (path.startsWith('/fixture/')) {
       backend.businessCalls += 1;
       return business(path);
@@ -168,7 +170,10 @@ describe('WEB03 role-based navigation (SPA)', () => {
         '/planning',
       ],
     ],
-    [['ADMINISTRATOR'], ['/account', ...PUBLIC_LINKS, '/admin/users']],
+    [
+      ['ADMINISTRATOR'],
+      ['/account', ...PUBLIC_LINKS, '/admin/users', '/admin/security-audit'],
+    ],
     [
       ['CUSTOMER', 'MANAGER'],
       [
@@ -181,12 +186,47 @@ describe('WEB03 role-based navigation (SPA)', () => {
     ],
     [
       ['ADMINISTRATOR', 'EMPLOYEE'],
-      ['/account', ...PUBLIC_LINKS, '/kitchen/viewer', '/admin/users'],
+      [
+        '/account',
+        ...PUBLIC_LINKS,
+        '/kitchen/viewer',
+        '/admin/users',
+        '/admin/security-audit',
+      ],
     ],
   ])('FT01: roles %j see only %j in the menu', async (roles, expected) => {
     mockBackend({ roles });
     await open('/', allModules);
     expect(menuLinks()).toEqual(expected);
+  });
+
+  test.each([
+    ['ADMINISTRATOR', true],
+    ['MANAGER', false],
+    ['EMPLOYEE', false],
+    ['CUSTOMER', false],
+  ])('FT-AA05: direct audit URL access for %s is %s', async (role, allowed) => {
+    mockBackend({ roles: [role] });
+    await open('/admin/security-audit');
+    await settle();
+
+    if (allowed) {
+      expect(main()).toContain('Security audit logs');
+      expect(backend.businessCalls).toBe(0);
+      expect(
+        fetch.mock.calls.some(([url]) =>
+          new URL(url).pathname.endsWith('/security/audit-logs'),
+        ),
+      ).toBe(true);
+    } else {
+      expect(main()).toContain('Access denied');
+      expect(main()).not.toContain('Security audit logs');
+      expect(
+        fetch.mock.calls.some(([url]) =>
+          new URL(url).pathname.endsWith('/security/audit-logs'),
+        ),
+      ).toBe(false);
+    }
   });
 
   test('FT02: a role removed elsewhere disappears from the menu when the window regains focus, without reload', async () => {

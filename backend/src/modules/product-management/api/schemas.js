@@ -29,7 +29,9 @@ const booleanFlag = Joi.string().valid('true', 'false');
 
 export const schemas = {
   create: body,
-  update: body,
+  update: body.append({
+    expectedUpdatedAt: Joi.string().isoDate().required(),
+  }),
   // Query strings are validated here (shape) and converted by the service.
   search: Joi.object({
     name: Joi.string().allow('').max(100),

@@ -1,0 +1,101 @@
+@startuml sequence_diagram_lighting_lifecycle
+autonumber
+skinparam shadowing true
+skinparam backgroundColor white
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - VIS05 Viewer Lighting Lifecycle
+
+actor "Manager / Staff" as User
+participant "Protected module slot\n(WEB01 / WEB03)" as Slot
+participant KitchenViewer as Viewer
+participant "WEB06 API /\nasset delivery" as API
+participant ViewerEngine as Engine
+participant "VIS02 / VIS03\nSceneModule(s)" as Layout
+participant KitchenLightingModule as Lighting
+participant "buildEnvironmentMap" as Environment
+participant "RoomEnvironment /\nPMREMGenerator" as Generation
+participant WebGLRenderer as Renderer
+
+User -> Slot : Open /kitchen/viewer
+alt Missing session or required role
+    Slot --> User : Existing sign-in / access flow
+else MANAGER or EMPLOYEE
+    Slot -> Viewer : Mount viewer with request and module factories
+    opt WebGL is available
+        Viewer -> API : Read active configuration and preload its assets
+        API --> Viewer : Configuration + assets, or existing load outcome
+    end
+    alt Unsupported, denied, empty, invalid or load failure
+        Viewer --> User : Existing VIS01 state / shell handling
+    else Current attempt has a valid layout and assets
+        Viewer -> Engine : load(configuration, assets, factories, signal)
+        Engine -> Layout : build(context)
+        alt Geometry builds successfully
+            Layout --> Engine : Scene geometry and mesh shadow flags
+            Engine -> Lighting : build(context)
+            Lighting -> Lighting : Fit world bounds; attach lights and target;\nenable PCF and mark spotlight shadow dirty
+            Lighting -> Environment : createEnvironmentMap(renderer, disposeResource)
+            Environment -> Generation : Create room and generator
+            Environment -> Generation : fromScene(room, 0, 0.1, 100, {size: 256})
+            Generation -> Renderer : Capture room and filter radiance once
+            alt Environment generation succeeds
+                Generation --> Environment : WebGLCubeRenderTarget
+                Environment -> Generation : Release temporary room and generator (finally)
+                Environment --> Lighting : Owned environment target
+                Lighting -> Lighting : Snapshot previous environment and intensity;\nset scene.environment = target.texture, intensity = 1
+            else Environment generation throws
+                Generation --> Environment : Exception
+                Environment -> Generation : Release temporary room and generator (finally)
+                Environment --> Lighting : Rethrow to existing build failure path
+            end
+            Lighting --> Engine : Complete, cancelled or build exception
+        else Geometry build fails or is cancelled
+            Layout --> Engine : Build exception or cancellation
+        end
+        alt A scene module throws before cancellation
+            Engine -> Engine : dispose()
+            Engine -> Lighting : dispose() if created
+            Engine --> Viewer : ViewerEngineError (build)
+            Viewer --> User : Failed canvas removed; Retry
+        else Build is aborted
+            Engine -> Engine : dispose()
+            Engine -> Lighting : dispose() if created
+            Engine --> Viewer : false
+        else All modules built
+            Engine --> Viewer : true
+            Viewer -> Engine : start()
+            Engine -> Renderer : render(scene, camera)
+            alt First paint succeeds
+                Renderer --> Engine : Initial shadow map and environment-lit frame
+                Engine --> Viewer : true
+                Viewer --> User : Ready
+                loop Frame updates while viewer is active
+                    opt Camera input (VIS07)
+                        User -> Viewer : Orbit, pan or dolly
+                    end
+                    Engine -> Lighting : update(deltaSeconds)
+                    Engine -> Renderer : render(scene, camera)
+                    Renderer --> Engine : Frame reusing environment and shadow maps, or render exception
+                end
+            else First paint fails
+                Renderer --> Engine : Render exception
+            end
+            opt Reload, exit, role loss or render/context failure
+                alt Reload or unmount
+                    Viewer -> Engine : dispose()
+                else Render or context failure
+                    Engine -> Engine : dispose()
+                end
+                Engine -> Lighting : dispose()
+                Lighting -> Lighting : Restore prior environment and intensity if still owned;\ndetach group; release spotlight and environment target\nvia context disposer; clear owned references
+                Engine -> Renderer : dispose()
+                opt Render or context failure
+                    Engine --> Viewer : Existing fatal error callback
+                    Viewer --> User : Failed canvas removed; Retry
+                end
+            end
+        end
+    end
+end
+@enduml

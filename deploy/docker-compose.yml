@@ -51,6 +51,10 @@ services:
         condition: service_healthy
     ports:
       - "2228:8080"
+    volumes:
+      # SYS02: approved networks list (read-only) and denied-access log
+      - /etc/laprizza/access:/etc/nginx/access:ro
+      - /var/log/laprizza/access:/var/log/nginx/sys02
     networks:
       - backend
     healthcheck:
@@ -81,3 +85,9 @@ networks:
   backend:
     name: laprizza-backend
     driver: bridge
+    # SYS02: fixed subnet, so the gateway used by the deployment smoke checks
+    # (172.24.0.1) always matches the entry in allowed-networks.conf.
+    ipam:
+      config:
+        - subnet: 172.24.0.0/16
+          gateway: 172.24.0.1

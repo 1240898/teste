@@ -46,6 +46,10 @@ import {
   cataloguePaths,
   catalogueSchemas,
 } from '../../modules/product-catalogue-and-information/api/openapi.js';
+import {
+  securityAuditPaths,
+  securityAuditSchemas,
+} from '../../modules/authorization-enforcement/api/openapi.js';
 
 import {
   kitchenConfigurationPaths,
@@ -64,7 +68,7 @@ export const openApiSpec = {
     title: 'LaPrizza API',
     version,
     description:
-      'LaPrizza backend API: health, user management, customers, authentication, product catalogue, Pizza Component Types, product categories, Pizza Sizes, component-size configurations, stock management, kitchen configuration and predefined pizzas.',
+      'LaPrizza backend API: health, user management, customers, authentication, product catalogue, Pizza Component Types, product categories, Pizza Sizes, component-size configurations, stock management, kitchen configuration, predefined pizzas and Administrator-only security audit logs.',
   },
   servers: [
     {
@@ -103,6 +107,7 @@ export const openApiSpec = {
       ...predefinedPizzaSchemas,
       ...catalogueSchemas,
       ...kitchenConfigurationSchemas,
+      ...securityAuditSchemas,
     },
   },
   paths: {
@@ -118,6 +123,7 @@ export const openApiSpec = {
     ...predefinedPizzaPaths,
     ...cataloguePaths,
     ...kitchenConfigurationPaths,
+    ...securityAuditPaths,
 
     '/health': {
       get: {

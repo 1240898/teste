@@ -1,0 +1,119 @@
+@startuml LaPrizzaDomainModel
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam classAttributeIconSize 0
+hide methods
+
+title Domain Model Excerpt - VIS07 Perspective Camera Interaction
+
+' -----------------------------------------------------------------------------
+' VIS07 introduces NO new domain concept. The camera (position, target, limits)
+' is presentation state of the SPA. Only the parts of the WEB06 aggregate that
+' the camera reads are shown.
+' -----------------------------------------------------------------------------
+package "Kitchen Configuration Aggregate (WEB06)" <<Rectangle>> {
+
+    class KitchenConfiguration <<entity>> <<aggregateRoot>> {
+        + version : Integer
+        + activatedAt : DateTime [0..1]
+    }
+    note right of KitchenConfiguration
+        Only the ACTIVE configuration is shown
+        by the viewer (VIS01) and explored with
+        the camera (VIS07).
+    end note
+
+    class KitchenConfigurationId <<vo>> {
+        + value : String
+    }
+
+    enum ConfigurationStatus <<enum>> {
+        ACTIVE
+        INACTIVE
+    }
+
+    class KitchenLayout <<vo>> {
+    }
+    note left of KitchenLayout
+        Coordinate system used by the camera:
+        metres; Y-up; origin (0, 0, 0) at the
+        CENTRE OF THE KITCHEN FLOOR (= initial
+        camera target, VIS07 AC 1); -Z = NORTH.
+    end note
+
+    class KitchenDimensions <<vo>> {
+        + width : Decimal
+        + depth : Decimal
+        + height : Decimal
+    }
+    note bottom of KitchenDimensions
+        Read by VIS07 to derive:
+        - target bounds: x in [-width/2, width/2],
+          z in [-depth/2, depth/2], y = 0
+        - fit / max distance and far plane
+        (width, depth 2..100 m; height 2..10 m,
+        validated by WEB06)
+    end note
+
+    class AssemblyLine <<vo>> {
+        + wall : KitchenWall
+    }
+    note bottom of AssemblyLine
+        Read by VIS07: the initial camera is
+        placed on the side OPPOSITE this wall.
+    end note
+
+    enum KitchenWall <<enum>> {
+        NORTH
+        SOUTH
+        EAST
+        WEST
+    }
+
+    class SceneElement <<entity>> {
+        + elementId : String
+    }
+    note right of SceneElement
+        Objects inspected with the camera
+        (VIS02 equipment, VIS03 assembly line).
+        Not read by VIS07.
+    end note
+
+    KitchenConfiguration "1" *-- "1" KitchenConfigurationId : identified by >
+    KitchenConfiguration "1" --> "1" ConfigurationStatus : current status >
+    KitchenConfiguration "1" *-- "1" KitchenLayout : content >
+    KitchenLayout "1" *-- "1" KitchenDimensions : has >
+    KitchenLayout "1" *-- "1" AssemblyLine : has >
+    AssemblyLine "1" --> "1" KitchenWall : placed on >
+    KitchenLayout "1" *-- "2..300" SceneElement : contains >
+}
+
+' -----------------------------------------------------------------------------
+' USER AGGREGATE (existing, AA03) - only the part that decides viewer access
+' -----------------------------------------------------------------------------
+package "User Aggregate" <<Rectangle>> {
+
+    class User <<entity>> <<aggregateRoot>> {
+        + active : boolean
+    }
+
+    enum UserRole <<enum>> {
+        ADMINISTRATOR
+        MANAGER
+        EMPLOYEE
+        CUSTOMER
+    }
+    note right of UserRole
+        Table 1 / WEB03 section "kitchen-viewer":
+        - MANAGER and EMPLOYEE consult the viewer
+          and use the camera in the same way
+        - CUSTOMER, ADMINISTRATOR (alone),
+          Guest: no access
+    end note
+
+    User "1" --> "1..*" UserRole : has >
+}
+
+User ..> KitchenConfiguration : explores the ACTIVE one\nin the 3D viewer >
+
+@enduml

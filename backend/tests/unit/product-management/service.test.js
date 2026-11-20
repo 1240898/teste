@@ -152,9 +152,13 @@ describe('BCK05 ProductService - update', () => {
   test('replaces editable data but preserves ID and active state', async () => {
     const created = await service.createProduct(sellable());
     await service.deactivateProduct(created.id);
+    const current = await service.getProductById(created.id);
     const updated = await service.updateProduct(
       created.id,
-      sellable({ name: 'Coke Zero', allergenIds: [1], basePrice: 0 }),
+      sellable({
+        name: 'Coke Zero', allergenIds: [1], basePrice: 0,
+        expectedUpdatedAt: current.updatedAt,
+      }),
     );
     expect(updated).toMatchObject({
       id: created.id,
@@ -171,6 +175,7 @@ describe('BCK05 ProductService - update', () => {
     const updated = await service.updateProduct(
       created.id,
       predefined({
+        expectedUpdatedAt: created.updatedAt,
         compositionItems: [
           { productId: 'PROD-00001', quantity: 4 },
           { productId: 'PROD-00001', quantity: 1 },
@@ -194,7 +199,10 @@ describe('BCK05 ProductService - update', () => {
       await status(
         service.updateProduct(
           first.id,
-          predefined({ compositionItems: [{ productId: second.id, quantity: 1 }] }),
+          predefined({
+            expectedUpdatedAt: first.updatedAt,
+            compositionItems: [{ productId: second.id, quantity: 1 }],
+          }),
         ),
       ),
     ).toBe(409);
@@ -212,7 +220,10 @@ describe('BCK05 ProductService - update', () => {
       await status(
         service.updateProduct(
           created.id,
-          sellable({ name: 'Mozzarella Cheese', basePrice: 2 }),
+          sellable({
+            name: 'Mozzarella Cheese', basePrice: 2,
+            expectedUpdatedAt: created.updatedAt,
+          }),
         ),
       ),
     ).toBe(409);

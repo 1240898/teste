@@ -18,6 +18,7 @@ import { createPizzaSizeModule } from './src/modules/pizza-size-management/index
 import { createPizzaComponentConfigurationModule } from './src/modules/pizza-component-configuration/index.js';
 import { createCatalogueModule } from './src/modules/product-catalogue-and-information/index.js';
 import { createKitchenConfigurationModule } from './src/modules/kitchen-configuration-management/index.js';
+import { createAuthorizationEnforcementModule } from './src/modules/authorization-enforcement/index.js';
 
 let database;
 try {
@@ -29,6 +30,10 @@ try {
   const userModule = createUserModule({ database, security, externalIdentity });
   const { userService } = userModule;
   const authMiddleware = new AuthMiddleware(userService);
+  const authorizationModule = createAuthorizationEnforcementModule({
+    database,
+    userService,
+  });
 
   const categoryModule = createProductCategoryModule({ database, userService });
   const allergenModule = createAllergenModule({ database, userService });
@@ -81,6 +86,8 @@ try {
     predefinedPizzaModule,
     catalogueModule,
     kitchenConfigurationModule,
+    authorizationModule,
+    securityLogger: authorizationModule.securityLogger,
   });
 
   app.locals.database = database;
@@ -97,6 +104,7 @@ try {
     deadline.unref();
     server.close(async () => {
       try {
+        await authorizationModule.securityLogger.flush();
         await database.close();
       } catch {
         process.exitCode = 1;
@@ -112,15 +120,12 @@ try {
   });
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);
-} catch (error){
+} catch (error) {
+  console.error('Startup cause:', error.message);
   console.error(
     'API startup failed. Check security configuration, database configuration and availability.',
   );
-  console.error('Startup error:', {
-    name: error?.name,
-    code: error?.code,
-    message: error?.message,
-  });
   await database?.close();
   process.exitCode = 1;
 }
+

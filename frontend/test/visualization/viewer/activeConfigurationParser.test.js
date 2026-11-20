@@ -44,7 +44,7 @@ test.each([
     (body) => (body.content.kitchen.dimensions.depth = Infinity),
   ],
   ['malformed elements', (body) => (body.content.elements = {})],
-  ['missing model', (body) => delete body.assets['AST-MDL-OVEN-DOME-02']],
+  ['missing model', (body) => delete body.assets['AST-MDL-OVEN-LINE-01']],
   [
     'wrong floor map kind',
     (body) =>

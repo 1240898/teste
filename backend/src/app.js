@@ -8,6 +8,14 @@ import { errorHandler, notFoundHandler } from './shared/errors/errorHandler.js';
 import healthRoutes from './shared/health/routes.js';
 import { requestLogger } from './shared/logging/requestLogger.js';
 import { openApiSpec } from './shared/openapi/spec.js';
+import { AuthorizationAuditMiddleware } from './modules/authorization-enforcement/api/middlewares/AuthorizationAuditMiddleware.js';
+import { SecurityAuditLogger } from './modules/authorization-enforcement/infrastructure/SecurityAuditLogger.js';
+
+const noOpSecurityLogger = Object.freeze({
+  async record() {},
+  async flush() {},
+  async stop() {},
+});
 
 export function createApp({
   userModule,
@@ -22,6 +30,10 @@ export function createApp({
   predefinedPizzaModule,
   catalogueModule,
   kitchenConfigurationModule,
+  authorizationModule,
+  securityLogger = config.isTest
+    ? noOpSecurityLogger
+    : new SecurityAuditLogger(),
 } = {}) {
   const app = express();
 
@@ -36,6 +48,7 @@ export function createApp({
     res.set('Cache-Control', 'no-store');
     next();
   });
+  apiV1.use(new AuthorizationAuditMiddleware(securityLogger).auditDenials);
   apiV1.use('/health', healthRoutes);
   registerModules(apiV1, {
     userModule,
@@ -50,6 +63,7 @@ export function createApp({
     predefinedPizzaModule,
     catalogueModule,
     kitchenConfigurationModule,
+    authorizationModule,
   });
 
   app.use('/api/v1', apiV1);

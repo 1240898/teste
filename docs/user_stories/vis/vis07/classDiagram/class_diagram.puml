@@ -1,0 +1,292 @@
+@startuml class_diagram
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam linetype ortho
+
+title Class Diagram (Design) - VIS07 Perspective Camera Interaction
+
+' -----------------------------------------------------------------------------
+' VIS01 / VIS02 - foundation (reused; KitchenViewer extended)
+' -----------------------------------------------------------------------------
+package "Front-End (SPA) - visualization (VIS01 / VIS02)" <<Rectangle>> {
+
+    class KitchenViewer <<component>> {
+        + render(): ReactNode
+    }
+    note right of KitchenViewer
+        Extended by VIS07 (ALN-3): "Reset view" button
+        next to "Reload", only in state "ready".
+        onClick: canvas.dispatchEvent(
+          new Event("kitchen-viewer:reset-view"))
+        Holds no reference to the camera or modules.
+    end note
+
+    class ViewerEngine {
+        - camera: PerspectiveCamera
+        - modules: SceneModule[]
+        + load(configuration, assets, factories, signal): Promise<boolean>
+        + start(): boolean
+        + resize(width, height): void
+        + dispose(): void
+        - positionCamera(configuration): void
+        - frame(timeMs: number): void
+    }
+    note bottom of ViewerEngine
+        Reused unchanged. positionCamera() gives a default
+        framing, replaced by VIS07 at build time (ALN-3).
+        resize() keeps camera.aspect = canvas w / h
+        (VIS07 detects the change on the next frame).
+        frame(): module.update(dt), then render.
+        dispose(): modules in reverse order.
+    end note
+
+    interface SceneModule {
+        + name: string
+        + build(context: SceneContext): void | Promise<void>
+        + update(deltaSeconds: number): void
+        + dispose(): void
+    }
+
+    class SceneContext <<DTO>> {
+        + camera: PerspectiveCamera
+        + domElement: HTMLCanvasElement
+        + configuration: ActiveKitchenConfigurationDTO
+        + signal: AbortSignal
+    }
+
+    class defaultSceneModules <<module>> {
+        + defaultSceneModules: SceneModuleFactory[]
+    }
+    note right of defaultSceneModules
+        [ createKitchenLayoutModule   (VIS02),
+          createBaseLightingModule    (VIS01 / VIS05),
+          createCameraControlsModule  (VIS07, LAST) ]
+    end note
+
+    class KitchenLayoutModule <<factory: createKitchenLayoutModule>>
+    note bottom of KitchenLayoutModule
+        VIS02 BR 12: never touches the camera.
+    end note
+
+    class BaseLightingModule <<factory: createBaseLightingModule>>
+
+    class CameraControlsModule <<factory: createCameraControlsModule>> {
+        + name: "camera-controls"
+        - controller: CameraController | undefined
+        - disposed: boolean
+        + build(context: SceneContext): void
+        + update(deltaSeconds: number): void
+        + dispose(): void
+    }
+    note bottom of CameraControlsModule
+        scene/modules/CameraControlsModule.js (VIS07)
+        Adapter to the VIS01 lifecycle (D9):
+        build(): return if signal aborted or disposed;
+          controller = createCameraController(camera,
+            domElement, configuration.content)
+        update(): controller.update()  (before render)
+        dispose(): controller.dispose(); idempotent.
+    end note
+}
+
+' -----------------------------------------------------------------------------
+' VIS07 - camera package
+' -----------------------------------------------------------------------------
+package "Front-End (SPA) - visualization/scene/camera (VIS07)" <<Rectangle>> {
+
+    class CameraController {
+        - camera: PerspectiveCamera
+        - controls: OrbitControls
+        - dimensions: { width, depth, height }
+        - wall: KitchenWall
+        - limits: CameraLimits
+        - initialView: InitialView
+        - lastAspect: number
+        - disposed: boolean
+        + createCameraController(camera, domElement, content, { createControls? }): CameraController
+        + applyInitialView(): void
+        + resetView(): void
+        + update(): void
+        + dispose(): void
+        - syncAspect(): void
+        - applyLimits(): void
+        - flushMomentum(): void
+        - onResetView(): void
+    }
+    note right of CameraController
+        scene/camera/CameraController.js - SINGLE writer of
+        the camera position and target (BR 8). Never React state.
+        create:
+        - lastAspect = camera.aspect
+        - limits = computeCameraLimits(dimensions, lastAspect, wall)
+        - initialView = computeInitialView(limits, wall)
+        - camera.fov = 50; near = 0.05; far = limits.far
+        - controls = createControls(camera, domElement)
+        - mouseButtons = { LEFT: PAN, MIDDLE: DOLLY, RIGHT: ROTATE }
+        - min/maxDistance, polar [5, 85] deg, azimuth free
+        - damping 0.08; speeds 0.5 / 0.8 / 0.6
+        - screenSpacePanning = false; zoomToCursor = false
+        - listen "kitchen-viewer:reset-view" on canvas
+          (no "change" listener: limits are applied per frame)
+        - applyInitialView()
+        update() - every frame, before render (D4, D6):
+        1. syncAspect(): if camera.aspect != lastAspect ->
+           recompute limits, applyLimits(); if distance >
+           maxDistance, move camera closer along the SAME
+           direction (view preserved)
+        2. controls.update()  (damping)
+        3. clampTarget(target, position, bounds)
+        4. if clamped: flushMomentum(); clampTarget() again
+           (reversing the drag responds immediately)
+        flushMomentum(): enableDamping = false; controls.update();
+        enableDamping = true  (discards residual inertia).
+        applyInitialView() / resetView(): flushMomentum();
+        set initial position / target; controls.update()
+        (native controls.reset() NOT used: keeps inertia, D10).
+        dispose(): remove reset-view listener;
+        controls.dispose(); idempotent.
+    end note
+
+    class cameraSettings <<module>> {
+        + FOV_DEGREES = 50
+        + NEAR = 0.05
+        + MIN_DISTANCE = 0.5
+        + MAX_DISTANCE_FACTOR = 1.5
+        + FIT_MARGIN = 1.05
+        + MIN_POLAR_DEG = 5
+        + MAX_POLAR_DEG = 85
+        + INITIAL_POLAR_DEG = 55
+        + ROTATE_SPEED = 0.5
+        + PAN_SPEED = 0.8
+        + ZOOM_SPEED = 0.6
+        + DAMPING_FACTOR = 0.08
+        + RESET_VIEW_EVENT = "kitchen-viewer:reset-view"
+        + WALL_AZIMUTH_DEGREES
+    }
+
+    class cameraLimits <<module>> {
+        + computeFitDistance(dimensions, aspect: number, azimuth: number, polar: number): number
+        + computeCameraLimits(dimensions: { width, depth, height }, aspect: number, wall?: KitchenWall): CameraLimits
+        + computeInitialView(limits: CameraLimits, wall?: KitchenWall): InitialView
+    }
+    note bottom of cameraLimits
+        scene/camera/cameraLimits.js - pure (no Three.js objects).
+        8 corners c = (+-w/2, 0 | h, +-d/2); u = unit vector
+        target -> camera (initial azimuth, polar 55 deg);
+        right / up = camera axes; vFov = 50 deg,
+        hFov = 2 atan(tan(vFov/2) x aspect).
+        For every corner:
+          D >= c.u + |c.right| / tan(hFov/2)
+          D >= c.u + |c.up|    / tan(vFov/2)
+        fitDistance = FIT_MARGIN x max(D)
+        maxDistance = 1.5 x fitDistance
+        far = maxDistance + sqrt(w^2 + d^2 + h^2)
+        targetBounds = x in [-w/2, w/2], z in [-d/2, d/2]
+        Initial azimuth: NORTH 0, SOUTH 180,
+        EAST -90, WEST 90 deg (missing wall: 0)
+    end note
+
+    class clampTarget <<module>> {
+        + clampTarget(target, cameraPosition, bounds): boolean
+    }
+    note bottom of clampTarget
+        scene/camera/clampTarget.js - pure.
+        Clamps target x/z; moves the camera by the
+        same correction (no jump, no jitter, D4).
+        Returns true when it clamped.
+        Mutates in place; allocates nothing.
+    end note
+
+    class CameraLimits <<DTO>> {
+        + aspect: number
+        + fitDistance: number
+        + minDistance: number
+        + maxDistance: number
+        + near: number
+        + far: number
+        + targetBounds: TargetBounds
+    }
+
+    class TargetBounds <<DTO>> {
+        + minX: number
+        + maxX: number
+        + minZ: number
+        + maxZ: number
+    }
+
+    class InitialView <<DTO>> {
+        + target: { x: 0, y: 0, z: 0 }
+        + azimuth: number
+        + polar: number
+        + distance: number
+        + position: { x, y, z }
+    }
+
+    enum KitchenWall <<WEB06>> {
+        NORTH
+        SOUTH
+        EAST
+        WEST
+    }
+}
+
+' -----------------------------------------------------------------------------
+' THIRD-PARTY LIBRARY
+' -----------------------------------------------------------------------------
+package "three (npm)" <<Rectangle>> {
+    class PerspectiveCamera {
+        + fov / aspect / near / far
+        + updateProjectionMatrix(): void
+    }
+    class Vector3
+    enum MOUSE {
+        PAN
+        DOLLY
+        ROTATE
+    }
+    class OrbitControls <<three/addons/controls>> {
+        + target: Vector3
+        + mouseButtons: { LEFT, MIDDLE, RIGHT }
+        + minDistance / maxDistance
+        + minPolarAngle / maxPolarAngle
+        + enableDamping / dampingFactor
+        + screenSpacePanning / zoomToCursor
+        + update(): boolean
+        + dispose(): void
+    }
+}
+
+' -----------------------------------------------------------------------------
+' RELATIONSHIPS
+' -----------------------------------------------------------------------------
+CameraControlsModule ..|> SceneModule
+KitchenLayoutModule ..|> SceneModule
+BaseLightingModule ..|> SceneModule
+defaultSceneModules ..> KitchenLayoutModule : first factory >
+defaultSceneModules ..> BaseLightingModule : second factory >
+defaultSceneModules ..> CameraControlsModule : last factory >
+ViewerEngine "1" o-- "0..*" SceneModule : builds, updates, disposes >
+ViewerEngine ..> SceneContext : creates >
+ViewerEngine --> PerspectiveCamera : aspect on resize; render >
+KitchenViewer --> ViewerEngine : create / load / start / dispose >
+KitchenViewer ..> cameraSettings : RESET_VIEW_EVENT >
+
+CameraControlsModule ..> SceneContext : reads camera, domElement,\nconfiguration, signal >
+CameraControlsModule "1" *-- "0..1" CameraController : creates / updates / disposes >
+CameraController --> cameraLimits : computeCameraLimits()\ncomputeInitialView()\n(at create and on aspect change) >
+CameraController --> clampTarget : every frame >
+CameraController --> cameraSettings : uses >
+CameraController --> OrbitControls : creates / configures / disposes >
+CameraController --> PerspectiveCamera : fov, near, far, position;\nreads aspect >
+CameraController ..> MOUSE : maps buttons >
+cameraLimits ..> CameraLimits : returns >
+cameraLimits ..> InitialView : returns >
+cameraLimits ..> KitchenWall : initial azimuth >
+cameraLimits ..> cameraSettings : uses >
+CameraLimits *-- TargetBounds
+clampTarget ..> TargetBounds
+clampTarget ..> Vector3 : mutates >
+OrbitControls --> PerspectiveCamera : moves >
+
+@enduml

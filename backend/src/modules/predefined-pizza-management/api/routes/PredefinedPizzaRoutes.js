@@ -21,7 +21,7 @@ export class PredefinedPizzaRoutes {
   setupRoutes() {
     const router = Router();
     const auth = this.authMiddleware.verifyToken;
-    const manager = RoleMiddleware.requireRole('MANAGER');
+    const manager = RoleMiddleware.requireOperation('predefinedPizzas.manage');
     const controller = this.controller;
 
     router.post(

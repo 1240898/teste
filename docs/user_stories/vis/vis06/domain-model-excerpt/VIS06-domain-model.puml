@@ -1,0 +1,80 @@
+@startuml VIS06-domain-model
+skinparam packageStyle rectangle
+skinparam backgroundColor White
+skinparam classAttributeIconSize 0
+hide empty methods
+left to right direction
+
+title VIS06 - Interactive Light Controls
+
+package "User Aggregate" <<Rectangle>> {
+    class User <<entity>> <<aggregateRoot>> {
+        + active : boolean
+    }
+
+    class UserId <<vo>> {
+        + value : string
+    }
+
+    enum UserRole <<enum>> {
+        ADMINISTRATOR
+        MANAGER
+        EMPLOYEE
+        CUSTOMER
+    }
+
+    User "1" *-- "1" UserId : identified by >
+    User "1" --> "0..*" UserRole : assigned >
+}
+
+package "Kitchen Configuration Aggregate" <<Rectangle>> {
+    class KitchenConfiguration <<entity>> <<aggregateRoot>> {
+        + version : Integer
+        + createdAt : DateTime
+        + updatedAt : DateTime
+        + activatedAt : DateTime [0..1]
+    }
+
+    class KitchenConfigurationId <<vo>> {
+        + value : String
+    }
+
+    class ConfigurationName <<vo>> {
+        + value : String
+    }
+
+    enum ConfigurationStatus <<enum>> {
+        ACTIVE
+        INACTIVE
+    }
+
+    class KitchenLayout <<vo>> {
+    }
+
+    class KitchenDimensions <<vo>> {
+        + width : Decimal
+        + depth : Decimal
+        + height : Decimal
+    }
+
+    class SceneElement <<entity>> {
+        + elementId : String
+        + name : String [0..1]
+    }
+
+    enum ElementCategory <<enum>> {
+        EQUIPMENT
+        ASSEMBLY_LINE
+    }
+
+    KitchenConfiguration "1" *-- "1" KitchenConfigurationId : identified by >
+    KitchenConfiguration "1" *-- "1" ConfigurationName : has >
+    KitchenConfiguration "1" --> "1" ConfigurationStatus : current status >
+    KitchenConfiguration "1" *-- "1" KitchenLayout : content >
+    KitchenLayout "1" *-- "1" KitchenDimensions : has >
+    KitchenLayout "1" *-- "2..300" SceneElement : contains >
+    SceneElement "1" --> "1" ElementCategory : belongs to >
+}
+
+User ..> KitchenConfiguration : consults ACTIVE\n(MANAGER / EMPLOYEE) >
+@enduml

@@ -145,6 +145,13 @@ export const SECTIONS = Object.freeze([
     group: SectionGroup.RESTAURANT_MANAGEMENT,
     roles: ['MANAGER', 'EMPLOYEE'],
     owner: 'WEB05',
+    enabled: true,
+    module: true,
+    childPaths: [
+      'new',
+      ':productId/edit',
+      ':productId/component-configurations',
+    ],
     children: [
       {
         id: 'productsEdit',
@@ -178,6 +185,8 @@ export const SECTIONS = Object.freeze([
       group: SectionGroup.RESTAURANT_MANAGEMENT,
       roles: MANAGER,
       owner: 'WEB05',
+      enabled: true,
+      module: true,
     }),
   ),
   ...moduleRoutes.map(({ id, path, labelKey, roles, childPaths }) =>
@@ -199,6 +208,15 @@ export const SECTIONS = Object.freeze([
     group: SectionGroup.ADMINISTRATION,
     roles: ['ADMINISTRATOR'],
     owner: 'AA06',
+    enabled: true,
+  }),
+  section({
+    id: 'securityAudit',
+    path: '/admin/security-audit',
+    labelKey: 'securityAudit',
+    group: SectionGroup.ADMINISTRATION,
+    roles: ['ADMINISTRATOR'],
+    owner: 'AA05',
     enabled: true,
   }),
 ]);

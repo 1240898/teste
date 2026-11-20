@@ -78,12 +78,30 @@ export const productSchemas = {
   ProductRequest: object(
     editable,
   ),
+  ProductUpdateRequest: object({
+    ...editable,
+    expectedUpdatedAt: {
+      type: 'string',
+      format: 'date-time',
+      description: 'updatedAt value returned when the product was loaded for editing.',
+      example: '2026-11-17T09:30:00.000Z',
+    },
+  }),
   ProductResponse: object({
     id: productIdSchema,
     ...editable,
     isActive: { type: 'boolean', example: true },
     createdAt: { type: 'string', format: 'date-time' },
     updatedAt: { type: 'string', format: 'date-time' },
+  }),
+  PublicProductResponse: object({
+    id: productIdSchema,
+    name: editable.name,
+    description: editable.description,
+    categoryId: editable.categoryId,
+    allergenIds: editable.allergenIds,
+    pricingMode: editable.pricingMode,
+    basePrice: editable.basePrice,
   }),
 };
 
@@ -93,6 +111,7 @@ const descriptions = {
   403: 'Role not allowed',
   404: 'Product, category, pizza component type or allergen not found',
   409: 'The change would invalidate existing references or create a product composition cycle',
+  412: 'The product changed after it was loaded; reload and review before saving',
   413: 'Request body too large',
   500: 'Internal server error; implementation details are withheld',
 };
@@ -116,14 +135,24 @@ const flag = (name) =>
 function operation(
   operationId,
   summary,
-  { input, status = 200, output, errors = [], id = false, parameters = [] } = {},
+  {
+    input,
+    status = 200,
+    output,
+    errors = [],
+    id = false,
+    parameters = [],
+    publicAccess = false,
+  } = {},
 ) {
   const allParameters = [...(id ? [idParameter] : []), ...parameters];
   return {
     operationId,
     summary,
     tags: ['Products'],
-    security: [{ bearerAuth: [] }, { accessToken: [] }],
+    security: publicAccess
+      ? []
+      : [{ bearerAuth: [] }, { accessToken: [] }],
     ...(input
       ? { requestBody: { required: true, content: json(ref(input)) } }
       : {}),
@@ -163,8 +192,9 @@ function operation(
 
 export const productPaths = {
   '/products': {
-    get: operation('listProducts', 'Search / filter products (Manager, Employee)', {
-      output: { type: 'array', items: ref('ProductResponse') },
+    get: operation('listProducts', 'Public product information (all roles)', {
+      publicAccess: true,
+      output: { type: 'array', items: ref('PublicProductResponse') },
       parameters: [
         query(
           'name',
@@ -196,9 +226,10 @@ export const productPaths = {
     }),
   },
   '/products/{id}': {
-    get: operation('getProduct', 'Get a product (Manager, Employee)', {
+    get: operation('getProduct', 'Get public product information (all roles)', {
+      publicAccess: true,
       id: true,
-      output: ref('ProductResponse'),
+      output: ref('PublicProductResponse'),
       errors: [400, 404],
     }),
     put: operation(
@@ -206,9 +237,9 @@ export const productPaths = {
       'Replace the editable state of a product (Manager)',
       {
         id: true,
-        input: 'ProductRequest',
+        input: 'ProductUpdateRequest',
         output: ref('ProductResponse'),
-        errors: [400, 404, 409, 413],
+        errors: [400, 404, 409, 412, 413],
       },
     ),
     delete: operation(

@@ -1,0 +1,109 @@
+@startuml class_diagram
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing false
+skinparam backgroundColor white
+
+title VIS06 – Light controls
+
+package "SPA presentation" {
+  class ProtectedRoute <<existing React guard>>
+  class KitchenViewerPage <<existing React entry point>>
+  class KitchenViewer <<existing React component>> {
+    + canEditLights : boolean
+    + createLightControlsModule : LightControlsFactory
+    - controls : LightControlsModule [0..1]
+    - bindingStatus : idle | available | unavailable
+  }
+  class LightControlsPanel <<proposed React component>> {
+    + controls : LightControlsModule
+    - sources : readonly LightSnapshot[]
+    - handleChange(id : string, change : LightChange) : void
+  }
+  class ViewerEngine <<existing>> {
+    + load(configuration : ActiveKitchenConfiguration, assets : LoadedAssets, factories : SceneModuleFactory[], signal : AbortSignal) : Promise<boolean>
+    + start() : boolean
+    + dispose() : void
+  }
+  interface SceneModule <<existing>> {
+    + name : string
+    + build(context : SceneContext) : void | Promise<void>
+    + update(deltaSeconds : number) : void
+    + dispose() : void
+  }
+  class SceneContext <<existing>> {
+    + scene : Scene {readOnly}
+    + signal : AbortSignal {readOnly}
+  }
+  class LightControlsModule <<proposed>> {
+    + name : string = "light-controls"
+    - scene : Scene [0..1]
+    - bindings : Map<string, LightBinding>
+    + build(context : SceneContext) : void
+    + bind() : boolean
+    + getSources() : readonly LightSnapshot[]
+    + apply(id : string, change : LightChange) : boolean
+    + update(deltaSeconds : number) : void
+    + dispose() : void
+  }
+  class LightBinding <<private record>> {
+    + light : AmbientLight | SpotLight
+    + baselineIntensity : number {readOnly}
+  }
+  class LightSnapshot <<read-only display record>> {
+    + id : string
+    + kind : "ambient" | "spot"
+    + enabled : boolean
+    + colour : string
+    + intensityMultiplier : number
+    + cutoffDegrees : number [0..1]
+    + penumbra : number [0..1]
+  }
+  class LightChange <<discriminated input record>> {
+    + field : LightField
+    + value : boolean | string | number
+  }
+  class KitchenLightingModule <<VIS05 dependency>> {
+    + build(context : SceneContext) : void
+    + update(deltaSeconds : number) : void
+    + dispose() : void
+  }
+}
+
+package "Three.js" as ThreeJS {
+  class Light {
+    + visible : boolean
+    + color : Color
+    + intensity : number
+  }
+  class AmbientLight
+  class SpotLight {
+    + angle : number
+    + penumbra : number
+  }
+  class SpotLightShadow {
+    + autoUpdate : boolean
+    + needsUpdate : boolean
+  }
+}
+
+ProtectedRoute ..> KitchenViewerPage : admits via ModulePage
+KitchenViewerPage ..> KitchenViewer : injects factory and permission
+KitchenViewer ..> ViewerEngine : starts attempt
+KitchenViewer ..> LightControlsModule : creates per attempt and binds for Managers
+KitchenViewer ..> LightControlsPanel : mounts after successful authorized bind
+LightControlsPanel --> "1" LightControlsModule : uses
+LightControlsPanel ..> LightSnapshot
+LightControlsPanel ..> LightChange
+ViewerEngine *-- "0..*" SceneModule : attempt modules
+SceneModule ..> SceneContext : receives on build
+LightControlsModule ..|> SceneModule
+KitchenLightingModule ..|> SceneModule
+LightControlsModule *-- "0..2" LightBinding
+LightBinding --> "1" Light : borrows
+Light <|-- AmbientLight
+Light <|-- SpotLight
+SpotLight *-- "1" SpotLightShadow
+KitchenLightingModule *-- "0..1" AmbientLight : owns
+KitchenLightingModule *-- "0..1" SpotLight : owns
+@enduml

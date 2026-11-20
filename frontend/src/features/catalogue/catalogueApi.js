@@ -6,12 +6,20 @@ import { apiClient } from '../../shared/api/apiClient.js';
 const publicRequest = { skipAuthFailureHandler: true };
 
 export const catalogueApi = Object.freeze({
-  /** GET /catalogue, optionally filtered by a pizza component name. */
-  list: ({ componentName, signal } = {}) =>
+  /** GET /catalogue with inclusive component and allergen exclusion filters. */
+  list: ({ componentIds = [], excludeComponentIds = [], excludeAllergenIds = [], signal } = {}) =>
     apiClient.get('/catalogue', {
       ...publicRequest,
       signal,
-      query: componentName ? { componentName } : undefined,
+      query: {
+        ...(componentIds.length ? { componentIds: componentIds.join(',') } : {}),
+        ...(excludeComponentIds.length
+          ? { excludeComponentIds: excludeComponentIds.join(',') }
+          : {}),
+        ...(excludeAllergenIds.length
+          ? { excludeAllergenIds: excludeAllergenIds.join(',') }
+          : {}),
+      },
     }),
 
   /** GET /catalogue/:productId */

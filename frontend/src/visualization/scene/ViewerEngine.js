@@ -6,7 +6,8 @@ import {
 import { createSceneContext } from './sceneModule.js';
 import { ViewerEngineError } from './ViewerEngineError.js';
 
-const makeRenderer = (canvas) => new WebGLRenderer({ canvas, antialias: true });
+const makeRenderer = (canvas) =>
+  new WebGLRenderer({ canvas, antialias: true, alpha: true });
 const observeResize = (callback) => new ResizeObserver(callback);
 const reportCleanupErrors = (error) => {
   if (import.meta.env.DEV) console.error(error);

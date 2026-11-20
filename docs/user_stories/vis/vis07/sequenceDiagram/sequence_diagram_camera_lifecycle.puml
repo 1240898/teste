@@ -1,0 +1,118 @@
+@startuml sequence_diagram_camera_lifecycle
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - VIS07 Camera Lifecycle (reload, configuration switch, leaving the page)
+
+actor User as "LaPrizza Manager"
+participant Viewer as "KitchenViewer\n(VIS01)"
+participant Engine as "ViewerEngine\n(VIS01)"
+participant Module as "CameraControlsModule\n(VIS07)"
+participant Ctrl as "CameraController\n(VIS07)"
+participant Orbit as "OrbitControls"
+participant Canvas as "Canvas"
+
+note over User, Canvas
+    Every path that replaces or leaves the scene goes through ViewerEngine.dispose()
+    (VIS01 sequence_diagram_viewer_lifecycle). Modules are disposed in reverse order,
+    so the camera module (built last) is disposed first.
+end note
+
+== 1. Reload or switch of the active configuration ==
+
+User -> Viewer : Reload (or a new configuration is activated in WEB06)
+activate Viewer
+Viewer -> Viewer : cleanup: abort attempt
+Viewer -> Engine : dispose()
+activate Engine
+Engine -> Module : dispose()
+activate Module
+Module -> Ctrl : dispose()
+activate Ctrl
+Ctrl -> Canvas : removeEventListener("kitchen-viewer:reset-view")
+Canvas --> Ctrl : listener removed
+Ctrl -> Orbit : dispose()
+activate Orbit
+Orbit -> Canvas : remove pointer / wheel / contextmenu listeners
+Canvas --> Orbit : listeners removed
+Orbit --> Ctrl : controls disposed
+deactivate Orbit
+Ctrl --> Module : controller disposed
+deactivate Ctrl
+Module --> Engine : camera module disposed
+deactivate Module
+Engine -> Engine : dispose lighting and layout modules,\nscene, assets and renderer (VIS01)
+Engine --> Viewer : engine disposed
+deactivate Engine
+Viewer -> Canvas : remove()
+Canvas --> Viewer : canvas removed from the DOM
+Viewer -> Viewer : increment attempt; load configuration again
+Viewer --> User : state "loading" (new attempt)
+deactivate Viewer
+note right of Viewer
+    The new attempt creates a NEW module and controller:
+    limits and initial view are recomputed from the new
+    dimensions, assembly-line wall and current aspect
+    (sequence_diagram_camera_init).
+end note
+
+== 2. Leaving the page or logout ==
+
+User -> Viewer : navigates away / logs out
+activate Viewer
+Viewer -> Engine : dispose()
+activate Engine
+Engine -> Module : dispose()
+activate Module
+Module -> Ctrl : dispose()
+activate Ctrl
+Ctrl -> Canvas : removeEventListener("kitchen-viewer:reset-view")
+Canvas --> Ctrl : listener removed
+Ctrl -> Orbit : dispose()
+activate Orbit
+Orbit -> Canvas : remove pointer / wheel / contextmenu listeners
+Canvas --> Orbit : listeners removed
+Orbit --> Ctrl : controls disposed
+deactivate Orbit
+Ctrl --> Module : controller disposed
+deactivate Ctrl
+Module --> Engine : camera module disposed
+deactivate Module
+Engine -> Engine : dispose remaining modules and resources (VIS01)
+Engine --> Viewer : engine disposed
+deactivate Engine
+Viewer -> Canvas : remove()
+Canvas --> Viewer : canvas removed from the DOM
+Viewer --> User : viewer unmounted
+deactivate Viewer
+note right of Module
+    A second dispose() returns immediately;
+    update() after dispose() does nothing.
+end note
+
+== 3. Dispose during a pending build ==
+
+User -> Viewer : Reload / leaves while the scene is still building
+activate Viewer
+Viewer -> Viewer : cleanup: controller.abort()
+Viewer -> Engine : dispose()  (abort listener)
+activate Engine
+Engine -> Module : dispose()  (camera module may not be built yet)
+activate Module
+Module -> Module : disposed = true
+Module --> Engine : ok (no controller: nothing to release)
+deactivate Module
+Engine -> Engine : abort build; dispose other modules and resources
+Engine --> Viewer : load() returns false
+deactivate Engine
+Viewer -> Canvas : remove()
+Canvas --> Viewer : canvas removed from the DOM
+Viewer --> User : no scene started for the aborted attempt
+deactivate Viewer
+note right of Module
+    build() returns immediately when ctx.signal is aborted
+    or the module is already disposed, so no CameraController
+    and no OrbitControls are created for an aborted attempt.
+end note
+@enduml

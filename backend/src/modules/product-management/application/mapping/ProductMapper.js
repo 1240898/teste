@@ -67,6 +67,23 @@ export class ProductMapper {
     });
   }
 
+  /** Public product contract: sellable identity, description, allergens and price only. */
+  static toPublicDTO(product) {
+    return {
+      id: product.getId().getValue(),
+      name: product.getName().getValue(),
+      description: product.getDescription().getValue(),
+      categoryId: product.getCategoryId().getValue(),
+      allergenIds: product.getAllergenIds().map((id) => id.getValue()),
+      pricingMode: product.getPricingMode(),
+      basePrice: product.getBasePrice()?.getAmount() ?? null,
+    };
+  }
+
+  static toPublicDTOList(products) {
+    return products.map((product) => this.toPublicDTO(product));
+  }
+
   static toDTOList(products) {
     return products.map((product) => this.toDTO(product));
   }

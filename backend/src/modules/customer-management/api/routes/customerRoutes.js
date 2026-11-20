@@ -10,7 +10,9 @@ export class CustomerRoutes {
   setupRoutes() {
     const r = Router(),
       auth = this.authMiddleware.verifyToken,
-      manager = RoleMiddleware.requireRole('MANAGER'),
+      manager = RoleMiddleware.requireOperation('customers.create'),
+      managerRead = RoleMiddleware.requireOperation('customers.search'),
+      customerRead = RoleMiddleware.requireOperation('customers.getById'),
       c = this.controller;
     r.use((_req, res, next) => {
       res.set('Cache-Control', 'no-store');
@@ -36,12 +38,18 @@ export class CustomerRoutes {
       ValidationMiddleware.validate(schemas.create),
       c.create.bind(c),
     );
-    r.get('/customers', auth, manager, validateQuery, c.search.bind(c));
-    r.get('/customers/:id', auth, manager, validateId, c.getById.bind(c));
+    r.get('/customers', auth, managerRead, validateQuery, c.search.bind(c));
+    r.get(
+      '/customers/:id',
+      auth,
+      customerRead,
+      validateId,
+      c.getById.bind(c),
+    );
     r.put(
       '/customers/:id',
       auth,
-      manager,
+      RoleMiddleware.requireOperation('customers.update'),
       validateId,
       ValidationMiddleware.validate(schemas.update),
       c.update.bind(c),
@@ -49,14 +57,14 @@ export class CustomerRoutes {
     r.patch(
       '/customers/:id/deactivate',
       auth,
-      manager,
+      RoleMiddleware.requireOperation('customers.deactivate'),
       validateId,
       c.deactivate.bind(c),
     );
     r.patch(
       '/customers/:id/activate',
       auth,
-      manager,
+      RoleMiddleware.requireOperation('customers.activate'),
       validateId,
       c.activate.bind(c),
     );

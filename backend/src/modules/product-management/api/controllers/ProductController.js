@@ -3,6 +3,9 @@ import { ProductFilterDTO } from '../../application/dtos/ProductFilterDTO.js';
 import { UpdateProductDTO } from '../../application/dtos/UpdateProductDTO.js';
 
 const params = (req) => req.validatedParams ?? req.params;
+const STAFF_ROLES = new Set(['MANAGER', 'EMPLOYEE']);
+const hasStaffProductView = (req) =>
+  req.user?.roles?.some((role) => STAFF_ROLES.has(role)) ?? false;
 
 export class ProductController {
   constructor(productService) {
@@ -26,15 +29,20 @@ export class ProductController {
   }
 
   async listProducts(req, res) {
+    const filter = new ProductFilterDTO(req.validatedQuery ?? req.query);
     res.json(
-      await this.productService.listProducts(
-        new ProductFilterDTO(req.validatedQuery ?? req.query),
-      ),
+      hasStaffProductView(req)
+        ? await this.productService.listProducts(filter)
+        : await this.productService.listPublicProducts(filter),
     );
   }
 
   async getProductById(req, res) {
-    res.json(await this.productService.getProductById(params(req).id));
+    res.json(
+      hasStaffProductView(req)
+        ? await this.productService.getProductById(params(req).id)
+        : await this.productService.getPublicProductById(params(req).id),
+    );
   }
 
   async deactivateProduct(req, res) {

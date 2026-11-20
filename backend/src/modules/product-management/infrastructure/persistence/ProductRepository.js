@@ -1,3 +1,4 @@
+
 import { AppError } from '../../../../shared/errors/AppError.js';
 import { ProductId } from '../../domain/model/ProductId.js';
 import { PRODUCT_NOT_FOUND } from '../../application/services/ProductService.js';
@@ -106,10 +107,22 @@ export class ProductRepository {
       if (criteria[field] !== undefined) add(`p.${column} = ?`, criteria[field]);
     if (criteria.acquisitionType !== undefined)
       add('p.acquisition_type = ?', criteria.acquisitionType);
+    // An excluded allergen hides the product when the product itself or any
+    // product in its composition, at any depth, has it (WEB05 BR, PR #314).
+    // UNION (not UNION ALL) stops on repeated products.
     if (criteria.excludeAllergenIds.length)
       add(
-        `NOT EXISTS (SELECT 1 FROM product_allergens pa
-           WHERE pa.product_id = p.id AND pa.allergen_id = ANY(?::smallint[]))`,
+        `NOT EXISTS (
+           WITH RECURSIVE composed(product_id) AS (
+             SELECT p.id
+             UNION
+             SELECT pci.child_product_id
+               FROM product_composition_items pci
+               JOIN composed c ON pci.parent_product_id = c.product_id
+           )
+           SELECT 1 FROM composed c
+             JOIN product_allergens pa ON pa.product_id = c.product_id
+            WHERE pa.allergen_id = ANY(?::smallint[]))`,
         criteria.excludeAllergenIds.map((id) => id.getValue()),
       );
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';

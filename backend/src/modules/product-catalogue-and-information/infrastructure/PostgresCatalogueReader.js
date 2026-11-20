@@ -1,7 +1,7 @@
 import { CataloguePersistenceMapper } from './CataloguePersistenceMapper.js';
 
 const catalogueQuery = `
-WITH roots AS (
+WITH RECURSIVE roots AS (
   SELECT product.*
   FROM products AS product
   WHERE product.is_sellable = true
@@ -19,13 +19,21 @@ WITH roots AS (
     ON composition.parent_product_id = pizza.id
   WHERE pizza.pricing_mode = 'COMPONENT_BASED'
   GROUP BY pizza.id
+), descendants AS (
+  -- Whole composition of every root: components of components (UNION stops cycles).
+  SELECT item.child_product_id AS id
+  FROM product_composition_items AS item
+  JOIN roots ON roots.id = item.parent_product_id
+  UNION
+  SELECT item.child_product_id
+  FROM product_composition_items AS item
+  JOIN descendants ON descendants.id = item.parent_product_id
 ), relevant_products AS (
   SELECT roots.* FROM roots
   UNION
-  SELECT component_product.*
-  FROM pizza_rows AS pizza
-  CROSS JOIN LATERAL unnest(pizza.component_ids) AS component_id
-  JOIN products AS component_product ON component_product.id = component_id
+  SELECT product.*
+  FROM products AS product
+  JOIN descendants ON descendants.id = product.id
 )
 SELECT
   COALESCE((

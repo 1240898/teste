@@ -152,12 +152,12 @@ describeDB(
     test('IT10a - a referenced asset cannot be deleted', async () => {
       await create('Restricted asset');
       const error = await database
-        .query(`DELETE FROM kitchen_assets WHERE id = 'AST-MDL-OVEN-DOME-02'`)
+        .query(`DELETE FROM kitchen_assets WHERE id = 'AST-MDL-OVEN-LINE-01'`)
         .catch((caught) => caught);
       expect(error).toBeInstanceOf(Error);
       expect(RESTRICTED).toContain(error.code);
       const { rows } = await database.query(
-        `SELECT count(*)::int AS n FROM kitchen_assets WHERE id = 'AST-MDL-OVEN-DOME-02'`,
+        `SELECT count(*)::int AS n FROM kitchen_assets WHERE id = 'AST-MDL-OVEN-LINE-01'`,
       );
       expect(rows[0].n).toBe(1);
     });

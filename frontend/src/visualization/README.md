@@ -10,8 +10,8 @@ changes and expired sessions.
 - `scene/` loads all binary assets within one 30-second deadline, manages the
   WebGL renderer and owns cleanup and failure recovery.
 - `scene/modules/` holds the scene modules. `scene/defaultSceneModules.js`
-  lists them in build order: the kitchen layout (VIS02) first, then the
-  ambient lighting baseline. Later VIS stories add or replace modules.
+  builds the kitchen layout (VIS02), the assembly line (VIS03), scene lighting
+  (VIS05) and camera controls (VIS07), in that order.
 
 The viewer shows a scene only after the active configuration is valid, all its
 assets have loaded and the engine has rendered its first frame. An empty state
@@ -70,3 +70,14 @@ Run the VIS01 and VIS02 tests from
 `npm test -- --runInBand src/visualization test/app/App.test.jsx`. See
 [VIS01 manual verification](../../../docs/user_stories/vis/vis01/usVIS01.md#62-manual-verification--openapi-contract)
 for the browser and WEB06 scenarios.
+
+## Scene lighting (VIS05)
+
+`KitchenLightingModule` fits its ambient light and spotlight to the built
+kitchen before the first frame. A prefiltered indoor environment supplies
+reflections for metallic surfaces. The static spotlight shadow map is
+reused during camera movement. Reload rebuilds the lighting for the new
+layout and releases the previous environment and shadow resources.
+
+The [VIS05 verification record](../../../docs/user_stories/vis/vis05/usVIS05.md#6-integration-verification--demonstration)
+includes the browser views and shadow-on/off measurements for both sample kitchens.

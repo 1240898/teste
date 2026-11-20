@@ -70,7 +70,7 @@ describe('WEB06 KitchenConfiguration (UT08)', () => {
     copy.elements = [];
     expect(value.elementCount).toBe(14);
     expect(value.referencedAssetIds()).toEqual(
-      expect.arrayContaining(['AST-MDL-OVEN-DOME-02', 'AST-TEX-TILES-COLOR']),
+      expect.arrayContaining(['AST-MDL-OVEN-LINE-01', 'AST-TEX-TILES-COLOR']),
     );
   });
 });

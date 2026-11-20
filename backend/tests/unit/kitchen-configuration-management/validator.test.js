@@ -94,7 +94,7 @@ describe('WEB06 KitchenLayoutValidator', () => {
     element(layout, 'line-oven').model.assetId = 'AST-TEX-STEEL-COLOR';
     element(layout, 'line-counter').material.colorMapAssetId =
       'AST-MDL-FRIDGE-01';
-    const result = validate(layout, assetContext(['models/dispenser-01.glb']));
+    const result = validate(layout, assetContext(['models/dispenser-02.glb']));
     expect(codes(result)).toEqual(
       expect.arrayContaining([
         'UNKNOWN_ASSET',
@@ -246,7 +246,7 @@ describe('WEB06 KitchenLayoutValidator', () => {
       ).toEqual(['endsBefore']);
       expect(
         lineIssues((l) => {
-          element(l, 'line-oven').placement.position.z = -1.9;
+          element(l, 'line-oven').placement.position.z = -1.8;
         }, 'LINE_BELT_DISCONNECTED').map((item) => item.params.variant),
       ).toEqual(['depthOven']);
       expect(

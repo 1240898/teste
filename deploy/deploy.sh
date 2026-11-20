@@ -425,6 +425,74 @@ NODE
 export RELEASE_SHA="$SHA" DEI_CONFIG_REVISION="$CONFIG_REV"
 ENV_FILE="/etc/laprizza/config/${CONFIG_REV}.env"
 [[ -r "$ENV_FILE" ]] || { echo "Runtime config unavailable: $ENV_FILE" >&2; exit 2; }
+
+# SYS02: the approved networks list and the denied-access log directory must exist
+# on the VM; without them the web container cannot start.
+ACCESS_LIST="/etc/laprizza/access/allowed-networks.conf"
+ACCESS_LOG_DIR="/var/log/laprizza/access"
+[[ -r "$ACCESS_LIST" ]] || { echo "SYS02 allowed-networks file unavailable: $ACCESS_LIST" >&2; exit 2; }
+[[ -d "$ACCESS_LOG_DIR" ]] || { echo "SYS02 denied-access log directory missing: $ACCESS_LOG_DIR" >&2; exit 2; }
+
+# SYS02: the smoke checks reach Nginx from the gateway of the laprizza-backend
+# network, so that gateway must belong to an allowed network. Compose applies
+# the fixed subnet (172.24.0.0/16) only when it creates the network; an existing
+# network is reused as it is, so its real gateway is checked instead.
+SYS02_DEFAULT_GATEWAY="172.24.0.1"
+sys02_gateway() {
+  if docker network inspect laprizza-backend >/dev/null 2>&1; then
+    docker network inspect laprizza-backend \
+      --format '{{range .IPAM.Config}}{{if .Gateway}}{{.Gateway}} {{end}}{{end}}' | awk '{print $1}'
+  else
+    printf '%s\n' "$SYS02_DEFAULT_GATEWAY"
+  fi
+}
+
+sys02_allows() {
+  # Same precedence as the Nginx geo module: the most specific matching network
+  # wins (0 = deny, 1 = allow). Exit codes: 0 allowed, 1 denied, 2 invalid list.
+  python3 - "$ACCESS_LIST" "$1" <<'PY'
+import ipaddress, re, sys
+path, raw_address = sys.argv[1], sys.argv[2]
+address = ipaddress.ip_address(raw_address)
+best = None
+with open(path) as entries:
+    for number, line in enumerate(entries, 1):
+        entry = line.split('#', 1)[0].strip()
+        if not entry:
+            continue
+        # Only "<address>[/<numeric prefix>] 0;" or "... 1;" is supported.
+        match = re.fullmatch(r'([0-9A-Fa-f:.]+)(?:/([0-9]{1,3}))?\s+([01]);', entry)
+        network = None
+        if match:
+            try:
+                text = match.group(1) if match.group(2) is None else f'{match.group(1)}/{match.group(2)}'
+                network = ipaddress.ip_network(text, strict=False)
+            except ValueError:
+                network = None
+        if network is None:
+            print(f'SYS02: unsupported entry on line {number} of {path}; '
+                  'expected "<address>[/<prefix length>] 0;" or "<address>[/<prefix length>] 1;"', file=sys.stderr)
+            sys.exit(2)
+        if network.version == address.version and address in network:
+            if best is None or network.prefixlen >= best[0]:
+                best = (network.prefixlen, match.group(3))
+sys.exit(0 if best is not None and best[1] == '1' else 1)
+PY
+}
+SMOKE_GATEWAY=$(sys02_gateway)
+[[ "$SMOKE_GATEWAY" =~ ^[0-9]+(\.[0-9]+){3}$ ]] || {
+  echo 'SYS02: could not determine the laprizza-backend network gateway' >&2
+  exit 2
+}
+if sys02_allows "$SMOKE_GATEWAY"; then sys02_rc=0; else sys02_rc=$?; fi
+case "$sys02_rc" in
+  0) echo "SYS02: smoke checks will reach Nginx from $SMOKE_GATEWAY, which is allowed." ;;
+  1) echo "SYS02: smoke checks would reach Nginx from $SMOKE_GATEWAY, which is denied by $ACCESS_LIST. Allow it (for example '$SMOKE_GATEWAY 1;') and remove any more specific '0;' entry that covers it, then run the deployment again; no release was changed." >&2
+     exit 2 ;;
+  *) echo "SYS02: $ACCESS_LIST is not in the supported format; fix it and run the deployment again; no release was changed." >&2
+     exit 2 ;;
+esac
+
 python3 - "$MANIFEST" "$SHA" "$CONFIG_REV" <<'PY'
 import json, re, sys
 m=json.load(open(sys.argv[1]))

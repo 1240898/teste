@@ -1,3 +1,4 @@
+
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { useLocale } from '../../shared/locale/localeContext.js';
@@ -8,6 +9,7 @@ import { AllergenList, AvailabilityTag } from './CatalogueParts.jsx';
 import EmptyState from '../../shared/feedback/EmptyState.jsx';
 import FeedbackMessage from '../../shared/feedback/FeedbackMessage.jsx';
 import LoadingState from '../../shared/feedback/LoadingState.jsx';
+import { allergenLabel } from '../../shared/locale/allergenLabels.js';
 
 function ProductPrice({ product }) {
   const { locale, t } = useLocale();
@@ -20,32 +22,64 @@ function ProductPrice({ product }) {
 
 /**
  * WEB03 (BR 4, AC 4): public, read-only sellable catalogue (BCK11 API) for
- * every role, Guest included. Only the search the API offers is exposed
- * (componentName); management pages stay with WEB05.
+ * every role, Guest included. Component and allergen filters are serialized
+ * by the public catalogue adapter; management pages stay with WEB05.
  */
 export default function CataloguePage() {
   const { t } = useLocale();
-  const [draft, setDraft] = useState('');
-  const [componentName, setComponentName] = useState('');
+  const [filters, setFilters] = useState({
+    componentIds: [],
+    excludeComponentIds: [],
+    excludeAllergenIds: [],
+  });
+  const [draftFilters, setDraftFilters] = useState(filters);
+  const [filterOptions, setFilterOptions] = useState({
+    components: [],
+    allergens: [],
+  });
   const [state, setState] = useState({ status: 'loading', products: [] });
   const [attempt, setAttempt] = useState(0);
   const controller = useRef(null);
 
-  const load = useCallback(async (filter) => {
+  const load = useCallback(async (selectedFilters) => {
     controller.current?.abort();
     const current = new AbortController();
     controller.current = current;
     setState((previous) => ({ ...previous, status: 'loading' }));
     try {
       const products = await catalogueApi.list({
-        componentName: filter || undefined,
+        ...selectedFilters,
         signal: current.signal,
       });
-      if (!current.signal.aborted)
+      if (!current.signal.aborted) {
         setState({
           status: 'ready',
           products: Array.isArray(products) ? products : [],
         });
+        if (
+          !selectedFilters.componentIds.length &&
+          !selectedFilters.excludeComponentIds.length &&
+          !selectedFilters.excludeAllergenIds.length
+        ) {
+          const components = new Map();
+          const allergens = new Map();
+          for (const product of products ?? []) {
+            for (const component of product.pizza?.defaultComponents ?? [])
+              components.set(component.id, component);
+            // Components sold on their own, even if no pizza recipe uses them.
+            if (product.isPizzaComponent)
+              components.set(product.id, { id: product.id, name: product.name });
+            for (const allergen of product.allergens ?? [])
+              allergens.set(allergen.id, allergen);
+          }
+          setFilterOptions({
+            components: [...components.values()].sort((a, b) =>
+              a.name.localeCompare(b.name),
+            ),
+            allergens: [...allergens.values()].sort((a, b) => a.id - b.id),
+          });
+        }
+      }
     } catch (error) {
       if (!current.signal.aborted && error?.kind !== 'aborted')
         setState({
@@ -57,40 +91,83 @@ export default function CataloguePage() {
   }, []);
 
   useEffect(() => {
-    void load(componentName);
+    void load(filters);
     return () => controller.current?.abort();
-  }, [componentName, attempt, load]);
+  }, [filters, attempt, load]);
 
   function search(event) {
     event.preventDefault();
-    setComponentName(draft.trim());
+    setFilters(draftFilters);
   }
 
   function clear() {
-    setDraft('');
-    setComponentName('');
+    const empty = {
+      componentIds: [],
+      excludeComponentIds: [],
+      excludeAllergenIds: [],
+    };
+    setDraftFilters(empty);
+    setFilters(empty);
   }
 
   const { status, products, error } = state;
+  const updateSelection = (name, event) =>
+    setDraftFilters((current) => ({
+      ...current,
+      [name]: [...event.target.selectedOptions].map((option) => option.value),
+    }));
+  const hasFilters = Object.values(filters).some((values) => values.length > 0);
   return (
     <section className="catalogue" aria-labelledby="catalogue-title">
       <h1 id="catalogue-title">{t('catalogue')}</h1>
       <p className="intro">{t('catalogueIntro')}</p>
 
       <form className="catalogue-search" role="search" onSubmit={search}>
-        <label htmlFor="catalogue-component">{t('searchByComponent')}</label>
         <div className="catalogue-search__row">
-          <input
-            id="catalogue-component"
-            type="search"
-            maxLength={100}
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-          />
+          <label htmlFor="catalogue-components">{t('searchByComponent')}</label>
+          <select
+            id="catalogue-components"
+            multiple
+            value={draftFilters.componentIds}
+            onChange={(event) => updateSelection('componentIds', event)}
+          >
+            {filterOptions.components.map((component) => (
+              <option key={component.id} value={component.id}>
+                {component.name} ({component.id})
+              </option>
+            ))}
+          </select>
+          <span>{t('componentFilterHelp')}</span>
+          <label htmlFor="catalogue-exclude-components">{t('excludeComponents')}</label>
+          <select
+            id="catalogue-exclude-components"
+            multiple
+            value={draftFilters.excludeComponentIds}
+            onChange={(event) => updateSelection('excludeComponentIds', event)}
+          >
+            {filterOptions.components.map((component) => (
+              <option key={component.id} value={component.id}>
+                {component.name} ({component.id})
+              </option>
+            ))}
+          </select>
+          <label htmlFor="catalogue-exclude-allergens">{t('excludeAllergens')}</label>
+          <select
+            id="catalogue-exclude-allergens"
+            multiple
+            value={draftFilters.excludeAllergenIds}
+            onChange={(event) => updateSelection('excludeAllergenIds', event)}
+          >
+            {filterOptions.allergens.map((allergen) => (
+              <option key={allergen.id} value={String(allergen.id)}>
+                {allergenLabel(allergen.id, allergen.name, t)}
+              </option>
+            ))}
+          </select>
           <button className="button button--primary" type="submit">
             {t('search')}
           </button>
-          {componentName && (
+          {hasFilters && (
             <button
               className="button button--secondary"
               type="button"
@@ -119,8 +196,7 @@ export default function CataloguePage() {
 
       {status === 'ready' && products.length === 0 && (
         <EmptyState
-          titleKey={componentName ? 'catalogueNoMatch' : 'catalogueEmpty'}
-          values={componentName ? { name: componentName } : undefined}
+          titleKey={hasFilters ? 'catalogueNoFilterMatch' : 'catalogueEmpty'}
         />
       )}
 

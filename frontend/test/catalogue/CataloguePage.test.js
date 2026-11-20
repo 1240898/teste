@@ -78,3 +78,83 @@ test('keeps a successful empty catalogue distinct from a failed read', async () 
     ),
   ).toBe(false);
 });
+
+test('renders API product data, price and allergen labels on the public catalogue', async () => {
+  catalogueApi.list.mockResolvedValue([
+    {
+      id: 'PROD-00001',
+      name: 'Pizza de teste',
+      description: 'Descrição pública',
+      category: { name: 'Pizzas' },
+      available: true,
+      price: { amount: '8.50', currency: 'EUR' },
+      allergens: [{ id: 7, name: 'Leite' }],
+    },
+  ]);
+  await renderPage();
+
+  expect(container.textContent).toContain('Pizza de teste');
+  expect(container.textContent).toContain('Descrição pública');
+  expect(container.textContent).toContain('8,50');
+  expect(container.textContent).toContain('Leite');
+});
+
+test('allergen names come from the client locale, not from the API name', async () => {
+  catalogueApi.list.mockResolvedValue([
+    {
+      id: 'PROD-00001',
+      name: 'Pizza de teste',
+      description: '',
+      category: { name: 'Pizzas' },
+      available: true,
+      price: { amount: '8.50', currency: 'EUR' },
+      allergens: [{ id: 7, name: 'Milk' }],
+    },
+  ]);
+  await renderPage();
+
+  const allergenTags = container.querySelector('.catalogue-allergens');
+  expect(allergenTags.textContent).toContain('Leite');
+  expect(allergenTags.textContent).not.toContain('Milk');
+});
+
+test('components sold on their own are offered in the component filters', async () => {
+  catalogueApi.list.mockResolvedValue([
+    {
+      id: 'PROD-00010',
+      name: 'Margherita',
+      description: '',
+      category: { name: 'Pizzas' },
+      available: true,
+      price: null,
+      allergens: [],
+      isPizzaComponent: false,
+      pizza: {
+        defaultComponents: [{ id: 'PROD-00001', name: 'Mozzarella' }],
+        sizes: [],
+      },
+    },
+    {
+      id: 'PROD-00020',
+      name: 'Azeitonas extra',
+      description: '',
+      category: { name: 'Extras' },
+      available: true,
+      price: { amount: '1.00', currency: 'EUR' },
+      allergens: [],
+      isPizzaComponent: true,
+      pizza: null,
+    },
+  ]);
+  await renderPage();
+
+  for (const selector of ['#catalogue-components', '#catalogue-exclude-components']) {
+    const values = [...container.querySelectorAll(`${selector} option`)].map(
+      (option) => option.value,
+    );
+    // From a pizza recipe and sold separately (in no recipe).
+    expect(values).toEqual(expect.arrayContaining(['PROD-00001', 'PROD-00020']));
+    // A pizza is not a component.
+    expect(values).not.toContain('PROD-00010');
+  }
+});

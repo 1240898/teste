@@ -28,10 +28,12 @@ import {
   GoogleCallbackRoute,
   PublicSectionRoute,
   RegistrationRoute,
+  SecurityAuditRoute,
   UserManagementRoute,
 } from './routeComponents.jsx';
 import {
   accountSection,
+  auditSection,
   catalogueSection,
   passwordPath,
   privacySection,
@@ -152,6 +154,10 @@ function AppRoutes({ modules }) {
         <Route
           path={usersSection.path}
           element={<UserManagementRoute onView={setView} />}
+        />
+        <Route
+          path={auditSection.path}
+          element={<SecurityAuditRoute onView={setView} />}
         />
         <Route
           path={catalogueSection.path}

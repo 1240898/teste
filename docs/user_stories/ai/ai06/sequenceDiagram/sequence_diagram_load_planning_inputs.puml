@@ -1,0 +1,59 @@
+@startuml sequence_diagram_load_planning_inputs
+title AI06 - Load inputs for a calculation
+autonumber
+hide footbox
+skinparam shadowing false
+
+participant "Planning API\n(AI05)" as AI05
+participant "Input adapter\n(AI06)" as Adapter
+participant "Procurement\nplanning records" as Records
+participant "Backoffice\ninput API" as Backoffice
+participant "Backoffice\nstorage adapter" as Storage
+
+AI05 -> Adapter : load_inputs(Execution with attemptNo, Outcome)
+Adapter -> Records : GET inputs by execution ID
+Records -> Storage : Resolve the bound or original snapshot
+Storage --> Records : Lookup outcome
+alt 200 Stored snapshot
+    Records --> Adapter : Stored or original snapshot
+    opt Replay needs the binding
+        Adapter -> Records : Bind the original snapshot for this attempt
+        Records -> Storage : Bind the replay in one transaction
+        Storage --> Records : Bound snapshot or storage diagnostic
+        Records --> Adapter : Binding outcome
+    end
+else 409 INPUTS_NOT_SEALED for current run
+    Records --> Adapter : Capture required
+    Adapter -> Backoffice : Read the selected operational inputs
+    Backoffice --> Adapter : 200 consistent inputs or source diagnostic
+    opt Operational read succeeded and AI02 needs offers
+        Adapter -> Records : Read offers from the selected confirmed version
+        Records --> Adapter : 200 offers or source diagnostic
+    end
+    alt Source data is valid
+        Adapter -> Records : Bind validated candidate with attemptNo
+        Records -> Storage : Lock execution and resolve the binding
+        alt Current attempt with no binding
+            Storage -> Storage : Store and link candidate in one transaction
+            Storage --> Records : Candidate now bound
+        else Concurrent load already sealed a snapshot
+            Storage --> Records : Existing snapshot and its stored data
+        else Attempt is stale
+            Storage --> Records : 409 STALE_ATTEMPT
+        else Storage fails
+            Storage --> Records : 503 storage diagnostic
+        end
+        Records --> Adapter : Bound snapshot or diagnostic
+    else Read failed or data is invalid
+        Adapter -> Adapter : Prepare source error or 422 input diagnostic
+    end
+else Missing execution, missing historical inputs or failed lookup
+    Records --> Adapter : 404, 422, 503 or access diagnostic
+end
+alt Bound snapshot available
+    Adapter -> Adapter : Build the local planning_input dict
+    Adapter --> AI05 : ok(Input)
+else Input or storage diagnostic
+    Adapter --> AI05 : error(Diagnostic)
+end
+@enduml

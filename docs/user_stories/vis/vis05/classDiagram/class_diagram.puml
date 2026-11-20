@@ -1,0 +1,130 @@
+@startuml class_diagram
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam backgroundColor white
+
+title Class Diagram - VIS05 Scene Lighting
+
+package "SPA visualization" {
+  class KitchenViewer <<React component, existing>>
+  class defaultSceneModules <<composition, existing>> {
+    + factories : SceneModuleFactory[]
+  }
+  class ViewerEngine <<existing>> {
+    + load(configuration : ActiveKitchenConfiguration, assets : LoadedAssets, factories : SceneModuleFactory[], signal : AbortSignal) : Promise<boolean>
+    + start() : boolean
+    + dispose() : void
+  }
+  interface SceneModule <<existing>> {
+    + name : string
+    + build(context : SceneContext) : void | Promise<void>
+    + update(deltaSeconds : number) : void
+    + dispose() : void
+  }
+  class SceneContext <<existing>> {
+    + scene : Scene {readOnly}
+    + renderer : WebGLRenderer {readOnly}
+    + signal : AbortSignal {readOnly}
+    + disposeResource(resource : Disposable) : void
+  }
+  class buildEnvironmentMap <<proposed function>> {
+    + buildEnvironmentMap(renderer : WebGLRenderer, release : ResourceDisposer) : WebGLCubeRenderTarget
+  }
+  class KitchenLightingModule <<proposed>> {
+    + name : string = "kitchen-lighting"
+    - root : Group [0..1]
+    - key : SpotLight [0..1]
+    - environmentTarget : WebGLCubeRenderTarget [0..1]
+    - previousEnvironment : Texture [0..1]
+    - previousIntensity : number
+    + build(context : SceneContext) : void
+    + update(deltaSeconds : number) : void
+    + dispose() : void
+  }
+}
+
+package "Three.js" as ThreeJS {
+  class Scene {
+    + environment : Texture [0..1]
+    + environmentIntensity : number
+    + getObjectByName(name : string) : Object3D | undefined
+    + add(...objects : Object3D[]) : this
+  }
+  class WebGLRenderer {
+    + render(scene : Scene, camera : Camera) : void
+  }
+  class RoomEnvironment <<addon>> {
+    + dispose() : void
+  }
+  class PMREMGenerator {
+    + fromScene(scene : Scene, sigma : number, near : number, far : number, options : object) : WebGLCubeRenderTarget
+    + dispose() : void
+  }
+  class WebGLCubeRenderTarget {
+    + texture : CubeTexture
+    + dispose() : void
+  }
+  class Texture
+  class CubeTexture
+  class Group
+  class Object3D {
+    + name : string
+    + position : Vector3
+  }
+  abstract class Light
+  class AmbientLight
+  class SpotLight {
+    + intensity : number
+    + angle : number
+    + penumbra : number
+    + castShadow : boolean
+    + dispose() : void
+  }
+  class LightShadow {
+    + autoUpdate : boolean
+    + needsUpdate : boolean
+    + dispose() : void
+  }
+}
+
+KitchenViewer --> ViewerEngine : orchestrates
+KitchenViewer ..> defaultSceneModules : receives via page
+defaultSceneModules ..> KitchenLightingModule : createKitchenLightingModule()
+ViewerEngine "1" *-- "0..*" SceneModule : manages
+ViewerEngine ..> SceneContext : creates
+SceneModule ..> SceneContext : receives
+KitchenLightingModule ..|> SceneModule
+KitchenLightingModule ..> buildEnvironmentMap : injected createEnvironmentMap
+KitchenLightingModule "1" *-- "0..1" WebGLCubeRenderTarget : owns returned target
+buildEnvironmentMap ..> RoomEnvironment : creates / releases temporary scene
+buildEnvironmentMap ..> PMREMGenerator : creates / releases generator
+PMREMGenerator ..> WebGLRenderer : borrows
+PMREMGenerator ..> WebGLCubeRenderTarget : creates
+WebGLCubeRenderTarget "1" *-- "1" CubeTexture
+Texture <|-- CubeTexture
+Scene <|-- RoomEnvironment
+Scene "0..*" --> "0..1" Texture : environment (borrowed)
+KitchenLightingModule "1" *-- "0..1" Group : owns lighting root
+SceneContext --> Scene : borrows
+SceneContext --> WebGLRenderer : borrows
+Scene "1" o-- "0..*" Group : scene children
+Object3D <|-- Group
+Object3D <|-- Scene
+Object3D <|-- Light
+Light <|-- AmbientLight
+Light <|-- SpotLight
+Group "0..1" *-- "1" AmbientLight : fill
+Group "0..1" *-- "1" SpotLight : key
+SpotLight "1" --> "1" Object3D : aims at
+SpotLight "1" *-- "1" LightShadow : releases on dispose
+
+note bottom of defaultSceneModules
+  SceneModuleFactory = () => SceneModule
+  Geometry builds before lighting.
+end note
+note bottom of Group
+  The VIS05 group contains both lights
+  and the spotlight target.
+end note
+@enduml

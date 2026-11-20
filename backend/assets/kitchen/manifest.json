@@ -1,9 +1,13 @@
 {
-  "description": "WEB06 kitchen asset catalogue (D8). Files live in ./files. Equipment models are made by the team in code by VIS02 (`npm run kitchen:models`), without textures (the layout supplies them); `npm run kitchen:demo-assets` writes the files that are missing (assembly-line models and textures are still placeholders). Models: glTF / GLB, metres, Y-up, origin at the bottom centre, belt travel along +X.",
+  "description": "WEB06 kitchen asset catalogue (D8). Files live in ./files. VIS02 equipment and VIS03 assembly-line models are made by the team with npm run kitchen:models. VIS02 equipment uses layout material overrides; VIS03 line models embed existing colour and normal maps. Legacy models remain available. Models: glTF / GLB, metres, Y-up, origin at the bottom centre, belt travel along +X.",
   "assets": [
     { "id": "AST-MDL-DISPENSER-01", "kind": "MODEL", "format": "glb", "path": "models/dispenser-01.glb", "description": "Overhead crust dispenser" },
     { "id": "AST-MDL-CONVEYOR-01", "kind": "MODEL", "format": "glb", "path": "models/conveyor-01.glb", "description": "Conveyor belt segment (1 m, travel along +X)" },
     { "id": "AST-MDL-ROBOT-ARM-01", "kind": "MODEL", "format": "glb", "path": "models/robot-arm-01.glb", "description": "Robotic arm" },
+    { "id": "AST-MDL-DISPENSER-02", "kind": "MODEL", "format": "glb", "path": "models/dispenser-02.glb", "description": "Overhead crust dispenser with a hinged release gate" },
+    { "id": "AST-MDL-CONVEYOR-02", "kind": "MODEL", "format": "glb", "path": "models/conveyor-02.glb", "description": "Conveyor with separate frame and belt surface (1 m, travel along +X)" },
+    { "id": "AST-MDL-ROBOT-ARM-02", "kind": "MODEL", "format": "glb", "path": "models/robot-arm-02.glb", "description": "Ingredient dispensing arm with articulated joints and nozzle gate" },
+    { "id": "AST-MDL-OVEN-LINE-01", "kind": "MODEL", "format": "glb", "path": "models/oven-line-01.glb", "description": "Wood-fired dome oven with open conveyor intake (+Z) and hearth at 1 m" },
     { "id": "AST-MDL-OVEN-DOME-01", "kind": "MODEL", "format": "glb", "path": "models/oven-dome-01.glb", "description": "Dome wood-fired oven (WEB06 placeholder box with its texture set; kept for existing layouts)" },
     { "id": "AST-MDL-OVEN-DOME-02", "kind": "MODEL", "format": "glb", "path": "models/oven-dome-02.glb", "description": "Dome wood-fired oven: base, hearth, dome, mouth arch and chimney (no textures: material from the layout)" },
     { "id": "AST-MDL-FRIDGE-01", "kind": "MODEL", "format": "glb", "path": "models/fridge-01.glb", "description": "Refrigerator (WEB06 placeholder box with its texture set; kept for existing layouts)" },

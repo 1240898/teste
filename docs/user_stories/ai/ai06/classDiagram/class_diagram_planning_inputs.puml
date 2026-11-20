@@ -1,0 +1,67 @@
+@startuml class_diagram_planning_inputs
+title AI06 - Planning input adapter and Prolog knowledge base
+hide empty members
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+
+class "AI06 input adapter" as Adapter <<Prolog module>> {
+    load_inputs(+Execution, -Outcome)
+}
+
+class "Execution selection" as Selection <<data>> {
+    executionId, attemptNo, scenarioId, calculation, mode
+    demand, stock and recipe source references
+    confirmed supplier version for AI02
+    original execution for replay
+}
+
+class "Input mapper" as Mapper <<Prolog predicates>> {
+    decode and validate JSON input
+    map stored snapshot to planning_input
+}
+
+interface "Backoffice input API" as Backoffice {
+    read selected operational inputs
+}
+
+interface "Procurement planning records" as Records {
+    read relevant offers from a confirmed version
+    read stored inputs
+    store inputs once per execution
+}
+
+class "Input snapshot" as Snapshot <<data>> {
+    snapshotId, schemaVersion and provenance
+    pizza demand, BOMs, items, recipes and stock
+    dated demand and supplier offers for AI02
+}
+
+class "planning_input" as KnowledgeBase <<ground SWI-Prolog dict>> {
+    meta : dict
+    eligibility : product_active/2 and size_active/2 lists
+    pizza_demand : pizza_demand/3 list
+    pizza_boms : bom/4 list with component/2 terms
+    items : item/6 list
+    recipes : recipe/3 list with ingredient/2 terms
+    opening_stock : stock/2 list
+    direct_sale_demand : direct_sale/3 list
+    offers : offer/7 list
+    forecast : forecast/4 or none
+    reference_date : date/3 or none
+}
+
+class "Input diagnostic" as Diagnostic <<data>> {
+    code, field, entity reference
+}
+
+Adapter ..> Selection : uses
+Adapter ..> Backoffice : reads by selection
+Adapter ..> Records : reads or stores inputs
+Adapter ..> Mapper : validates and maps
+Mapper ..> Snapshot : maps stored JSON
+Mapper ..> KnowledgeBase : builds for one request
+Adapter ..> KnowledgeBase : returns in ok(Input)
+Mapper ..> Diagnostic : reports
+Records ..> Snapshot : retains
+@enduml

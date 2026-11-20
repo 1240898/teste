@@ -1,3 +1,4 @@
+
 const valueOf = (value) =>
   typeof value?.getValue === 'function' ? value.getValue() : value;
 
@@ -13,6 +14,10 @@ export class CatalogueResponseMapper {
       name: entry.product.getName().getValue(),
       description: entry.product.getDescription().getValue(),
       available: entry.available,
+      // A component sold on its own can be chosen in the component filters
+      // (CatalogueService already matches it); the SPA needs to know which
+      // entries are components to offer them as options (WEB05, PR #314).
+      isPizzaComponent: entry.product.isPizzaComponent(),
       category: {
         id: entry.category.getId().getValue(),
         name: entry.category.getName().getValue(),

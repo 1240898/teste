@@ -161,15 +161,15 @@ describe('WEB06 KitchenConfigurationService', () => {
     expect(active).toMatchObject({ id, status: 'ACTIVE', version: 1, content });
     expect(Object.keys(active.assets).sort()).toEqual(
       [
-        'AST-MDL-CONVEYOR-01',
+        'AST-MDL-CONVEYOR-02',
         'AST-MDL-COUNTER-01',
-        'AST-MDL-DISPENSER-01',
+        'AST-MDL-DISPENSER-02',
         'AST-MDL-EXHAUST-HOOD-01',
         'AST-MDL-FRIDGE-02',
         'AST-MDL-GRIDDLE-01',
         'AST-MDL-PIZZA-PEEL-01',
-        'AST-MDL-OVEN-DOME-02',
-        'AST-MDL-ROBOT-ARM-01',
+        'AST-MDL-OVEN-LINE-01',
+        'AST-MDL-ROBOT-ARM-02',
         'AST-MDL-TABLE-PLAIN-01',
         'AST-TEX-PLASTER-COLOR',
         'AST-TEX-PLASTER-ROUGH',
@@ -182,10 +182,10 @@ describe('WEB06 KitchenConfigurationService', () => {
         'AST-TEX-WOOD-NORMAL',
       ].sort(),
     );
-    expect(active.assets['AST-MDL-OVEN-DOME-02']).toEqual({
+    expect(active.assets['AST-MDL-OVEN-LINE-01']).toEqual({
       kind: 'MODEL',
       format: 'glb',
-      url: 'http://localhost:8080/api/v1/kitchen-assets/files/models/oven-dome-02.glb',
+      url: 'http://localhost:8080/api/v1/kitchen-assets/files/models/oven-line-01.glb',
     });
   });
 
@@ -193,7 +193,7 @@ describe('WEB06 KitchenConfigurationService', () => {
     const first = await create('Compact kitchen');
     const second = await create('Extended kitchen', sample('extended'));
     await service.activateConfiguration(first.id, manager);
-    files.missing.add('models/oven-dome-02.glb');
+    files.missing.add('models/oven-line-01.glb');
     for (const id of [second.id, first.id]) {
       repository.calls = [];
       await expect(
