@@ -56,11 +56,17 @@ export class UserService {
     });
   }
 
-  async register({ name, email, password, marketingConsent = false }) {
+  async register({ name, email, password, marketingConsent = false, phoneNumber }) {
     const userName = UserName.create(name);
     const userEmail = Email.create(email);
     validatePassword(password);
     const consent = MarketingConsent.create(marketingConsent);
+    // the phone number belongs to the customer record, validated by the
+    // customer module before the (expensive) password hash is computed.
+    this.customerProfiles?.validatePhoneNumber(
+      userEmail.getValue(),
+      phoneNumber,
+    );
     if (!this.unitOfWork && (await this.userRepository.findByEmail(userEmail)))
       throw new AppError('Email already registered', 409);
     const credential = Password.createFromHash(
@@ -91,6 +97,17 @@ export class UserService {
               systemProcess: 'INITIAL_CUSTOMER_ASSIGNMENT',
             },
           }),
+          tx,
+        );
+      // the customer record is created in the same transaction.
+      if (this.customerProfiles)
+        await this.customerProfiles.createForNewAccount(
+          {
+            userId: saved.getId().getValue(),
+            name: saved.getName().getValue(),
+            email: saved.getEmail().getValue(),
+            phoneNumber,
+          },
           tx,
         );
       const invitation = this.invitationRepository
@@ -717,6 +734,16 @@ export class UserService {
     return AuthenticatedActor.fromUser(user);
   }
 
+  /** GDP01 (G4, GDPR Art. 7(3)): the user gives or withdraws marketing consent. */
+  async updateOwnMarketingConsent(actor, given) {
+    if (!actor) throw new AppError('Authentication required', 401);
+    const user = await this.userRepository.findById(UserId.create(actor.sub));
+    if (!user) throw new AppError(INVALID_TOKEN, 401);
+    this.assertCanAccess(user);
+    if (user.getMarketingConsent().isGiven() !== given)
+      user.updateMarketingConsent(MarketingConsent.create(given, new Date()));
+    return UserResponseMapper.toDTO(await this.userRepository.save(user));
+  }
   /**
    * AA03 (D6): GET /auth/me. The account is reloaded and re-validated,
    * because it may change after resolveActor() ran.

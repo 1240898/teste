@@ -96,8 +96,15 @@ export function parseCurrentUser(body) {
     new Set(roles).size !== roles.length
   )
     fail();
-  if (active !== true) fail();
-  return Object.freeze({ id, name, email, roles: Object.freeze([...roles]) });
+    if (active !== true) fail();
+  return Object.freeze({
+    id,
+    name,
+    email,
+    roles: Object.freeze([...roles]),
+    // GDP01: shown and changed in "My data"; anything but true means no consent.
+    marketingConsent: body.marketingConsent === true,
+  });
 }
 
 /** AA03: current internal roles, always obtained from the back end. */

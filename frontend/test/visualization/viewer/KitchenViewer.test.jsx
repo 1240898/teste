@@ -1,4 +1,6 @@
 /** @jest-environment jsdom */
+import { Scene, Group, SpotLight, AmbientLight } from 'three';
+import { createLightControlsModule } from '../../../src/visualization/scene/modules/LightControlsModule.js';
 import { act, StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { LocaleContext } from '../../../src/shared/locale/localeContext.js';
@@ -226,7 +228,6 @@ test('leaving the page releases a late asset set without creating a renderer', a
   expect(dependencies.createEngine).not.toHaveBeenCalled();
 });
 
-
 test('IT-4: "Reset view" dispatches the reset event on the viewer canvas', async () => {
   await mount();
   const onReset = jest.fn();
@@ -241,4 +242,110 @@ test('IT-4: "Reset view" is not shown while the viewer is not ready', async () =
   dependencies.loadConfiguration.mockReturnValue(new Promise(() => {}));
   await mount();
   expect(button(translate('en-GB', 'viewerResetView'))).toBeUndefined();
+});
+
+function lightingSetup() {
+  const makeControls = jest.fn(() => {
+    const controls = createLightControlsModule();
+    jest.spyOn(controls, 'bind');
+    return controls;
+  });
+  const scene = new Scene();
+  const lights = new Group();
+  lights.name = 'lighting:root';
+  const ambient = new AmbientLight(0xffffff, 0.45);
+  ambient.name = 'lighting:ambient';
+  const key = new SpotLight(0xffffff, 60);
+  key.name = 'lighting:key';
+  scene.add(lights.add(ambient, key));
+  let binding;
+  engine.load.mockImplementation(async (config, owned, factories, signal) => {
+    binding = factories.at(-1)();
+    binding.build({ scene, signal });
+    return true;
+  });
+  engine.dispose.mockImplementation(() => binding?.dispose());
+  const show = (manager, locale = 'en-GB') =>
+    mount(locale, {
+      canEditLights: manager,
+      createLightControls: makeControls,
+    });
+  return { show, makeControls, key, ambient };
+}
+
+test('grants and revokes controls on the ready scene, retaining focus, locale and independent light settings', async () => {
+  const { show, makeControls, key, ambient } = lightingSetup();
+  await show(false);
+  const canvas = viewport().querySelector('canvas');
+  const binding = makeControls.mock.results[0].value;
+  expect(binding.bind).not.toHaveBeenCalled();
+  await show(true);
+  const [ambientFolder, spot] = host.querySelectorAll('details');
+  expect(ambientFolder.querySelectorAll('input')).toHaveLength(3);
+  expect(spot.querySelectorAll('input')).toHaveLength(5);
+  const panel = spot.closest('.light-controls');
+  expect(viewport().nextElementSibling).toBe(panel);
+  expect(panel.contains(ambientFolder)).toBe(true);
+  const toggle = spot.querySelector('[type="checkbox"]');
+  toggle.focus();
+  await act(async () => toggle.click());
+  expect(key.visible).toBe(false);
+  expect(ambient.visible).toBe(true);
+  expect(spot.querySelectorAll('input:disabled')).toHaveLength(4);
+  expect(toggle.disabled).toBe(false);
+  ambientFolder.open = false;
+  await show(true, 'pt-PT');
+  expect(document.activeElement).toBe(toggle);
+  expect(ambientFolder.open).toBe(false);
+  expect(spot.querySelector('summary').textContent).toBe('Projetor principal');
+  expect(toggle.checked).toBe(false);
+  await show(false);
+  expect(document.activeElement).toBe(button('Reload'));
+  expect(host.querySelector('details')).toBeNull();
+  expect(key.visible).toBe(false);
+  await show(true);
+  expect(
+    host.querySelectorAll('details')[1].querySelector('[type="checkbox"]')
+      .checked,
+  ).toBe(false);
+  expect(viewport().querySelector('canvas')).toBe(canvas);
+  expect(engine.start).toHaveBeenCalledTimes(1);
+});
+
+test('an incompatible light only affects controls, and Reload binds a fresh attempt', async () => {
+  const { show, key, makeControls } = lightingSetup();
+  key.angle = Math.PI / 360;
+  await show(false);
+  const canvas = viewport().querySelector('canvas');
+  await show(true);
+  expect(host.querySelector('details')).toBeNull();
+  expect(host.textContent).toContain('Lighting controls are unavailable');
+  expect(viewport().querySelector('canvas')).toBe(canvas);
+  key.angle = 0.5;
+  await click('Reload');
+  expect(host.querySelectorAll('details')).toHaveLength(2);
+  expect(makeControls.mock.results[0].value.getSources()).toEqual([]);
+  expect(viewport().querySelector('canvas')).not.toBe(canvas);
+  await act(async () =>
+    dependencies.createEngine.mock.calls
+      .at(-1)[2]
+      .onFatalError(new Error('lost')),
+  );
+  expect(host.querySelector('details')).toBeNull();
+  await click('Try again');
+  expect(host.querySelectorAll('details')).toHaveLength(2);
+});
+
+test('a failed first paint never binds the lights', async () => {
+  const { show, makeControls } = lightingSetup();
+  engine.start.mockImplementationOnce(() => {
+    dependencies.createEngine.mock.calls[0][2].onFatalError(
+      new Error('first paint'),
+    );
+    return false;
+  });
+  await show(true);
+  expect(makeControls.mock.results[0].value.bind).not.toHaveBeenCalled();
+  expect(host.querySelector('details')).toBeNull();
+  expect(button('Try again')).toBeDefined();
 });

@@ -26,6 +26,13 @@ export async function isolatedDatabase() {
     query: (sql, values) =>
       withTransaction((client) => client.query(sql, values)),
     withTransaction,
+    async openReadView() {
+      const view = await connection.openReadView();
+      try {
+        await view.query(`SET LOCAL search_path TO "${schema}"`);
+        return view;
+      } catch (error) { await view.close(); throw error; }
+    },
     verify: () => connection.verify(),
     async close() {
       try {

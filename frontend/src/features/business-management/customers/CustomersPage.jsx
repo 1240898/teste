@@ -1,5 +1,9 @@
 import ManagementWorkspace from '../../../shared/feedback/ManagementWorkspace.jsx';
-import { customerToForm, customerToPayload } from './customerDTO.js';
+import {
+  customerToForm,
+  customerToPayload,
+  validateCustomerPayload,
+} from './customerDTO.js';
 const fields = [
   { name: 'name', labelKey: 'name', required: true },
   { name: 'email', labelKey: 'email', type: 'email', required: true },
@@ -11,6 +15,12 @@ const fields = [
     type: 'json',
     initial: '[]',
   },
+  {
+    name: 'healthDataConsent',
+    labelKey: 'managementCustomerConsent',
+    type: 'boolean',
+    initial: false,
+  },
 ];
 const config = {
   titleKey: 'customers',
@@ -19,6 +29,7 @@ const config = {
   canEdit: true,
   fields,
   toPayload: customerToPayload,
+  validatePayload: validateCustomerPayload,
   toForm: customerToForm,
   filterFields: [
     { name: 'name', labelKey: 'name' },

@@ -16,3 +16,6 @@ export const roomWall = (wall) => `room:wall:${wall}`;
  * @param {string} name node name in the GLB file
  */
 export const modelPart = (name) => `part:${name}`;
+export const LIGHTING_ROOT = 'lighting:root';
+export const AMBIENT_LIGHT = 'lighting:ambient';
+export const KEY_SPOTLIGHT = 'lighting:key';

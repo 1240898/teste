@@ -83,9 +83,17 @@ export const userSchemas = {
       email,
       password,
       marketingConsent: { type: 'boolean', default: false },
+      // GDP01: stored in the customer record created with the account.
+      phoneNumber: {
+        type: 'string',
+        maxLength: 32,
+        example: '+351912345678',
+        description: 'E.164 phone number for the customer record',
+      },
     },
-    ['name', 'email', 'password'],
+    ['name', 'email', 'password', 'phoneNumber'],
   ),
+  MarketingConsentRequest: object({ marketingConsent: { type: 'boolean' } }),
   LoginRequest: object({
     email,
     password: {
@@ -558,6 +566,21 @@ export const userPaths = {
         errors: [401, 403],
         errorDescriptions: {
           401: 'Missing/invalid token or the account no longer exists',
+          403: 'Account is not active or has no active role',
+        },
+      },
+    ),
+  },
+  // GDP01 (G4): self-service marketing consent (GDPR Art. 7(3)).
+  '/auth/me/marketing-consent': {
+    put: operation(
+      'updateMarketingConsent',
+      'Give or withdraw marketing consent for the current account',
+      {
+        input: 'MarketingConsentRequest',
+        output: ref('UserResponse'),
+        errors: [400, 401, 403],
+        errorDescriptions: {
           403: 'Account is not active or has no active role',
         },
       },

@@ -1,67 +1,76 @@
 @startuml class_diagram_planning_inputs
-title AI06 - Planning input adapter and Prolog knowledge base
+title AI06 - HTTP input loading and request-local knowledge base
 hide empty members
 skinparam shadowing false
 skinparam classAttributeIconSize 0
 skinparam packageStyle rectangle
 
-class "AI06 input adapter" as Adapter <<Prolog module>> {
-    load_inputs(+Execution, -Outcome)
+class "planning_inputs.pl" as Adapter <<Prolog module>> {
+  load_inputs(Execution, Outcome)
+  load_inputs(Execution, ServiceConfig, Outcome)
 }
-
-class "Execution selection" as Selection <<data>> {
-    executionId, attemptNo, scenarioId, calculation, mode
-    demand, stock and recipe source references
-    confirmed supplier version for AI02
-    original execution for replay
+class "input_http.pl" as Http <<Prolog module>> {
+  authorised HTTP reads
+  bounded responses, timeout and no redirects
 }
-
-class "Input mapper" as Mapper <<Prolog predicates>> {
-    decode and validate JSON input
-    map stored snapshot to planning_input
+class "input_mapper.pl" as Mapper <<Prolog module>> {
+  resolve size-specific BOMs and multiplicity
+  map_document(Document, Execution, SnapshotId, Input)
+  exact EUR cents and stable offer ordering
 }
-
-interface "Backoffice input API" as Backoffice {
-    read selected operational inputs
+class "input_validation.pl" as Validation <<Prolog module>>
+class "json_boundary.pl" as Json <<Prolog module>> {
+  validate_json_numbers(Document)
+  write_planning_json(Stream, Response)
 }
-
-interface "Procurement planning records" as Records {
-    read relevant offers from a confirmed version
-    read stored inputs
-    store inputs once per execution
+class "Execution selectors" as Selection {
+  executionId, scenarioId, calculation, mode, attemptNo
+  demand, catalogue and stock source references
+  supplier scenario and reference date for AI02
+  replayedFrom for history
 }
-
-class "Input snapshot" as Snapshot <<data>> {
-    snapshotId, schemaVersion and provenance
-    pizza demand, BOMs, items, recipes and stock
-    dated demand and supplier offers for AI02
+interface "Backoffice source API" as Sources {
+  open coherent read view
+  read selected products, sizes and configurations
+  read selected recipes, stock and pending deliveries
+  read confirmed supplier version
+  close view
 }
-
-class "planning_input" as KnowledgeBase <<ground SWI-Prolog dict>> {
-    meta : dict
-    eligibility : product_active/2 and size_active/2 lists
-    pizza_demand : pizza_demand/3 list
-    pizza_boms : bom/4 list with component/2 terms
-    items : item/6 list
-    recipes : recipe/3 list with ingredient/2 terms
-    opening_stock : stock/2 list
-    direct_sale_demand : direct_sale/3 list
-    offers : offer/7 list
-    forecast : forecast/4 or none
-    reference_date : date/3 or none
+interface "Input records API" as Records {
+  read retained inputs
+  seal once with input attempt lease
 }
-
-class "Input diagnostic" as Diagnostic <<data>> {
-    code, field, entity reference
+class "Retained JSON input document" as Snapshot {
+  schemaVersion and selected source references
+  raw selected groups and provenance
 }
-
-Adapter ..> Selection : uses
-Adapter ..> Backoffice : reads by selection
-Adapter ..> Records : reads or stores inputs
-Adapter ..> Mapper : validates and maps
-Mapper ..> Snapshot : maps stored JSON
-Mapper ..> KnowledgeBase : builds for one request
-Adapter ..> KnowledgeBase : returns in ok(Input)
-Mapper ..> Diagnostic : reports
-Records ..> Snapshot : retains
+class "planning_input" as KB <<ground SWI-Prolog dict>> {
+  meta and eligibility
+  pizza_demand : pizza_demand/3 list
+  pizza_boms : bom/4 with component/2
+  items : item/6 list
+  recipes : recipe/3 with ingredient/2
+  opening_stock : stock/2 list
+  pending_receipts : pending_receipt/4 list
+  direct_sale_demand : direct_sale/3 list
+  offers : offer/7 list
+  forecast : forecast/4 or none
+  reference_date : date/3 or none
+}
+class "Input diagnostic" as Error {
+  code, field, reference
+  executionId and scenarioId
+}
+Adapter ..> Selection : accepts selectors only
+Adapter ..> Http : calls
+Http ..> Sources : reads with service credential
+Http ..> Records : reads or seals with separate permission
+Http ..> Json : validates transport numbers
+Adapter ..> Mapper : maps retained winner
+Mapper ..> Validation : validates
+Mapper ..> Snapshot : consumes
+Mapper ..> KB : builds
+Records ..> Snapshot : retains in Backoffice PostgreSQL
+Adapter ..> KB : returns ok(Input)
+Adapter ..> Error : returns error(Diagnostic)
 @enduml

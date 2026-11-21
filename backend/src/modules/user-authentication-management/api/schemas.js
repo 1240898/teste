@@ -45,6 +45,12 @@ export const schemas = {
     email,
     password: newPassword,
     marketingConsent: Joi.boolean().strict().default(false),
+    // required in the customer record (client clarification).
+    phoneNumber: Joi.string().trim().max(32).required(),
+  }).unknown(false),
+   // GDP01 (G4): the authenticated user gives or withdraws marketing consent.
+  marketingConsent: Joi.object({
+    marketingConsent: Joi.boolean().strict().required(),
   }).unknown(false),
   login: Joi.object({ email, password }).unknown(false),
   recoveryRequest: Joi.object({ email }).unknown(false),

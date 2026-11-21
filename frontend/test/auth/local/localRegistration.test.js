@@ -40,6 +40,7 @@ it('creates an inactive account and shows that activation is required', async ()
   const form = container.querySelector('form');
   form.elements.name.value = 'Ana';
   form.elements.email.value = 'ana@example.com';
+  form.elements.phoneNumber.value = '+351 912 345 678';
   form.elements.password.value = 'LocalTest2026!';
   globalThis.fetch.mockResolvedValueOnce({
     ok: true,
@@ -58,6 +59,7 @@ it('creates an inactive account and shows that activation is required', async ()
         email: 'ana@example.com',
         password: 'LocalTest2026!',
         marketingConsent: false,
+        phoneNumber: '+351 912 345 678',
       }),
     }),
   );
@@ -73,6 +75,7 @@ it('shows when invitation delivery fails and explains the retry path', async () 
   const form = container.querySelector('form');
   form.elements.name.value = 'Ana';
   form.elements.email.value = 'ana@example.com';
+  form.elements.phoneNumber.value = '+351912345678';
   form.elements.password.value = 'LocalTest2026!';
   globalThis.fetch.mockResolvedValueOnce({
     ok: true,
@@ -88,4 +91,25 @@ it('shows when invitation delivery fails and explains the retry path', async () 
   expect(container.querySelector('main [role="alert"]').textContent).toContain(
     'Contact an administrator to retry',
   );
+});
+
+it('GDP01: requires a phone number in international format before sending', async () => {
+  act(() => container.querySelector('a[href="/register"]').click());
+  const form = container.querySelector('form');
+  form.elements.name.value = 'Ana';
+  form.elements.email.value = 'ana@example.com';
+  form.elements.password.value = 'LocalTest2026!';
+  const calls = globalThis.fetch.mock.calls.length;
+
+  await act(async () => form.querySelector('button[type="submit"]').click());
+  expect(
+    container.querySelector('#registration-phone-error').textContent,
+  ).toContain('Fill in this field.');
+
+  form.elements.phoneNumber.value = '912345678';
+  await act(async () => form.querySelector('button[type="submit"]').click());
+  expect(
+    container.querySelector('#registration-phone-error').textContent,
+  ).toContain('Invalid phone number');
+  expect(globalThis.fetch.mock.calls).toHaveLength(calls);
 });

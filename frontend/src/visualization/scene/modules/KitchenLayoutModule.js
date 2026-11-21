@@ -58,12 +58,8 @@ export function createKitchenLayoutModule({
 
       const room = buildRoom({
         dimensions: kitchen.dimensions,
-        floorMaterial: materials.create(kitchen.floor?.material, {
-          worldScaleUv: true,
-        }),
-        wallMaterial: materials.create(kitchen.walls?.material, {
-          worldScaleUv: true,
-        }),
+                floorMaterial: materials.create(kitchen.floor?.material),
+        wallMaterial: materials.create(kitchen.walls?.material),
       });
       roomGeometries = room.geometries;
       root.add(room.group);

@@ -1,4 +1,7 @@
+import { managerPlanningPaths } from '../../modules/forecast-planning/openapi.js';
 import { createRequire } from 'node:module';
+import { sharedResourcesPaths } from '../../modules/shared-resources/openapi.js';
+import { planningInputPaths, planningInputSchemas, planningInputSecurity } from '../../modules/planning-inputs/api/openapi.js';
 import {
   userPaths,
   userSchemas,
@@ -78,6 +81,7 @@ export const openApiSpec = {
   ],
   components: {
     securitySchemes: {
+      ...planningInputSecurity,
       accessToken: {
         type: 'apiKey',
         in: 'header',
@@ -95,6 +99,7 @@ export const openApiSpec = {
     },
 
     schemas: {
+      ...planningInputSchemas,
       ...userSchemas,
       ...componentTypeSchemas,
       ...categorySchemas,
@@ -111,6 +116,8 @@ export const openApiSpec = {
     },
   },
   paths: {
+    ...planningInputPaths,
+    ...managerPlanningPaths,
     ...userPaths,
     ...componentTypePaths,
     ...categoryPaths,
@@ -124,6 +131,7 @@ export const openApiSpec = {
     ...cataloguePaths,
     ...kitchenConfigurationPaths,
     ...securityAuditPaths,
+    ...sharedResourcesPaths,
 
     '/health': {
       get: {

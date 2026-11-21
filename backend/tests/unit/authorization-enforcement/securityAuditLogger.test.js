@@ -7,28 +7,36 @@ import { SecurityAuditLogger } from '../../../src/modules/authorization-enforcem
 import { FileSecurityAuditOutbox } from '../../../src/modules/authorization-enforcement/infrastructure/FileSecurityAuditOutbox.js';
 
 describe('SecurityAuditLogger', () => {
-  test('keeps a failed event queued and persists it after a retry', async () => {
+    test('keeps a failed event queued and persists it after a retry', async () => {
     const outboxDirectory = await mkdtemp(join(tmpdir(), 'aa05-audit-logger-'));
     const event = { requestId: 'request-1', outcome: 'FORBIDDEN' };
     const save = jest
       .fn()
       .mockRejectedValueOnce(new Error('temporary database failure'))
       .mockResolvedValueOnce(undefined);
+    const outbox = new FileSecurityAuditOutbox(outboxDirectory);
     const logger = new SecurityAuditLogger({
       repository: { save },
       logger: { error: jest.fn() },
       retryDelayMs: 5,
-      outbox: new FileSecurityAuditOutbox(outboxDirectory),
+      outbox,
     });
 
     try {
       await logger.record(event);
-      await new Promise((resolve) => setTimeout(resolve, 30));
-      await logger.flush();
 
+      // First delivery fails: the event must stay in the outbox.
+      await logger.flush();
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(await outbox.listPending()).toEqual([event]);
+
+      // Retry succeeds: the event is persisted and removed from the outbox.
+      await logger.flush();
       expect(save).toHaveBeenCalledTimes(2);
       expect(save).toHaveBeenLastCalledWith(event);
+      expect(await outbox.listPending()).toEqual([]);
     } finally {
+      await logger.stop();
       await rm(outboxDirectory, { recursive: true, force: true });
     }
   });

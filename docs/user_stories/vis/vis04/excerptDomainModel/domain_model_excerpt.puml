@@ -7,10 +7,12 @@ hide methods
 title Domain Model Excerpt - VIS04 Textures and Materials (read-only view of WEB06 concepts)
 
 note as N0
-    Every concept below is OWNED by WEB06 (persisted in PostgreSQL; layout stored as JSONB).
-    VIS04 introduces NO new domain concept: it reads the ACTIVE configuration through
-    GET /kitchen-configurations/active and maps MaterialProperties and resolved KitchenAssets
-    to 3D rendering materials. Only the concepts relevant to materials and textures are shown.
+    Every concept below is OWNED by WEB06 (usWEB06 section 2.5; persisted in PostgreSQL,
+    layout stored as JSONB). VIS04 introduces NO new domain concept: it reads the
+    ACTIVE configuration loaded by VIS01 (GET /kitchen-configurations/active) and maps
+    MaterialProperties and the resolved KitchenAssets to 3D rendering materials.
+    Only the concepts relevant to materials and textures are shown.
+    The WEB06 back end is the authority on these rules.
 end note
 
 ' -----------------------------------------------------------------------------
@@ -22,8 +24,9 @@ package "Kitchen Configuration Aggregate (WEB06)" <<Rectangle>> {
         + version : Integer
     }
     note right of KitchenConfiguration
-        VIS04 consumes ONLY the configuration
-        with status = ACTIVE (BR 5).
+        VIS01 renders ONLY the configuration
+        with status = ACTIVE; VIS04 builds the
+        materials of that configuration.
     end note
 
     class KitchenConfigurationId <<vo>> {
@@ -36,19 +39,25 @@ package "Kitchen Configuration Aggregate (WEB06)" <<Rectangle>> {
     }
 
     class KitchenLayout <<vo>> {
-        + schemaVersion : Integer = 1
     }
+    note left of KitchenLayout
+        Floor and walls have a texture set
+        (WEB06: MATERIAL_REQUIRED; VIS04 BR 6).
+        Room surfaces have UVs in metres
+        (VIS02 D7).
+    end note
 
     class SceneElement <<entity>> {
-        + id : String
+        + elementId : String
         + name : String [0..1]
     }
     note bottom of SceneElement
-        Each scene object (VIS02 equipment or VIS03
-        assembly-line part) is rendered with distinct
-        textures and materials (AC 1, BR 1).
-        Separate meshes keep separate materials
-        to preserve Sprint 3 animation (BR 12).
+        Each object type (VIS02 equipment, VIS03
+        assembly-line part) has its own texture set;
+        elements of the same type vary through
+        color / roughness / metalness (AC 1, BR 1).
+        Procedural: material mandatory (BR 6).
+        Asset: material optional = override (BR 8, BR 9).
     end note
 
     enum ElementCategory <<enum>> {
@@ -57,33 +66,39 @@ package "Kitchen Configuration Aggregate (WEB06)" <<Rectangle>> {
     }
 
     abstract class ModelReference <<vo>> {
+        + source : "ASSET" | "PROCEDURAL"
     }
 
     class ProceduralModelReference <<vo>> {
-        + shape : String
+        + shape : "BOX" | "CYLINDER" | "SPHERE" | "DOME"
         + size : Vector3
     }
 
     class AssetModelReference <<vo>> {
-        + assetId : String
+        + assetId : KitchenAssetId
     }
 
     class MaterialProperties <<vo>> {
         + color : String [0..1]
         + roughness : Decimal [0..1]
         + metalness : Decimal [0..1]
-        + colorMapAssetId : String
+        + colorMapAssetId : String [0..1]
         + roughnessMapAssetId : String [0..1]
         + normalMapAssetId : String [0..1]
         + bumpMapAssetId : String [0..1]
     }
     note right of MaterialProperties
-        **VIS04 Invariants (AC 2, AC 3, BR 2, BR 3):**
-        - Mandatory for ProceduralModelReference (JSON-driven).
-        - Must include colorMapAssetId (sRGB) AND at least
-          one of roughnessMapAssetId, normalMapAssetId,
-          or bumpMapAssetId (linear data, BR 18).
-        - Invalid/incomplete sets are rejected as errors (BR 6, BR 15).
+        **Texture set (BR 6, AC 3):** colorMapAssetId AND one of
+        roughness / normal / bump map is MANDATORY when
+        - the material is required (floor, walls, procedural), or
+        - the material contains any *MapAssetId
+        (a partial set is rejected, WEB06).
+        A scalar-only material (e.g. { "color": "#aa0000" }) is
+        valid on an asset: it tints the model's own materials (D6).
+        **Values (BR 15):** color #RRGGBB; roughness, metalness in [0, 1].
+        Absent values: #ffffff / 1 / 0 (BR 16).
+        Normal + bump together are allowed (D10).
+        Color map in sRGB; other maps linear (BR 17).
     end note
 
     KitchenConfiguration "1" *-- "1" KitchenConfigurationId : identified by >
@@ -98,18 +113,28 @@ package "Kitchen Configuration Aggregate (WEB06)" <<Rectangle>> {
 }
 
 ' -----------------------------------------------------------------------------
-' KITCHEN ASSET AGGREGATE (WEB06) - Texture assets resolved into URLs
+' KITCHEN ASSET AGGREGATE (WEB06) - Texture and model assets resolved into URLs
 ' -----------------------------------------------------------------------------
 package "Kitchen Asset Aggregate (WEB06)" <<Rectangle>> {
 
     class KitchenAsset <<entity>> <<aggregateRoot>> {
         + format : String
-        + url : String
+        + path : String
+        + embeddedTextureSet : boolean [0..1]
     }
     note right of KitchenAsset
         Resolved in the response map as
         assets[assetId] = { kind, format, url }.
-        Validated by WEB06 prior to activation (BR 6).
+        Existence and kind are checked by the VIS01
+        activeConfigurationParser (BR 13).
+        embeddedTextureSet (MODEL only): every material
+        of the model has a colour map + roughness /
+        normal map. If false, elements using the model
+        need a material override with a texture set
+        (MODEL_TEXTURES_MISSING, BR 7).
+        Source textures and models stay owned by
+        LoadedAssets (VIS01); VIS04 only clones them
+        (BR 10).
     end note
 
     class KitchenAssetId <<vo>> {
@@ -125,7 +150,7 @@ package "Kitchen Asset Aggregate (WEB06)" <<Rectangle>> {
     KitchenAsset "1" --> "1" AssetKind : is a >
 }
 
-MaterialProperties ..> KitchenAsset : resolves texture maps\n(kind = TEXTURE) >
-AssetModelReference ..> KitchenAsset : resolves 3D model\n(kind = MODEL) >
+MaterialProperties ..> KitchenAsset : refers to texture maps\n(kind = TEXTURE) >
+AssetModelReference ..> KitchenAsset : refers to 3D model\n(kind = MODEL) >
 
 @enduml

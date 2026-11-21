@@ -1,0 +1,52 @@
+@startuml sequence_diagram_requirements
+title AI02 — One requirements execution
+hide footbox
+actor Manager
+participant "WEB07" as Web
+participant "Backoffice portal" as Portal
+participant "AI05" as Service
+participant "Backoffice private API" as Access
+participant "Planning records" as Records
+participant "AI06" as Inputs
+participant "AI02" as Planner
+participant "AI01 BOM" as Bom
+Manager -> Web : Submit forecast and scenario selection
+Web -> Portal : Request planning
+Portal -> Service : Invoke with scheduling information and selection
+Service -> Access : Verify active Manager
+Service -> Service : Check record access
+alt Access denied or authority unavailable
+  Service --> Portal : Access or service error
+else Authorised
+  Service -> Records : Reserve execution and claim attempt
+  alt Already running, completed or conflicting selection
+    Records --> Service : Stored state or conflict
+  else Attempt acquired
+    Service -> Records : POST /internal/planning/input-runs (fixed selection)
+    Records --> Service : Input attemptNo and expiry
+    Service -> Service : Build Execution from selection and input attemptNo
+    Service -> Inputs : load_inputs(Execution, Outcome)
+    Inputs -> Records : Read sealed inputs
+    opt Current registered attempt with unsealed inputs
+      Inputs -> Access : Read coherent Backoffice view (stock and receipts)
+      Inputs -> Records : Bind validated snapshot for input attempt
+    end
+    Inputs --> Service : ok(Input) or error(Diagnostic)
+    alt Invalid or unavailable inputs
+      Service -> Records : Record attempt failure
+    else Valid snapshot
+      Service -> Planner : requirements_plan(Input, Outcome)
+      loop Candidate schedule and forecast day
+        Planner -> Bom : bom_requirements(DailyInput, Outcome)
+        Bom --> Planner : Requirement rows or diagnostic
+        Planner -> Planner : Reconcile direct sales, receipts and allocations
+      end
+      Planner --> Service : Best feasible plan or diagnostic
+      Service -> Records : Complete current attempt against snapshot
+    end
+    Records --> Service : Authoritative execution state
+  end
+  Service --> Portal : Result, current status or error
+end
+Portal --> Web : Return execution outcome
+@enduml

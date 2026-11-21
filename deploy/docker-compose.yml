@@ -12,6 +12,17 @@ services:
       PORT: "3000"
       RELEASE_SHA: ${RELEASE_SHA}
       DEI_CONFIG_REVISION: ${DEI_CONFIG_REVISION}
+    volumes:
+      - type: bind
+        source: /var/lib/laprizza/shared-resources
+        target: /data/shared-resources
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /var/log/laprizza/shared-resources
+        target: /var/log/shared-resources
+        bind:
+          create_host_path: false
     expose:
       - "3000"
     networks:
@@ -51,10 +62,12 @@ services:
         condition: service_healthy
     ports:
       - "2228:8080"
+      - "2229:8443"
     volumes:
       # SYS02: approved networks list (read-only) and denied-access log
       - /etc/laprizza/access:/etc/nginx/access:ro
       - /var/log/laprizza/access:/var/log/nginx/sys02
+      - /etc/laprizza/tls:/etc/nginx/tls:ro
     networks:
       - backend
     healthcheck:

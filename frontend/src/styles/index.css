@@ -1717,6 +1717,66 @@ button:disabled {
   height: 100%;
 }
 
+.light-controls h2 {
+  margin: 0.5rem 0;
+  font-size: 1.1rem;
+}
+
+.light-controls__folders {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+  align-items: start;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.light-controls details {
+  padding: 0.65rem 0.9rem;
+  border: 1px solid #c5cbc7;
+  border-radius: 0.5rem;
+}
+
+.light-controls summary {
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.light-controls__switch, .light-controls__colour, .light-controls__field {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.55rem;
+}
+
+.light-controls__colour, .light-controls__field {
+  justify-content: space-between;
+}
+
+.light-controls__field {
+  flex-wrap: wrap;
+}
+
+.light-controls__field input {
+  flex-basis: 100%;
+  min-width: 0;
+}
+
+.light-controls input[type='checkbox'], .light-controls input[type='color'] {
+  width: auto;
+}
+
+.light-controls input[type='color'] {
+  width: 3rem;
+}
+
+.light-controls input[type='range'], .light-controls input[type='checkbox'] {
+  min-height: auto;
+}
+
+.light-controls input:disabled {
+  opacity: 0.55;
+}
+
 /* WEB05 - business management workspaces */
 .business-management {
   display: grid;
@@ -1895,3 +1955,46 @@ button:disabled {
 .business-management .table-scroll {
   overflow-x: auto;
 }
+
+/* GDP01: "My data" — contact details, allergens and consents. */
+.my-data {
+  display: grid;
+  gap: 1.25rem;
+  width: min(100%, 640px);
+}
+
+.my-data .auth-card {
+  width: 100%;
+}
+
+.allergen-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: 0.5rem 1rem;
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid #d9ded9;
+  border-radius: 8px;
+}
+
+.allergen-options:disabled {
+  opacity: 0.55;
+}
+
+.planning-workspace nav, .planning-workspace fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: .8rem;
+  margin-block: 1rem;
+}
+.planning-workspace fieldset { border: 1px solid currentColor; padding: 1rem; border-radius: .5rem; }
+.planning-workspace fieldset fieldset, .planning-workspace fieldset p { flex-basis: 100%; }
+.planning-workspace label { display: grid; gap: .3rem; }
+.planning-workspace input, .planning-workspace select { max-width: 100%; padding: .4rem; }
+.planning-workspace nav [aria-pressed="true"] { text-decoration: underline; text-underline-offset: .3rem; }
+.planning-workspace pre, .plan-table { overflow-x: auto; }
+.plan-comparison { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(27rem,100%),1fr)); gap: 1.5rem; }
+.plan-comparison article { min-width: 0; overflow-wrap: anywhere; }
+.planning-workspace td, .planning-workspace th { padding: .45rem; text-align: start; }
+.planning-workspace caption, .planning-workspace dt { text-align: start; font-weight: bold; }

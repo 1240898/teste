@@ -4,6 +4,7 @@ import {
   CustomerId,
   CustomerName,
   DietaryRestriction,
+  HealthDataConsent,
 } from '../../../src/modules/customer-management/domain/model/values.js';
 import { CustomerMapper } from '../../../src/modules/customer-management/infrastructure/persistence/CustomerMapper.js';
 
@@ -14,6 +15,8 @@ describe('BCK02 customer persistence mapping', () => {
       CustomerName.create('Ana Silva'),
       ContactInfo.create('ana@example.com', '+351912345678'),
       [DietaryRestriction.create('Lactose', 'Avoid dairy')],
+      null, 
+      HealthDataConsent.grant(new Date('2026-11-15T10:00:00.000Z')),
     );
 
     const persisted = CustomerMapper.toPersistence(customer);
@@ -22,6 +25,8 @@ describe('BCK02 customer persistence mapping', () => {
       name: 'Ana Silva',
       email: 'ana@example.com',
       phoneNumber: '+351912345678',
+      healthDataConsentGiven: true, 
+      healthDataConsentTimestamp: new Date('2026-11-15T10:00:00.000Z'),
     });
 
     const restored = CustomerMapper.toDomain({
@@ -32,6 +37,8 @@ describe('BCK02 customer persistence mapping', () => {
       dietary_restrictions: JSON.parse(persisted.dietaryRestrictions),
       user_id: null,
       active: true,
+      health_data_consent_given: persisted.healthDataConsentGiven, 
+      health_data_consent_timestamp: persisted.healthDataConsentTimestamp,
     });
     expect(restored.dietaryRestrictions.map((item) => item.toJSON())).toEqual([
       { name: 'Lactose', description: 'Avoid dairy', allergenId: null },

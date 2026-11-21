@@ -49,6 +49,9 @@ function createMemoryCustomerRepository() {
         ) ?? null
       );
     },
+    async update(id, change) {
+      return this.save(await change(await this.findById(id)));
+    },
     async save(customer) {
       customers.set(customer.id.getValue(), customer);
       return customer;
@@ -161,6 +164,7 @@ const customerBody = (overrides = {}) => ({
   phoneNumber: '+351912345678',
   email: 'ana@example.com',
   dietaryRestrictions: [{ name: 'Lactose', description: 'Avoid dairy' }],
+  healthDataConsent: true,
   ...overrides,
 });
 

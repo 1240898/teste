@@ -1,0 +1,8 @@
+# SYS08 - installed as /etc/cron.d/laprizza-backup (root:root, 0644).
+# Times are local (Europe/Lisbon). The daily run at 03:05 replaces that hour's
+# hourly run and adds the restore drill and the configuration copy.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+MAILTO=""
+5 0-2,4-23 * * * root /usr/local/sbin/laprizza-backup hourly >> /var/log/laprizza/backup/backup.log 2>&1
+5 3 * * *        root /usr/local/sbin/laprizza-backup daily  >> /var/log/laprizza/backup/backup.log 2>&1

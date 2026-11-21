@@ -1,0 +1,44 @@
+@startuml
+title WEB07 forecast and supplier preparation
+skinparam shadowing false
+actor Manager
+participant "Planning SPA" as SPA
+participant Gateway
+participant Backoffice
+participant Procurement
+participant "AI06 private confirmation adapter" as AI06
+
+group Save a forecast
+  Manager -> SPA : Enter demand per day, product and size
+  SPA -> SPA : Keep creationRequestId and submitted body
+  SPA -> Gateway : Create forecast
+  Gateway -> Backoffice : Authorise and check creation receipt
+  alt New valid request
+    Backoffice -> Backoffice : Save forecast, version and receipt together
+    Backoffice --> SPA : 201 with forecast ID and version
+  else Matching retry after a lost response
+    Backoffice --> SPA : Original 201 from the receipt
+  else Invalid entry or changed body for that request ID
+    Backoffice --> SPA : Validation error or 409
+  end
+end
+
+group Confirm supplier offers
+  Manager -> SPA : Export products and import supplier JSON
+  SPA -> Gateway : Request preview
+  Gateway -> Procurement : Manager request with supplier document
+  Procurement -> Backoffice : Verify access and product references
+  alt Valid import
+    Procurement --> SPA : Expiring preview and validation summary
+    Manager -> SPA : Confirm the reviewed preview
+    SPA -> Gateway : Confirm by preview ID
+    Gateway -> Procurement : Forward current Manager request
+    Procurement -> Backoffice : Check access and references again
+    Procurement -> AI06 : Store the assigned scenario/version once
+    AI06 --> Procurement : Confirmed version or validation error
+    Procurement --> SPA : Confirmation status
+  else Invalid import
+    Procurement --> SPA : Explain errors and retain confirmed versions
+  end
+end
+@enduml

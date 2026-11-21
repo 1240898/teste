@@ -1,0 +1,177 @@
+{
+  "componentConfigurations": [
+    {"productId":"base","sizeId":"PSIZE-0002","stockUnitsConsumed":1},
+    {"productId":"cheese","sizeId":"PSIZE-0002","stockUnitsConsumed":2},
+    {"productId":"ham","sizeId":"PSIZE-0002","stockUnitsConsumed":1}
+  ],
+  "demandLines": [
+    {
+      "productId":"PROD-90020",
+      "quantity":5,
+      "selectedComponents": [
+	{"productId":"base","quantity":1},
+	{"productId":"cheese","quantity":1},
+	{"productId":"ham","quantity":1}
+      ],
+      "sizeId":"PSIZE-0002",
+      "type":"pizza"
+    },
+    {
+      "productId":"PROD-90020",
+      "quantity":2,
+      "selectedComponents": [ {"productId":"base","quantity":1},  {"productId":"cheese","quantity":1} ],
+      "sizeId":"PSIZE-0002",
+      "type":"pizza"
+    }
+  ],
+  "id":"personalized",
+  "openingStock": [
+    {"availableUnits":7,"productId":"base","stockUnit":"unit"},
+    {"availableUnits":10,"productId":"cheese","stockUnit":"unit"},
+    {"availableUnits":4,"productId":"ham","stockUnit":"unit"}
+  ],
+  "pendingDeliveries": [],
+  "pizzaConfigurations": [
+    {
+      "components": [
+	{"productId":"base","quantity":1},
+	{"productId":"cheese","quantity":1},
+	{"productId":"ham","quantity":1}
+      ],
+      "productId":"PROD-90020"
+    }
+  ],
+  "products": [
+    {
+      "acquisitionType":"purchased",
+      "isActive":true,
+      "isPizza":false,
+      "isPizzaComponent":true,
+      "isSellable":false,
+      "kind":"terminal",
+      "productId":"base",
+      "stockUnit":"unit",
+      "stockUnitsPerSale":null,
+      "tracked":true
+    },
+    {
+      "acquisitionType":"purchased",
+      "isActive":true,
+      "isPizza":false,
+      "isPizzaComponent":true,
+      "isSellable":false,
+      "kind":"terminal",
+      "productId":"cheese",
+      "stockUnit":"unit",
+      "stockUnitsPerSale":null,
+      "tracked":true
+    },
+    {
+      "acquisitionType":"purchased",
+      "isActive":true,
+      "isPizza":false,
+      "isPizzaComponent":true,
+      "isSellable":false,
+      "kind":"terminal",
+      "productId":"ham",
+      "stockUnit":"unit",
+      "stockUnitsPerSale":null,
+      "tracked":true
+    },
+    {
+      "acquisitionType":"PRODUCED",
+      "isActive":true,
+      "isPizza":true,
+      "isPizzaComponent":false,
+      "isSellable":true,
+      "kind":"terminal",
+      "productId":"PROD-90020",
+      "stockUnit":null,
+      "stockUnitsPerSale":null,
+      "tracked":false
+    }
+  ],
+  "recipes": [],
+  "sizes": [ {"isActive":true,"sizeId":"PSIZE-0002"} ],
+  "supplierScenario": {
+    "id":"personalized",
+    "offers": [
+      {
+	"coveredUnits":5000,
+	"leadTimeDays":1,
+	"priceEur":"75.00",
+	"productId":"base",
+	"stockUnit":"unit",
+	"supplierId":"SUP-01"
+      },
+      {
+	"coveredUnits":2000,
+	"leadTimeDays":0,
+	"priceEur":"31.00",
+	"productId":"base",
+	"stockUnit":"unit",
+	"supplierId":"SUP-02"
+      },
+      {
+	"coveredUnits":250,
+	"leadTimeDays":2,
+	"priceEur":"5.00",
+	"productId":"base",
+	"stockUnit":"unit",
+	"supplierId":"SUP-03"
+      },
+      {
+	"coveredUnits":5000,
+	"leadTimeDays":1,
+	"priceEur":"75.00",
+	"productId":"cheese",
+	"stockUnit":"unit",
+	"supplierId":"SUP-01"
+      },
+      {
+	"coveredUnits":2000,
+	"leadTimeDays":0,
+	"priceEur":"31.00",
+	"productId":"cheese",
+	"stockUnit":"unit",
+	"supplierId":"SUP-02"
+      },
+      {
+	"coveredUnits":250,
+	"leadTimeDays":2,
+	"priceEur":"5.00",
+	"productId":"cheese",
+	"stockUnit":"unit",
+	"supplierId":"SUP-03"
+      },
+      {
+	"coveredUnits":5000,
+	"leadTimeDays":1,
+	"priceEur":"75.00",
+	"productId":"ham",
+	"stockUnit":"unit",
+	"supplierId":"SUP-01"
+      },
+      {
+	"coveredUnits":2000,
+	"leadTimeDays":0,
+	"priceEur":"31.00",
+	"productId":"ham",
+	"stockUnit":"unit",
+	"supplierId":"SUP-02"
+      },
+      {
+	"coveredUnits":250,
+	"leadTimeDays":2,
+	"priceEur":"5.00",
+	"productId":"ham",
+	"stockUnit":"unit",
+	"supplierId":"SUP-03"
+      }
+    ],
+    "status":"CONFIRMED",
+    "supplierIds": ["SUP-01", "SUP-02", "SUP-03" ],
+    "version":"1"
+  },
+  "version":"1"
+}

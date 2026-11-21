@@ -1,0 +1,54 @@
+@startuml
+title WEB07 execution and recovery
+skinparam shadowing false
+actor Manager
+participant "Planning SPA" as SPA
+participant Gateway
+participant "Procurement / AI05" as P
+participant "Backoffice records and access" as B
+participant "AI06 input adapter" as A
+participant "AI01 or AI02" as Calc
+
+Manager -> SPA : Select saved inputs and run
+SPA -> SPA : Create execution UUID and retain selection
+SPA -> Gateway : Submit execution
+Gateway -> P : Forward Manager request
+P -> B : Check access and claim attempt
+alt New eligible attempt
+  P -> A : Load selected inputs
+  A -> B : Open input view or read original snapshot
+  A -> B : Bind complete inputs to the run
+  A --> P : Sealed inputs or diagnostic
+  opt Inputs available
+    P -> Calc : Calculate
+    Calc --> P : Plan or diagnostic
+  end
+  P -> B : Save outcome for current attempt
+else Existing execution or denied access
+  B --> P : Stored state or access outcome
+end
+P --> Gateway : State or diagnostic
+Gateway --> SPA : Response may be lost
+
+loop While RUNNING and retryable is false, or once after response loss
+  SPA -> Gateway : Read result by the same execution ID
+  Gateway -> P : Forward Manager request
+  P -> B : Recheck access and read stored state
+  B --> P : State, retry eligibility and saved outcome
+  P --> SPA : State or diagnostic via Gateway
+end
+alt Completed
+  SPA --> Manager : Show saved result and input provenance
+else Expired RUNNING attempt or retryable FAILED
+  SPA --> Manager : Stop polling and offer Retry
+  opt Manager retries
+    SPA -> Gateway : Resubmit original ID and selection
+    Gateway -> P : Forward unchanged request
+    P -> B : Claim next eligible attempt and keep snapshot
+  end
+else Authorised lookup found no execution
+  SPA --> Manager : Offer Retry if the original request is available
+else Failed or access lost
+  SPA --> Manager : Show allowed feedback
+end
+@enduml

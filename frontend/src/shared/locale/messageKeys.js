@@ -44,6 +44,14 @@ const knownMessages = new Map([
   ],
   ['At least one active Administrator must remain', 'lastAdministrator'],
   ['User not found', 'userNotFound'],
+  // GDP01: customer profile, allergens and consents.
+  ['Invalid phone number', 'invalidPhoneNumber'],
+  ['Customer profile already exists', 'profileAlreadyCompleted'],
+  [
+    'Explicit consent is required to store allergen or dietary information',
+    'healthConsentRequired',
+  ],
+  ['Referenced allergen not found', 'allergenNotFound'],
 ]);
 
 export function messageKey(message, fallback = 'unknownMessage') {

@@ -182,6 +182,13 @@ if grep -q '/etc/laprizza/access:/etc/nginx/access' "$TARGET_COMPOSE"; then
   # The target release enforces SYS02: validate its network prerequisites.
   [[ -r "$ACCESS_LIST" ]] || { echo 'SYS02 allowed-networks file unavailable' >&2; exit 2; }
   [[ -d /var/log/laprizza/access ]] || { echo 'SYS02 denied-access log directory missing' >&2; exit 2; }
+  # SYS02: trusted proxies whose X-Forwarded-For identifies the real client.
+  TRUSTED_PROXIES="/etc/laprizza/access/trusted-proxies.conf"
+  [[ -r "$TRUSTED_PROXIES" ]] || { echo "SYS02 trusted-proxies file unavailable: $TRUSTED_PROXIES" >&2; exit 2; }
+  if grep -Ev '^[[:space:]]*(#.*)?$|^[[:space:]]*set_real_ip_from[[:space:]]+[0-9A-Fa-f:.]+(/[0-9]{1,3})?;[[:space:]]*(#.*)?$' "$TRUSTED_PROXIES" >/dev/null; then
+    echo "SYS02: $TRUSTED_PROXIES may only contain 'set_real_ip_from <address>[/<prefix length>];' lines and comments; no release was changed." >&2
+    exit 2
+  fi
   SMOKE_GATEWAY=$(sys02_gateway)
   [[ "$SMOKE_GATEWAY" =~ ^[0-9]+(\.[0-9]+){3}$ ]] || {
     echo 'SYS02: could not determine the laprizza-backend network gateway' >&2
@@ -199,6 +206,26 @@ else
   # The target release predates SYS02 and would serve every client.
   echo "SYS02: rollback to $SHA refused. This release predates the DEI network/VPN access restriction, and no VM-level enforcement is configured to keep the restriction in place. Roll back to a release that includes SYS02 instead." >&2
   exit 3
+fi
+
+
+# HTTPS: releases that mount the certificate need it on the VM.
+TLS_CERT="/etc/laprizza/tls/laprizza.crt"
+TLS_KEY="/etc/laprizza/tls/laprizza.key"
+# Keep identical in deploy.sh and rollback.sh.
+# Releases whose Compose file mounts the certificate serve HTTPS on 2229.
+uses_https() {
+  grep -q '/etc/laprizza/tls:/etc/nginx/tls' "$1"
+}
+if uses_https "$TARGET_COMPOSE"; then
+  [[ -r "$TLS_CERT" && -e "$TLS_KEY" ]] || {
+    echo "Rollback to $SHA refused: this release serves HTTPS but $TLS_CERT or $TLS_KEY is missing; no release was changed." >&2
+    exit 2
+  }
+  openssl x509 -in "$TLS_CERT" -noout -checkend 0 >/dev/null 2>&1 || {
+    echo "Rollback to $SHA refused: $TLS_CERT is invalid or expired; no release was changed." >&2
+    exit 2
+  }
 fi
 
 install -m 0750 "$0" "$OPT_RELEASES/$SHA/$TARGET_REV/rollback.sh"
@@ -235,29 +262,45 @@ verify_running_images() {
 }
 
 smoke() {
-  local failed=0 api_result api_status api_body
+  # Keep identical in deploy.sh and rollback.sh.
+  # $1: Compose file of the release being checked. Releases that mount the HTTPS
+  # certificate serve the application on 2229 (HTTPS) and only redirect on 2228;
+  # older releases serve it over HTTP on 2228.
+  local compose=$1 failed=0 api_result api_status api_body redirect
   local base_url="http://127.0.0.1:2228"
+  local -a tls=()
 
-  if ! curl --fail --silent --show-error --max-time 10 \
+  if uses_https "$compose"; then
+    base_url="https://127.0.0.1:2229"
+    tls=(--cacert "$TLS_CERT")
+    if ! redirect=$(curl --silent --show-error --max-time 10 --output /dev/null \
+      --write-out '%{http_code} %{redirect_url}' "http://127.0.0.1:2228/register") ||
+      [[ "$redirect" != '301 https://127.0.0.1:2229/register' ]]; then
+      echo 'Smoke check failed: HTTP port 2228 does not redirect approved clients to HTTPS' >&2
+      failed=1
+    fi
+  fi
+
+  if ! curl "${tls[@]}" --fail --silent --show-error --max-time 10 \
     "$base_url/api/v1/health" |
     python3 -c 'import json,sys; assert json.load(sys.stdin).get("status")=="ok"'; then
     echo 'Smoke check failed: API health' >&2
     failed=1
   fi
 
-  if ! curl --fail --silent --show-error --max-time 10 \
+  if ! curl "${tls[@]}" --fail --silent --show-error --max-time 10 \
     "$base_url/register" | grep -q 'id="root"'; then
     echo 'Smoke check failed: /register SPA entry' >&2
     failed=1
   fi
 
-  if ! curl --fail --silent --show-error --max-time 10 \
+  if ! curl "${tls[@]}" --fail --silent --show-error --max-time 10 \
     "$base_url/register/x/y" | grep -q 'id="root"'; then
     echo 'Smoke check failed: nested SPA entry' >&2
     failed=1
   fi
 
-  if api_result=$(curl --silent --show-error --max-time 10 \
+  if api_result=$(curl "${tls[@]}" --silent --show-error --max-time 10 \
     -w '\n%{http_code}' \
     "$base_url/api/v1/does-not-exist"); then
 
@@ -275,6 +318,7 @@ smoke() {
 
   return "$failed"
 }
+
 restore_active_release_images() {
   local active_manifest="$ROOT/releases/$OLD_SHA/$OLD_REV/manifest.json"
   local active_archive="$ROOT/releases/$OLD_SHA/$OLD_REV/images.tar"
@@ -314,7 +358,7 @@ if [[ $rc -eq 0 ]] && ! verify_running_images "$TARGET_COMPOSE" "$api_id" "$web_
   echo 'Rollback containers do not use the image IDs in the retained manifest.' >&2
   rc=1
 fi
-if [[ $rc -eq 0 ]]; then smoke; rc=$?; fi
+if [[ $rc -eq 0 ]]; then smoke "$TARGET_COMPOSE"; rc=$?; fi
 if [[ $rc -ne 0 ]]; then
   echo 'Requested rollback release failed validation; restoring the release active before this operation.' >&2
   export RELEASE_SHA="$OLD_SHA" DEI_CONFIG_REVISION="$OLD_REV"
@@ -329,7 +373,7 @@ if [[ $rc -ne 0 ]]; then
     echo 'Restored containers do not use the IDs recorded for the previously active release.' >&2
     restore_rc=1
   fi
-  if [[ $restore_rc -eq 0 ]]; then smoke; restore_rc=$?; fi
+  if [[ $restore_rc -eq 0 ]]; then smoke "$OLD_COMPOSE"; restore_rc=$?; fi
   set -e
   [[ $restore_rc -eq 0 ]] || echo 'Restoration of the prior active release also failed; inspect VM logs.' >&2
   exit 1
@@ -356,7 +400,7 @@ then
   if [[ $restore_rc -eq 0 ]] && ! verify_running_images "$OLD_COMPOSE" "$RESTORE_API_ID" "$RESTORE_WEB_ID"; then
     restore_rc=1
   fi
-  if [[ $restore_rc -eq 0 ]]; then smoke; restore_rc=$?; fi
+  if [[ $restore_rc -eq 0 ]]; then smoke "$OLD_COMPOSE"; restore_rc=$?; fi
   set -e
   [[ $restore_rc -eq 0 ]] || echo 'The previously active release could not be revalidated after the rollback manifest write failed.' >&2
   exit 1

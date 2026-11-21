@@ -4,19 +4,31 @@ import {
   CustomerName,
   ContactInfo,
   DietaryRestriction,
+  HealthDataConsent,
   LinkedUserId,
 } from '../../domain/model/values.js';
 export class CustomerMapper {
   static toDomain(row) {
+    const consent = HealthDataConsent.restore(
+      row.health_data_consent_given ?? false,
+      row.health_data_consent_timestamp ?? null,
+    );
     return Customer.restore({
       id: CustomerId.create(row.id),
       name: CustomerName.create(row.name),
       contactInfo: ContactInfo.create(row.email, row.phone_number),
-      dietaryRestrictions: row.dietary_restrictions.map((x) =>
-        DietaryRestriction.create(x.name, x.description, x.allergenId ?? null),
-      ),
+      dietaryRestrictions: consent.isGiven()
+        ? row.dietary_restrictions.map((x) =>
+            DietaryRestriction.create(
+              x.name,
+              x.description,
+              x.allergenId ?? null,
+            ),
+          )
+        : [],
       userId: row.user_id ? LinkedUserId.create(row.user_id) : null,
       active: row.active,
+      healthDataConsent: consent,
     });
   }
   static toPersistence(c) {
@@ -34,6 +46,8 @@ export class CustomerMapper {
         .map((x) => ({ restriction: x.name, allergenId: x.allergenId })),
       userId: c.userId?.getValue() ?? null,
       active: c.active,
+      healthDataConsentGiven: c.healthDataConsent.isGiven(),
+      healthDataConsentTimestamp: c.healthDataConsent.timestamp,
     };
   }
 }

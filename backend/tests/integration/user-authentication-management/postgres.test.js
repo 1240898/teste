@@ -378,6 +378,7 @@ describeDB(
           name: 'Customer',
           email: 'http@example.com',
           password: 'StrongPass123!',
+          phoneNumber: '+351912345678',
         });
       expect(registered.status).toBe(201);
       expect(registered.body.active).toBe(false);

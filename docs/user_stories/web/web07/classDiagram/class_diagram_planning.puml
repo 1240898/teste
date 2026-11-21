@@ -1,0 +1,44 @@
+@startuml
+allowmixing
+title WEB07 planning components
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+hide empty members
+
+package "SPA" {
+  class "Manager module slot" as Slot <<existing>>
+  class PlanningPage
+  class ForecastEditor
+  class SupplierScenarioForm
+  class PlanningResults
+  class ExecutionTracker
+  class planningApi <<adapter>>
+  class apiClient <<existing>>
+
+  Slot --> PlanningPage : mounts
+  PlanningPage *-- ForecastEditor
+  PlanningPage *-- SupplierScenarioForm
+  PlanningPage *-- PlanningResults
+  ForecastEditor --> planningApi
+  SupplierScenarioForm --> planningApi
+  PlanningResults --> ExecutionTracker
+  ExecutionTracker --> planningApi
+  planningApi --> apiClient
+}
+
+package "Server" {
+  component Gateway
+  component Backoffice
+  component "Procurement / AI05" as Procurement
+  component "AI06 input adapter" as AI06
+  component "AI01 / AI02 calculations" as Prolog
+  Gateway --> Backoffice : forecasts and export
+  Gateway --> Procurement : scenarios and results
+  Procurement --> Backoffice : verify access and retain records
+  Procurement --> AI06 : fixed selection
+  AI06 --> Backoffice : authorised input reads
+  Procurement --> Prolog : sealed inputs
+}
+
+apiClient --> Gateway : Manager JSON requests
+@enduml

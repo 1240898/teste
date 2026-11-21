@@ -14,6 +14,8 @@ import { register as registerStockInformationManagement } from './stock-informat
 import { register as registerUserAuthenticationManagement } from './user-authentication-management/index.js';
 import { register as registerKitchenConfigurationManagement } from './kitchen-configuration-management/index.js';
 import { register as registerAuthorizationEnforcement } from './authorization-enforcement/index.js';
+import { register as registerSharedResources } from './shared-resources/index.js';
+import { register as registerPlanningInputs } from './planning-inputs/index.js';
 
 export function registerModules(
   router,
@@ -31,6 +33,10 @@ export function registerModules(
     catalogueModule,
     kitchenConfigurationModule,
     authorizationModule,
+    sharedResourcesModule,
+    forecastModule,
+    procurementScenarios,
+    planningInputModule,
   } = {},
 ) {
   registerUserAuthenticationManagement(router, userModule);
@@ -46,4 +52,8 @@ export function registerModules(
   registerProductCatalogueAndInformation(router, catalogueModule);
   registerKitchenConfigurationManagement(router, kitchenConfigurationModule);
   registerAuthorizationEnforcement(router, authorizationModule);
+  registerSharedResources(router, sharedResourcesModule);
+  if (forecastModule) router.use(forecastModule.router);
+  if (procurementScenarios) router.use(procurementScenarios.router);
+  registerPlanningInputs(router, planningInputModule);
 }

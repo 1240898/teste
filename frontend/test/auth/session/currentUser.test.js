@@ -30,7 +30,22 @@ describe('AA03 current user (GET /auth/me)', () => {
       name: 'Rui Costa',
       email: 'rui@example.com',
       roles: ['CUSTOMER', 'MANAGER'],
+      marketingConsent: false,
     });
+  });
+
+  test('GDP01: parseCurrentUser keeps the marketing consent (only true counts)', () => {
+    expect(
+      parseCurrentUser({ ...validUser, marketingConsent: true }).marketingConsent,
+    ).toBe(true);
+    expect(
+      parseCurrentUser({ ...validUser, marketingConsent: 'true' })
+        .marketingConsent,
+    ).toBe(false);
+    expect(
+      parseCurrentUser({ ...validUser, marketingConsent: undefined })
+        .marketingConsent,
+    ).toBe(false);
   });
 
   test.each([

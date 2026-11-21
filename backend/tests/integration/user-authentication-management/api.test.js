@@ -44,9 +44,13 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 async function register() {
-  const result = await request(app)
-    .post('/api/v1/users/register')
-    .send({ name: 'Ana', email, password, marketingConsent: true });
+  const result = await request(app).post('/api/v1/users/register').send({
+    name: 'Ana',
+    email,
+    password,
+    marketingConsent: true,
+    phoneNumber: '+351912345678',
+  });
   customerId = result.body.id;
   return result;
 }
@@ -178,10 +182,18 @@ describe('BCK01 HTTP contract (real security, in-memory persistence)', () => {
       { password: 'short' },
       { password: 'é'.repeat(37) },
       { marketingConsent: 'true' },
+      // GDP01: the phone number is required (format: selfService.api.test.js).
+      { phoneNumber: undefined },
     ]) {
       const result = await request(app)
         .post('/api/v1/users/register')
-        .send({ name: 'Ana', email, password, ...change });
+        .send({
+          name: 'Ana',
+          email,
+          password,
+          phoneNumber: '+351912345678',
+          ...change,
+        });
       expect(result.status).toBe(400);
       expect(JSON.stringify(result.body)).not.toContain(password);
     }
@@ -201,9 +213,12 @@ describe('BCK01 HTTP contract (real security, in-memory persistence)', () => {
     await register();
     expect(
       (
-        await request(app)
-          .post('/api/v1/users/register')
-          .send({ name: 'Other', email: email.toUpperCase(), password })
+        await request(app).post('/api/v1/users/register').send({
+          name: 'Other',
+          email: email.toUpperCase(),
+          password,
+          phoneNumber: '+351912345678',
+        })
       ).status,
     ).toBe(409);
     const failures = [];
@@ -485,7 +500,13 @@ describe('AA03 internal role resolution (HTTP)', () => {
   test('IT01: a new account always has CUSTOMER; a supplied role is rejected', async () => {
     const withRole = await request(app)
       .post('/api/v1/users/register')
-      .send({ name: 'Ana', email, password, roles: ['MANAGER'] });
+      .send({
+        name: 'Ana',
+        email,
+        password,
+        phoneNumber: '+351912345678',
+        roles: ['MANAGER'],
+      });
     expect(withRole.status).toBe(400);
     expect((await register()).body.roles).toEqual(['CUSTOMER']);
   });

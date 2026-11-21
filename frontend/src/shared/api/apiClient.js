@@ -43,7 +43,16 @@ async function request(method, path, options = {}) {
 async function send(
   method,
   path,
-  { body, query, signal, accessToken, csrfToken, credentials = 'omit' } = {},
+  {
+    body,
+    query,
+    signal,
+    accessToken,
+    csrfToken,
+    credentials = 'omit',
+    headers: extraHeaders,
+    responseType = 'json',
+  } = {},
 ) {
   const { apiBaseUrl, apiTimeoutMs } = getAppConfig();
   // Keep credentials within the configured API even when an adapter encodes
@@ -57,8 +66,16 @@ async function send(
 
   const search = new URLSearchParams(query).toString();
   const url = `${apiBaseUrl}${path}${search ? `?${search}` : ''}`;
-  const headers = { Accept: 'application/json' };
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  const download = responseType === 'blob';
+  const headers = {
+    ...extraHeaders,
+    Accept: download ? 'application/octet-stream' : 'application/json',
+  };
+  const binaryBody = typeof Blob !== 'undefined' && body instanceof Blob;
+  if (body !== undefined)
+    headers['Content-Type'] = binaryBody
+      ? 'application/octet-stream'
+      : 'application/json';
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
   if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
 
@@ -78,13 +95,14 @@ async function send(
     const response = await fetch(url, {
       method,
       headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: binaryBody ? body : JSON.stringify(body),
       credentials,
       cache: 'no-store',
       redirect: 'error',
       signal: controller.signal,
     });
     if (response.status === 204 && response.ok) return null;
+    if (download && response.ok) return await response.blob();
 
     let payload;
     try {
@@ -102,7 +120,7 @@ async function send(
     if (!response.ok) {
       const message = payload?.error?.message;
       const isClientError = response.status < 500;
-      throw new ApiError(
+      const error = new ApiError(
         response.status,
         isClientError && typeof message === 'string' && message.trim()
           ? message
@@ -111,6 +129,8 @@ async function send(
         // WEB06 (ALN-2): validation issues only from a 4xx body.
         isClientError ? payload?.error?.details : undefined,
       );
+      if (isClientError && typeof payload?.error?.code === 'string') error.code = payload.error.code;
+      throw error;
     }
     return payload;
   } catch (error) {

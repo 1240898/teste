@@ -14,7 +14,7 @@ test('looks up a BCK01 business user ID and normalizes its prefix', async () => 
     active: true,
   });
   expect(database.query).toHaveBeenCalledWith(
-    'SELECT email, active, roles FROM users WHERE id = $1',
+    'SELECT name, email, active, roles FROM users WHERE id = $1',
     ['USR-00001'],
   );
 });

@@ -55,8 +55,8 @@ package "Front-End (SPA) - visualization (VIS01, reused)" <<Rectangle>> {
     }
 
     class LoadedAssets {
-        + model(assetId): GLTF
-        + texture(assetId): Texture
+        + getModel(assetId): GLTF
+        + getTexture(assetId): Texture
         + dispose(): void
     }
         note bottom of LoadedAssets
@@ -152,7 +152,7 @@ package "Front-End (SPA) - visualization/scene (VIS02)" <<Rectangle>> {
         userData = { elementId, category, type, name }.
         PROCEDURAL: Mesh(shapes.geometry(shape, size),
           materials.create(element.material))
-        ASSET: SkeletonUtils.clone(assets.model(assetId).scene)
+        ASSET: SkeletonUtils.clone(assets.getModel(assetId).scene)
           (geometry / material SHARED with LoadedAssets);
           if element.material: materials.applyOverride(clone,
           element.material) (WEB06 ALN-6)
@@ -175,6 +175,7 @@ package "Front-End (SPA) - visualization/scene (VIS02)" <<Rectangle>> {
         every size component finite and > 0 (else
         ElementBuildError "invalid-number"),
         origin at the bottom centre (WEB06 2.4.3, BR 7).
+        UVs rewritten in metres per face (VIS04 D13).
         Cache key "shape|x|y|z"; dispose() releases each once.
     end note
 
@@ -215,17 +216,19 @@ package "Front-End (SPA) - visualization/scene (VIS02)" <<Rectangle>> {
 package "Other VIS stories (reference)" <<Rectangle>> {
 
     interface KitchenMaterialFactory <<VIS04>> {
-        + create(properties: MaterialProperties): Material
+        + create(properties: MaterialProperties, options?: { required?: boolean }): Material
         + applyOverride(root: Object3D, properties: MaterialProperties): void
-        + dispose(): void
+        + dispose(release?: (resource) => void): void
     }
     note bottom of KitchenMaterialFactory
         VIS02-ALN-2. One instance per build,
-        created by createMaterialFactory(assets).
+        created by createKitchenMaterialFactory(assets)
+        (injected as the createMaterialFactory option).
         MeshStandardMaterial (PBR) with the texture
         set of LoadedAssets; dispose() releases only
-        the materials it created (textures belong
-        to LoadedAssets). Room textures: RepeatWrapping.
+        the materials and texture clones it created
+        (source textures belong to LoadedAssets).
+        Every map: RepeatWrapping (metre UVs).
     end note
 
     class AssemblyLineModule <<VIS03>> {
@@ -297,7 +300,7 @@ KitchenRoomBuilder ..> sceneObjectNames
 
 SceneElementFactory --> ProceduralShapeFactory : geometry(shape, size) >
 SceneElementFactory --> KitchenMaterialFactory : create / applyOverride >
-SceneElementFactory --> LoadedAssets : model(assetId) >
+SceneElementFactory --> LoadedAssets : getModel(assetId) >
 SceneElementFactory ..> placementTransform : applyPlacement() >
 SceneElementFactory ..> ElementBuildError : throws >
 AssemblyLineModule --> SceneElementFactory : create ASSEMBLY_LINE elements >

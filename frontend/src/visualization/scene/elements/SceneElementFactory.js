@@ -1,6 +1,7 @@
 import { Group, Mesh } from 'three';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { MissingTextureError } from '../materials/KitchenMaterialFactory.js';
+import { MaterialBuildError } from '../materials/MaterialBuildError.js';
 import { ElementBuildError } from './ElementBuildError.js';
 import { applyPlacement } from './placementTransform.js';
 import { ShapeError } from './ProceduralShapeFactory.js';
@@ -43,7 +44,7 @@ export function createSceneElementFactory({
 }) {
   function buildProcedural(element) {
     const { shape, size } = element.model;
-    const geometry = shapes.geometry(shape, size);
+    const geometry = shapes.geometry(shape, size, element.placement?.scale);
     const material = materials.create(element.material);
     return new Mesh(geometry, material);
   }
@@ -105,6 +106,10 @@ export function createSceneElementFactory({
           });
         if (error instanceof MissingTextureError)
           throw new ElementBuildError(element.id, 'asset-missing', {
+            cause: error,
+          });
+        if (error instanceof MaterialBuildError)
+          throw new ElementBuildError(element.id, 'invalid-material', {
             cause: error,
           });
         throw error;

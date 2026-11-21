@@ -4,6 +4,7 @@ import { authApi } from '../services/authApi.js';
 import FormFeedback, { FieldError, FieldLabel } from '../../../shared/feedback/FormFeedback.jsx';
 import { useLocale } from '../../../shared/locale/localeContext.js';
 import { apiMessageKey } from '../../../shared/locale/messageKeys.js';
+import PhoneNumberField from '../../customer-profile/PhoneNumberField.jsx';
 
 export default function LocalRegistrationPage({ onBackToSignIn }) {
   const { t } = useLocale();
@@ -26,6 +27,8 @@ export default function LocalRegistrationPage({ onBackToSignIn }) {
         email: fields.get('email'),
         password: fields.get('password'),
         marketingConsent: fields.has('marketingConsent'),
+        // GDP01: stored in the customer record created with the account.
+        phoneNumber: fields.get('phoneNumber'),
       });
       setInvitationDelivery(
         result?.invitationDelivery?.deliveryStatus ?? 'SENT',
@@ -87,6 +90,11 @@ export default function LocalRegistrationPage({ onBackToSignIn }) {
           <FieldError
             id="registration-email"
             issue={errors['registration-email']}
+          />
+                    <PhoneNumberField
+            id="registration-phone"
+            fieldProps={fieldProps}
+            errors={errors}
           />
           <FieldLabel id="registration-password" label="password" />
           <input

@@ -7,6 +7,7 @@ skinparam linetype ortho
 
 class "AI01 BOM module" as Module <<Prolog module>> {
   bom_requirements(Input, Outcome)
+  stock_lists(Lines, Withdraw, Order)
   prepare_bom(Input, Prepared)
   net_requirements(Prepared, Lines)
 }

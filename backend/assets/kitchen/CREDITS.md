@@ -4,6 +4,8 @@ Every model and texture file of `manifest.json` is listed here (usVIS02 BR 14, D
 The equipment models are made by the team in code: they are generated from the
 recipes in `backend/scripts/kitchen-models/models.js` by `npm run kitchen:models`.
 They have no textures; the layout JSON gives each element its texture set.
+The textures are CC0 PBR maps from ambientCG (1k PNG, OpenGL normal maps), as
+required by usVIS04 BR 22 and D18; they replace the demo placeholders.
 Third-party files may only be added when their licence allows reuse (CC0 or CC BY);
 a CC BY file must keep the author, the source URL and the licence below.
 
@@ -30,12 +32,12 @@ a CC BY file must keep the author, the source URL and the licence below.
 | AST-MDL-PIZZA-PEEL-01 | models/pizza-peel-01.glb | Pizza peel | LaPrizza team | `npm run kitchen:models` (scripts/kitchen-models) | Project licence |
 | AST-MDL-PAN-01 | models/pan-01.glb | Frying pan | LaPrizza team | `npm run kitchen:models` (scripts/kitchen-models) | Project licence |
 | AST-MDL-POT-01 | models/pot-01.glb | Stock pot with lid | LaPrizza team | `npm run kitchen:models` (scripts/kitchen-models) | Project licence |
-| AST-TEX-TILES-COLOR | textures/tiles-color.png | Floor tiles - colour map (placeholder) | LaPrizza team | `npm run kitchen:demo-assets` | Project licence |
-| AST-TEX-TILES-NORMAL | textures/tiles-normal.png | Floor tiles - normal map (placeholder) | LaPrizza team | `npm run kitchen:demo-assets` | Project licence |
-| AST-TEX-PLASTER-COLOR | textures/plaster-color.png | Wall plaster - colour map (placeholder) | LaPrizza team | `npm run kitchen:demo-assets` | Project licence |
-| AST-TEX-PLASTER-ROUGH | textures/plaster-rough.png | Wall plaster - roughness map (placeholder) | LaPrizza team | `npm run kitchen:demo-assets` | Project licence |
-| AST-TEX-STEEL-COLOR | textures/steel-color.png | Brushed steel - colour map (placeholder) | LaPrizza team | `npm run kitchen:demo-assets` | Project licence |
-| AST-TEX-STEEL-ROUGH | textures/steel-rough.png | Brushed steel - roughness map (placeholder) | LaPrizza team | `npm run kitchen:demo-assets` | Project licence |
-| AST-TEX-STEEL-NORMAL | textures/steel-normal.png | Brushed steel - normal map (placeholder) | LaPrizza team | `npm run kitchen:demo-assets` | Project licence |
-| AST-TEX-WOOD-COLOR | textures/wood-color.png | Wood - colour map (placeholder) | LaPrizza team | `npm run kitchen:demo-assets` | Project licence |
-| AST-TEX-WOOD-NORMAL | textures/wood-normal.png | Wood - normal map (placeholder) | LaPrizza team | `npm run kitchen:demo-assets` | Project licence |
+| AST-TEX-TILES-COLOR | textures/tiles-color.png | Floor tiles - colour map (Tiles074) | ambientCG | https://ambientcg.com/view?id=Tiles074 | CC0 1.0 |
+| AST-TEX-TILES-NORMAL | textures/tiles-normal.png | Floor tiles - normal map, OpenGL (Tiles074) | ambientCG | https://ambientcg.com/view?id=Tiles074 | CC0 1.0 |
+| AST-TEX-PLASTER-COLOR | textures/plaster-color.png | Wall plaster - colour map (Plaster001) | ambientCG | https://ambientcg.com/view?id=Plaster001 | CC0 1.0 |
+| AST-TEX-PLASTER-ROUGH | textures/plaster-rough.png | Wall plaster - roughness map (Plaster001) | ambientCG | https://ambientcg.com/view?id=Plaster001 | CC0 1.0 |
+| AST-TEX-STEEL-COLOR | textures/steel-color.png | Steel - colour map (Metal032) | ambientCG | https://ambientcg.com/view?id=Metal032 | CC0 1.0 |
+| AST-TEX-STEEL-ROUGH | textures/steel-rough.png | Steel - roughness map (Metal032) | ambientCG | https://ambientcg.com/view?id=Metal032 | CC0 1.0 |
+| AST-TEX-STEEL-NORMAL | textures/steel-normal.png | Steel - normal map, OpenGL (Metal032) | ambientCG | https://ambientcg.com/view?id=Metal032 | CC0 1.0 |
+| AST-TEX-WOOD-COLOR | textures/wood-color.png | Wood - colour map (Wood049) | ambientCG | https://ambientcg.com/view?id=Wood049 | CC0 1.0 |
+| AST-TEX-WOOD-NORMAL | textures/wood-normal.png | Wood - normal map, OpenGL (Wood049) | ambientCG | https://ambientcg.com/view?id=Wood049 | CC0 1.0 |

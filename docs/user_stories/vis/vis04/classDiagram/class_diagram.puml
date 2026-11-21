@@ -1,0 +1,287 @@
+
+
+@startuml class_diagram
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing true
+skinparam linetype ortho
+
+title Class Diagram (Design) - VIS04 Textures and Materials
+
+' -----------------------------------------------------------------------------
+' VIS01 - engine, configuration parser and asset owner (reused)
+' -----------------------------------------------------------------------------
+package "Front-End (SPA) - visualization (VIS01, reused)" <<Rectangle>> {
+
+    class ViewerEngine {
+        + load(configuration, assets, factories, signal): Promise<boolean>
+        + dispose(): void
+    }
+    note bottom of ViewerEngine
+        A build error (e.g. MaterialBuildError) makes load()
+        reject; the partial build is disposed and KitchenViewer
+        shows the "failed" state (D11).
+        dispose(): scene modules first, then LoadedAssets.
+    end note
+
+    class activeConfigurationParser <<module>> {
+        + parseActiveConfiguration(dto): ActiveKitchenConfigurationDTO
+    }
+    note bottom of activeConfigurationParser
+        Checks that every *MapAssetId exists and is an
+        asset of type TEXTURE (BR 13). VIS04 does not
+        repeat this check.
+    end note
+
+    class LoadedAssets {
+        + getModel(assetId: string): GLTF
+        + getTexture(assetId: string): Texture
+        + dispose(): void
+    }
+    note bottom of LoadedAssets
+        Owns all preloaded textures and models (BR 10).
+        getTexture() / getModel() return undefined for an
+        unknown id (VIS01 SceneAssetLoader).
+        Disposed only by ViewerEngine, after the scene modules.
+    end note
+}
+
+' -----------------------------------------------------------------------------
+' VIS02 - scene construction (reused; aligned by VIS04-ALN-3..5)
+' -----------------------------------------------------------------------------
+package "Front-End (SPA) - visualization/scene (VIS02)" <<Rectangle>> {
+
+    class KitchenLayoutModule <<factory: createKitchenLayoutModule>> {
+        - createMaterialFactory: (assets: LoadedAssets) => KitchenMaterialFactory
+        - materials: KitchenMaterialFactory
+        + build(context: SceneContext): void
+        + dispose(): void
+    }
+    note right of KitchenLayoutModule
+        createMaterialFactory option (default
+        createKitchenMaterialFactory, VIS02 ALN-2, D15),
+        called ONCE per build with context.assets.
+        Floor / walls: create() WITHOUT worldScaleUv (ALN-7).
+        dispose(): releases the scene, then materials.dispose().
+    end note
+
+    class KitchenRoomBuilder {
+        + build(dimensions, floorMaterial, wallMaterial, materials: KitchenMaterialFactory): Group
+    }
+    note bottom of KitchenRoomBuilder
+        Floor and walls: materials.create(material)
+        (default required = true). Room surfaces have UVs
+        in metres (VIS02 D7). Replaces the VIS01
+        KitchenFloorModule, whose own color / roughness
+        are not carried over (VIS04-ALN-5).
+    end note
+
+    class SceneElementFactory {
+        - assets: LoadedAssets
+        - shapes: ProceduralShapeFactory
+        - materials: KitchenMaterialFactory
+        + create(element: SceneElementDTO): Group
+        + release(root: Group): void
+    }
+    note right of SceneElementFactory
+        PROCEDURAL: geometry from shapes;
+          materials.create(element.material, { required: true }).
+        ASSET: root = SkeletonUtils.clone(gltf.scene) (D16);
+          only if element.material is present:
+          materials.applyOverride(root, element.material);
+          otherwise the model keeps its own textures (BR 8).
+        MaterialBuildError -> ElementBuildError(element.id,
+          "invalid-material", { cause }) (VIS02 D9, ALN-8),
+          like ShapeError and MissingTextureError.
+    end note
+
+    class ElementBuildError <<error, VIS02>> {
+        + elementId: string
+        + reason: "unknown-shape" | "invalid-number" | "asset-missing" | "asset-kind" | "invalid-material"
+    }
+
+    class ProceduralShapeFactory {
+        + geometry(shape, size): BufferGeometry
+    }
+    note bottom of ProceduralShapeFactory
+        createProceduralShapeFactory() (VIS02).
+        Changed (VIS04-ALN-4, D13): after scale, before
+        cache: BOX uv x face size; CYLINDER / SPHERE / DOME
+        u x perimeter, v x height; cylinder caps planar.
+        Bounding box and cache key unchanged.
+    end note
+}
+
+' -----------------------------------------------------------------------------
+' VIS04 - materials contract, implementation and helpers
+' -----------------------------------------------------------------------------
+package "Front-End (SPA) - visualization/scene/materials (VIS04)" <<Rectangle>> {
+
+    interface KitchenMaterialFactory {
+        + create(properties: MaterialPropertiesDTO, options?: { required?: boolean }): Material
+        + applyOverride(root: Object3D, properties: MaterialPropertiesDTO): void
+        + dispose(release?: (resource) => void): void
+    }
+    note bottom of KitchenMaterialFactory
+        Contract defined by VIS02 (same name, ALN-2).
+        It returns Material; the VIS04 implementation
+        returns MeshStandardMaterial (a subtype, D2),
+        so the contract is respected.
+    end note
+
+    class createKitchenMaterialFactory <<function, KitchenMaterialFactory.js>> {
+        - assets: LoadedAssets
+        - materials: Map<string, Material>
+        - createdMaterials: Material[]
+        - createdTextures: Texture[]
+        + createKitchenMaterialFactory(assets: LoadedAssets): KitchenMaterialFactory
+        - create(properties, options = { required: true }): MeshStandardMaterial
+        - applyOverride(root: Object3D, properties): void
+        - dispose(release?): void
+        - prepareMap(assetId: string, colorSpace: ColorSpace): Texture
+    }
+    note right of createKitchenMaterialFactory
+        EXISTING VIS02 baseline, REFINED by VIS04 (D15):
+        returns an object with the KitchenMaterialFactory
+        operations (no separate class). KitchenLayoutModule
+        gets it through its createMaterialFactory option;
+        VIS03 AssemblyLineModule calls it directly.
+        create(): parse(properties, options) (VIS04);
+        cache by JSON of the DTO -> identical properties
+        share one material (D5, baseline behaviour kept).
+        prepareMap(): getTexture(id); undefined ->
+        MissingTextureError(assetId) (baseline, last guard);
+        ALWAYS clones (D3, replaces the baseline rule);
+        wrapS = wrapT = RepeatWrapping on every map
+        (worldScaleUv removed, ALN-7); colorSpace =
+        SRGBColorSpace (color map) | NoColorSpace (others).
+        Defaults #ffffff / 1 / 0 replace #d9d6cf / 0.8 (BR 16).
+        applyOverride(): parse(properties, { required: false });
+        - with maps -> create() and
+          helper.applyToMeshes(root, material)
+        - scalars only -> helper.tintMeshes(root, dto);
+          returned clones tracked in createdMaterials[]
+        dispose(release?): releases ONLY its materials,
+        tinted clones and texture clones; idempotent.
+        Source textures / models: LoadedAssets.
+    end note
+
+    class MissingTextureError <<error, existing>> {
+        + assetId: string
+    }
+
+    class MaterialPropertiesDTO <<DTO>> {
+        + color: string [0..1]
+        + roughness: number [0..1]
+        + metalness: number [0..1]
+        + colorMapAssetId: string [0..1]
+        + roughnessMapAssetId: string [0..1]
+        + normalMapAssetId: string [0..1]
+        + bumpMapAssetId: string [0..1]
+    }
+    note bottom of MaterialPropertiesDTO
+        Exactly the keys accepted by the WEB06 validator
+        (any other key -> UNKNOWN_PROPERTY).
+        Texture set (color map + one of roughness / normal /
+        bump) mandatory only when the material is required
+        (floor, walls, procedural) or has any map (BR 6).
+    end note
+
+    class MaterialParser <<module>> {
+        + DEFAULTS = { color: "#ffffff", roughness: 1, metalness: 0 }
+        + parse(properties: MaterialPropertiesDTO, options: { required: boolean }): MaterialPropertiesDTO
+    }
+    note right of MaterialParser
+        Light validation; the back end is authoritative (D1):
+        - roughness / metalness within [0, 1]
+        - color matches #RRGGBB
+        - BR 6: if required OR any *MapAssetId present ->
+          colorMapAssetId AND one of roughness / normal / bump
+        - any map present (required material or
+          override with maps): fills DEFAULTS (BR 16, D14)
+        - scalars-only override: absent scalars NOT filled
+        Does not check texture existence (BR 13, VIS01).
+    end note
+
+    class MaterialApplicationHelper <<module>> {
+        + applyToMeshes(root: Object3D, material: Material): void
+        + tintMeshes(root: Object3D, scalars: MaterialPropertiesDTO): Material[]
+    }
+    note right of MaterialApplicationHelper
+        root.traverse(): changes only Mesh nodes; geometry
+        and UV attributes preserved (BR 9, BR 19, D6).
+        applyToMeshes: every mesh gets the material; an
+        array of materials gets it in every entry.
+        tintMeshes: each distinct original material (array
+        entries too) is cloned ONCE (Map<original, clone>);
+        meshes that shared it share the clone. Only the given
+        color / roughness / metalness are set; maps kept;
+        originals unchanged. Returns the clones so the
+        factory can dispose them.
+    end note
+
+    class MaterialBuildError <<error>> {
+        + property: string
+        + reason: "invalid-range" | "invalid-color" | "incomplete-maps"
+    }
+}
+
+' -----------------------------------------------------------------------------
+' THIRD-PARTY LIBRARY (Three.js)
+' -----------------------------------------------------------------------------
+package "three (npm)" <<Rectangle>> {
+    class Texture {
+        + clone(): Texture
+        + dispose(): void
+    }
+    class Material {
+        + clone(): Material
+        + dispose(): void
+    }
+    class MeshStandardMaterial
+    class Object3D {
+        + traverse(callback): void
+    }
+    class Mesh {
+        + material: Material | Material[]
+    }
+    class SkeletonUtils <<three/addons/utils>> {
+        + clone(source: Object3D): Object3D
+    }
+}
+
+' -----------------------------------------------------------------------------
+' RELATIONSHIPS
+' -----------------------------------------------------------------------------
+ViewerEngine o-- KitchenLayoutModule : builds / disposes >
+ViewerEngine --> LoadedAssets : disposes after modules >
+activeConfigurationParser ..> LoadedAssets : asset ids validated\nbefore loading >
+
+KitchenLayoutModule ..> createKitchenMaterialFactory : createMaterialFactory option,\nonce per build >
+KitchenLayoutModule --> KitchenMaterialFactory : owns / disposes >
+KitchenLayoutModule --> KitchenRoomBuilder : uses >
+KitchenLayoutModule --> SceneElementFactory : uses >
+KitchenRoomBuilder ..> KitchenMaterialFactory : create() >
+SceneElementFactory ..> KitchenMaterialFactory : create() / applyOverride() >
+SceneElementFactory --> ProceduralShapeFactory : geometry >
+SceneElementFactory ..> SkeletonUtils : clone(gltf.scene) >
+SceneElementFactory --> LoadedAssets : getModel() >
+SceneElementFactory ..> ElementBuildError : wraps MaterialBuildError >
+
+createKitchenMaterialFactory ..|> KitchenMaterialFactory : returns an object\nwith these operations >
+createKitchenMaterialFactory --> LoadedAssets : getTexture(assetId) >
+createKitchenMaterialFactory ..> MaterialParser : parse() >
+createKitchenMaterialFactory ..> MissingTextureError : throws >
+createKitchenMaterialFactory ..> MaterialApplicationHelper : applyToMeshes()\ntintMeshes() >
+createKitchenMaterialFactory ..> MaterialPropertiesDTO : configured from >
+createKitchenMaterialFactory --> MeshStandardMaterial : creates / disposes >
+createKitchenMaterialFactory --> Texture : clones / disposes >
+MaterialParser ..> MaterialPropertiesDTO : validates / returns >
+MaterialParser ..> MaterialBuildError : throws >
+MaterialApplicationHelper ..> Object3D : traverses >
+MaterialApplicationHelper ..> Mesh : sets material >
+MaterialApplicationHelper ..> Material : clones (tint) >
+MeshStandardMaterial --|> Material
+Mesh --|> Object3D
+
+@enduml

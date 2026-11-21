@@ -84,6 +84,13 @@ Criteria from related stories that constrain AA02 (not owned, but must hold for 
 
 **Answer 2:** First login with an external identity provider: Yes. On the first successful authentication through an external identity provider, an account with the Customer role must be created automatically and activated. No invitation is required.
 
+**Question 3:** 1. Phone number during the first external login (AA02). In the response to discussion 7485, it was noted that the first login via an external provider automatically creates an active account with the "Customer" role. External providers (e.g., Google) typically supply a name and email address but not a phone number—which is a mandatory field in the customer profile (discussion 6830). How should the customer profile be handled in this scenario? For example: (a) the account is created, and the user is prompted to provide a phone number before accessing customer features; (b) the profile is created without a phone number and completed at a later time; or (c) another approach you might prefer.
+
+/2. Email address already in use by an existing account (AA02). If a user authenticates for the first time via an external provider, and the verified email address is already associated with an existing LaPrizza account (e.g., a local account created via public registration, or an inactive account with a pending invitation), what should happen? (a) Automatically link the external provider to that existing account; (b) reject the external login and only allow the provider to be linked once the user has signed in using their existing account credentials (or, in the case of an invitation, via the invitation itself); or (c) another rule.
+
+**Answer 3:** Phone number on first external login (AA02): The account should be created automatically and become active following successful external authentication. If the provider does not supply a phone number, the user must be asked to provide it before accessing customer functionalities.
+
+Email associated with an existing account (AA02): Duplicate accounts must not be created. For security reasons, linking an external identity provider to an existing account must require verification of the account holder's identity through an authentication or activation mechanism already associated with that account. Linking must not occur automatically based solely on a matching email address.
 
 ### 2.4. Business Rules & Invariants
 

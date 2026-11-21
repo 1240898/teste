@@ -184,4 +184,29 @@ test.each(['compact', 'extended'])(
     expect(after[2].equals(before[2])).toBe(true);
     expect(after.slice(3)).toEqual(before.slice(3));
   },
+
+  
 );
+test('T27 - floor and walls use create() without options and the white / 1 / 0 defaults (VIS04-ALN-5, ALN-7)', () => {
+  const h = setup('compact');
+  let create;
+  const module = createKitchenLayoutModule({
+    createMaterialFactory: (loaded) => {
+      const factory = createKitchenMaterialFactory(loaded);
+      create = jest.spyOn(factory, 'create');
+      return factory;
+    },
+  });
+  module.build(h.context);
+
+  const [floorCall, wallCall] = create.mock.calls;
+  expect(floorCall).toEqual([h.configuration.content.kitchen.floor.material]);
+  expect(wallCall).toEqual([h.configuration.content.kitchen.walls.material]);
+
+  // The compact walls define maps only: no baseline #d9d6cf / 0.8.
+  const walls = create.mock.results[1].value;
+  expect(walls.color.getHexString()).toBe('ffffff');
+  expect(walls.roughness).toBe(1);
+  expect(walls.metalness).toBe(0);
+  module.dispose();
+});

@@ -13,6 +13,7 @@ COPY --chown=node:node src ./src
 COPY --chown=node:node migrations ./migrations
 COPY --chown=node:node scripts/database.js ./scripts/database.js
 COPY --chown=node:node assets ./assets
+COPY --chown=node:node fixtures/planning ./fixtures/planning
 
 USER node
 EXPOSE 3000

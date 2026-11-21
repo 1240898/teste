@@ -19,6 +19,8 @@ export function useFormValidation() {
       if (validity.valueMissing) issues[field.id] = { key: 'fieldRequired' };
       else if (validity.typeMismatch && field.type === 'email')
         issues[field.id] = { key: 'invalidEmail' };
+      else if (validity.patternMismatch && field.type === 'tel')
+        issues[field.id] = { key: 'invalidPhoneNumber' };
       else if (validity.tooShort)
         issues[field.id] = { key: 'fieldTooShort', length: field.minLength };
       else if (!validity.valid) issues[field.id] = { key: 'invalidField' };

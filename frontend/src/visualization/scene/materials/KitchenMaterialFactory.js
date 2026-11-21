@@ -1,17 +1,19 @@
-import { MeshStandardMaterial, RepeatWrapping, SRGBColorSpace } from 'three';
+import {
+  MeshStandardMaterial,
+  NoColorSpace,
+  RepeatWrapping,
+  SRGBColorSpace,
+} from 'three';
+import { MaterialApplicationHelper } from './MaterialApplicationHelper.js';
+import { DEFAULTS, MAP_KEYS, parse } from './MaterialParser.js';
 
-// WEB06 MaterialProperties fields that reference preloaded textures.
+// WEB06 MaterialProperties fields that reference preloaded textures, and the
+// MeshStandardMaterial property each one fills (SGRAI W5 slides 165-170).
 const MAP_FIELDS = Object.freeze({
   colorMapAssetId: 'map',
   roughnessMapAssetId: 'roughnessMap',
   normalMapAssetId: 'normalMap',
   bumpMapAssetId: 'bumpMap',
-});
-
-const DEFAULTS = Object.freeze({
-  color: '#d9d6cf',
-  roughness: 0.8,
-  metalness: 0,
 });
 
 export class MissingTextureError extends Error {
@@ -23,72 +25,92 @@ export class MissingTextureError extends Error {
 }
 
 /**
- * Baseline material factory used by VIS02 (usVIS02 VIS02-ALN-2). VIS04 owns
- * textures and materials and can refine it behind the same interface:
+ * Material factory of the kitchen viewer (usVIS04, contract of VIS02 ALN-2):
  * create(properties, options), applyOverride(root, properties), dispose(release).
  *
- * Loaded textures are borrowed from LoadedAssets. A colour map is cloned so
- * that it can use the sRGB colour space even when another material uses the
- * same file as a linear map. Room surfaces use UVs in metres, so their maps
- * are cloned with RepeatWrapping instead of changing the shared texture.
- * The factory owns, and releases, only its materials and texture clones.
+ * VIS04 refines the VIS02 baseline (D15):
+ * - every material is validated by MaterialParser (D1) and gets white /
+ *   roughness 1 / metalness 0 defaults, so the maps are shown unchanged (D14);
+ * - every map is a clone of the LoadedAssets texture with RepeatWrapping,
+ *   because floor, walls and procedural shapes have UVs in metres (D3, D13);
+ *   the colour map is sRGB and the data maps are linear (D4);
+ * - materials with the same properties are shared (D5, AC 4);
+ * - a scalar-only override tints clones of the model's materials (D6).
+ *
+ * The factory owns, and releases, only its materials and texture clones;
+ * the textures and models of LoadedAssets are borrowed (BR 10, BR 18).
  */
 export function createKitchenMaterialFactory(assets) {
-  const materials = new Map();
+  const cache = new Map();
+  const ownedMaterials = [];
   const ownedTextures = [];
 
-  function texture(assetId, { colour, repeat }) {
-    const loaded = assets.getTexture(assetId);
-    if (!loaded) throw new MissingTextureError(assetId);
-    if (!colour && !repeat) return loaded;
-    const copy = loaded.clone();
-    ownedTextures.push(copy);
-    if (colour) copy.colorSpace = SRGBColorSpace;
-    if (repeat) copy.wrapS = copy.wrapT = RepeatWrapping;
-    copy.needsUpdate = true;
-    return copy;
+  function prepareMap(assetId, colorSpace) {
+    const source = assets.getTexture(assetId);
+    if (!source) throw new MissingTextureError(assetId);
+    const map = source.clone();
+    ownedTextures.push(map);
+    map.wrapS = RepeatWrapping;
+    map.wrapT = RepeatWrapping;
+    map.colorSpace = colorSpace;
+    map.needsUpdate = true;
+    return map;
   }
 
-  function create(properties = {}, { worldScaleUv = false } = {}) {
-    const key = `${worldScaleUv}|${JSON.stringify(properties)}`;
-    const cached = materials.get(key);
+  /** Builds (or reuses) the MeshStandardMaterial of a parsed DTO. */
+  function materialFor(dto) {
+    const key = JSON.stringify(dto);
+    const cached = cache.get(key);
     if (cached) return cached;
 
     const parameters = {
-      color: properties.color ?? DEFAULTS.color,
-      roughness: properties.roughness ?? DEFAULTS.roughness,
-      metalness: properties.metalness ?? DEFAULTS.metalness,
+      color: dto.color ?? DEFAULTS.color,
+      roughness: dto.roughness ?? DEFAULTS.roughness,
+      metalness: dto.metalness ?? DEFAULTS.metalness,
     };
-    for (const [field, map] of Object.entries(MAP_FIELDS)) {
-      const assetId = properties[field];
-      if (!assetId) continue;
-      parameters[map] = texture(assetId, {
-        colour: map === 'map',
-        repeat: worldScaleUv,
-      });
-    }
+    for (const [field, slot] of Object.entries(MAP_FIELDS))
+      if (dto[field])
+        parameters[slot] = prepareMap(
+          dto[field],
+          slot === 'map' ? SRGBColorSpace : NoColorSpace,
+        );
+
     const material = new MeshStandardMaterial(parameters);
-    materials.set(key, material);
+    cache.set(key, material);
+    ownedMaterials.push(material);
     return material;
   }
 
   return {
-    create,
-
-    /** WEB06 ALN-6: one material for every mesh of an imported clone. */
-    applyOverride(root, properties) {
-      const material = create(properties);
-      root.traverse((object) => {
-        if (object.isMesh) object.material = material;
-      });
-      return material;
+    /**
+     * Floor, walls and procedural elements: the texture set is mandatory.
+     * @param {object} properties WEB06 MaterialProperties
+     * @param {{ required?: boolean }} [options]
+     */
+    create(properties, { required = true } = {}) {
+      return materialFor(parse(properties, { required }));
     },
 
+        /**
+     * Override on an imported clone (WEB06 ALN-6, D6): with maps, one factory
+     * material replaces every mesh material; with scalars only, the model's
+     * own materials are cloned and tinted, keeping their textures.
+     */
+    applyOverride(root, properties) {
+      const dto = parse(properties, { required: false });
+      if (MAP_KEYS.some((key) => dto[key]))
+        MaterialApplicationHelper.applyToMeshes(root, materialFor(dto));
+      else
+        ownedMaterials.push(...MaterialApplicationHelper.tintMeshes(root, dto));
+    },
+
+    /** Releases only what this factory created; safe to call twice. */
     dispose(release = (resource) => resource.dispose()) {
-      for (const material of materials.values()) release(material);
-      for (const copy of ownedTextures) release(copy);
-      materials.clear();
+      for (const material of ownedMaterials) release(material);
+      for (const texture of ownedTextures) release(texture);
+      ownedMaterials.length = 0;
       ownedTextures.length = 0;
+      cache.clear();
     },
   };
 }

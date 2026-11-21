@@ -49,12 +49,10 @@ A deploy validates the Compose configuration and database state first. If
 migrations are pending, it skips the verified-backup gate only when the database
 has no migration ledger and the public schema has no tables; this is logged
 explicitly. Otherwise it fails closed unless there is a recent, verified backup
-record at `/var/lib/laprizza/backups/verified.json`. The repository currently has
-no SYS08 backup implementation or evidence producer; this file format is a
-proposed SYS01 gate, not an existing SYS08 capability. The team must agree on and
-operate a real backup and restore-verification procedure before anyone creates
-this record. It must identify the database's current schema, have
-`restorable: true`, include a backup ID, and be no more than 24 hours old. After
+record at `/var/lib/laprizza/backups/verified.json`. The record is written by the
+SYS08 daily restore drill (`laprizza-backup daily`, see "SYS08 backups and
+restore" below). It must identify the database's current schema, have
+`restorable: true`, include a backup ID, and be no more than 24 hours old.
 Before the shared migration, the deploy runs a rehearsal on a disposable,
 internal Docker network with PostgreSQL 18: it builds the exact current schema,
 creates synthetic registration data through the previous API, applies the
@@ -184,22 +182,11 @@ the VM, firewall, PostgreSQL, or runtime secrets. Before the first deploy:
    outbound to the separate DEI database. No host port is published for the API.
    Install `deploy/logrotate.conf` as `/etc/logrotate.d/laprizza` with root
    ownership so per-run VM logs are rotated and retained for up to 90 days.
-5. Define and operate the SYS08 backup and restore-verification procedure before
-   allowing deployments with schema migrations on a non-empty database. The
+5. Install the SYS08 backup procedure (see "SYS08 backups and restore") before
+   allowing deployments with schema migrations on a non-empty database. Its
+   daily restore drill writes `/var/lib/laprizza/backups/verified.json`. The
    backup gate is skipped only when the migration ledger is absent and `public`
-   contains no base tables. The current repository does not provide that
-   implementation. If the team approves the SYS01 evidence format,
-   the procedure can atomically write `/var/lib/laprizza/backups/verified.json`,
-   for example:
-
-   ```json
-   {"backup_id":"<unique-id>","schema_version":"0028_repair_legacy_invitation_methods.sql","verified_at":"2026-11-16T08:00:00Z","restorable":true}
-   ```
-
-   The marker is evidence that the backup was verified and restorable; it is not
-   itself a backup. Retain the corresponding backup and recovery instructions.
-   Until an actual procedure produces verified evidence, deployments with
-   pending migrations stop before migration.
+   contains no base tables.
 6. Configure both GitHub environments as described above, install their SSH
    secrets, set the five repository or organization variables above, verify the
    SSH host key, and confirm HTTP access from the runner after the firewall is
@@ -234,10 +221,22 @@ other directive (for example `default`) or value is not supported:
 `/var/log/laprizza/access/denied.log`. Before installing a release that includes
 SYS02, the VM must have:
 
-- `/etc/laprizza/access/allowed-networks.conf`, owned by `root:root`, mode `0644`,
-  containing an entry for `172.24.0.1`;
-- `/var/log/laprizza/access`, owned by `101:root` (the unprivileged Nginx user
-  in the web image), mode `0750`.
+- `/etc/laprizza/access/allowed-networks.conf`, owned by `root:root`, mode `0644`, containing an entry for `172.24.0.1`;
+- `/var/log/laprizza/access`, owned by `101:root` (the unprivileged Nginx user in the web image), mode `0750`.
+- `/etc/laprizza/access/trusted-proxies.conf`, owned by `root:root`, mode `0644`, containing only `set_real_ip_from <address>;` lines for the DEI gateway (`vs-gate`, currently `10.9.0.38`).
+- `deploy/logrotate.conf` installed as `/etc/logrotate.d/laprizza`, which also
+  rotates the denied-access log weekly and keeps it for up to 90 days.
+
+The application is also published to the internet by the DEI gateway
+(`https://vs-gate.dei.isep.ipp.pt:30271`), which connects to Nginx from
+`10.9.0.38`. For addresses listed in `trusted-proxies.conf`, Nginx takes the
+client address from the last `X-Forwarded-For` entry (appended by the gateway)
+and applies the list to it. Requests through the gateway always reach it from
+public addresses (including ISEP's public addresses, even with the VPN
+connected or from inside the DEI network), so the gateway route is denied;
+approved clients use the direct address `http://vs271.dei.isep.ipp.pt:2228`
+from the DEI network or VPN. `10.9.0.38 0;` in the list denies gateway requests
+that carry no client address.
 
 The post-deployment smoke checks run on the VM and reach Nginx from the gateway
 of the `laprizza-backend` network, so that gateway must belong to an allowed
@@ -274,6 +273,118 @@ fails validation. That release predates SYS02, so the restriction is only
 absent while it remains active, which is the same state as before the
 deployment. Fix the reported problem and deploy again.
 
+## SYS08 backups and restore
+
+Backups run on the VM as root, outside the deployment workflow.
+
+| Repository file (`deploy/backup/`) | Installed as |
+| --- | --- |
+| `laprizza-backup.sh` | `/usr/local/sbin/laprizza-backup` |
+| `laprizza-restore.sh` | `/usr/local/sbin/laprizza-restore` |
+| `laprizza-gdpr-register.sh` | `/usr/local/sbin/laprizza-gdpr-register` |
+| `gdpr/*.sql` | `/etc/laprizza/backup/gdpr/` |
+| `backup.conf.example` | `/etc/laprizza/backup/backup.conf` |
+| `laprizza-backup.cron` | `/etc/cron.d/laprizza-backup` |
+
+Remove Windows line endings after copying (`sed -i 's/\r$//' <file>`).
+
+Prerequisites: `age` installed; the `amazon/aws-cli` image pulled; IPv4
+preferred in `/etc/gai.conf` (the VM has no IPv6 route to the internet); the
+read-only role `laprizza_backup` (`pg_read_all_data`) in
+`/root/.config/laprizza/pgbackup.env`; the Backblaze B2 key restricted to the
+bucket and without `deleteFiles` in `/root/.config/laprizza/b2.env`; and the age
+public key in `/etc/laprizza/backup/age-recipients.txt`. The age private key is
+never stored on the VM. All credential files are `root:root 0600`.
+
+- **Hourly** (`laprizza-backup hourly`): `pg_dump -Fc`, validation with
+  `pg_restore --list`, manifest with SHA-256, age encryption, local copy in
+  `/var/backups/laprizza/db` (0700), upload to B2 with read-back verification,
+  14-day retention keeping at least 24 copies.
+- **Daily at 03:05** (`laprizza-backup daily`): also restores the dump into a
+  disposable PostgreSQL container, checks the schema, tables, API health and
+  catalogue, writes `verified.json`, and copies `/etc/laprizza` and the database
+  roles (encrypted) to B2.
+- Status: `/var/lib/laprizza/backups/last-backup.json`; log:
+  `/var/log/laprizza/backup/backup.log`.
+
+Restores are always manual. Put the private key in memory
+(`/dev/shm/age.key`, mode 0600) and remove it with `shred -u` afterwards:
+
+```sh
+laprizza-restore list                      # local backups (--offsite for B2)
+laprizza-restore fetch <backup-id>         # VM lost: download from B2
+laprizza-restore total <backup-id> --identity /dev/shm/age.key
+laprizza-restore selective <backup-id> --identity /dev/shm/age.key
+```
+
+A total restore stops the API, keeps an encrypted safety copy of the current
+database, restores, verifies, re-applies GDPR requests and starts the API.
+Tests must use `--target-env` with a copy of the runtime file pointing to
+another database, so that production is never changed.
+
+Completed GDPR erasure/restriction requests are recorded with
+`laprizza-gdpr-register <request> <erase|restrict> <customer|user> <id>`.
+Every restore re-applies the requests completed after the backup using
+`/etc/laprizza/backup/gdpr/<action>-<type>.sql`; a request without a procedure
+stops the restore before the service is reopened.
+
+## SYS04 shared resource folder
+
+**Documents** at `/documents` is available to all active authenticated LaPrizza
+accounts. Only `ADMINISTRATOR` can publish, replace and remove files. The API
+checks the current role on every request. Removing the role preserves reading
+when the account remains active with another role. Deactivating the account
+removes access to the folder.
+
+| VM path | API container path | Purpose |
+| --- | --- | --- |
+| `/var/lib/laprizza/shared-resources` | `/data/shared-resources` | Shared documents |
+| `/var/log/laprizza/shared-resources` | `/var/log/shared-resources` | Private access audit |
+
+Before deploying, run on the VM with administrative privileges. The deployed API
+image uses UID and GID `1000:1000`.
+
+```sh
+sudo install -d -m 0750 -o 1000 -g 1000 /var/lib/laprizza/shared-resources
+sudo install -d -m 0700 -o 1000 -g 1000 /var/log/laprizza/shared-resources
+```
+
+The audit file is created on the first event with mode `0600`. Records include
+the time, operation, document name where applicable, actor ID when known, outcome
+and status. For queued writes, `FILE_OPERATION` records the operation's result
+even if the client disconnects before receiving a response. Consult the log from
+an authorized shell on the VM. Update
+`/etc/logrotate.d/laprizza` with the release's `deploy/logrotate.conf` to apply
+the configured rotation policy. If the audit file becomes unavailable, the API
+writes the event to the container logs until file writes resume.
+
+```sh
+sudo tail -n 20 /var/log/laprizza/shared-resources/access.jsonl
+```
+
+Administrators can publish PDF, DOCX and TXT files up to 10 MiB. Review each
+document before publication or replacement and confirm it is suitable for all
+active users, including customers. Keep customer records, dietary profiles,
+credentials, backups and other restricted content out of the directory. The API
+checks filenames, permitted extensions and upload size. The administrator reviews
+the document contents. Use **Replace** and **Remove** to keep a record of changes.
+
+After deployment, use the DEI network or VPN and test with fictitious documents
+and disposable accounts. Capture the results for the report.
+
+1. Inspect the running API container and confirm both mounts match the table.
+2. As an administrator, publish two test files in **Documents**. Replace and
+   download one to verify its new contents, then remove it. Keep the second file
+   available for the remaining access tests.
+3. As an active customer, list and download a published test file. Verify that an
+   authenticated write request to `/api/v1/shared-resources/{name}` receives `403`.
+4. Request a direct file URL without authentication. Expect `401`.
+5. With an administrator test account that also has the `CUSTOMER` role, remove
+   `ADMINISTRATOR` from another session. Reuse the same valid access token. Verify
+   that a write returns `403` and a download still succeeds. Deactivate a test
+   account and verify that its existing token loses read access.
+6. Inspect `access.jsonl` and match successful and denied events to the tests.
+   Keep access tokens and passwords out of the report.
 
 ## Local Compose validation
 

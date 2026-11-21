@@ -6,7 +6,10 @@ import { createPizzaComponentTypeModule } from './src/modules/pizza-component-ty
 import { createProductManagementModule } from './src/modules/product-management/index.js';
 import { createStockModule } from './src/modules/stock-information-management/index.js';
 import { createPredefinedPizzaManagementModule } from './src/modules/predefined-pizza-management/index.js';
-import { createCustomerModule } from './src/modules/customer-management/index.js';
+import {
+  createCustomerModule,
+  createCustomerAccountProfiles,
+} from './src/modules/customer-management/index.js';
 import {
   loadSecurityConfig,
   loadExternalIdentityConfig,
@@ -19,6 +22,12 @@ import { createPizzaComponentConfigurationModule } from './src/modules/pizza-com
 import { createCatalogueModule } from './src/modules/product-catalogue-and-information/index.js';
 import { createKitchenConfigurationModule } from './src/modules/kitchen-configuration-management/index.js';
 import { createAuthorizationEnforcementModule } from './src/modules/authorization-enforcement/index.js';
+import { createSharedResourcesModule } from './src/modules/shared-resources/index.js';
+import { createPlanningInputModule } from './src/modules/planning-inputs/index.js';
+import { FixtureRegistry } from './src/modules/planning-inputs/infrastructure/FixtureRegistry.js';
+
+import { createForecastModule } from './src/modules/forecast-planning/index.js';
+import { backofficeClient, createProcurementScenarios } from './src/modules/procurement-scenarios/index.js';
 
 let database;
 try {
@@ -27,9 +36,17 @@ try {
   const externalIdentity = loadExternalIdentityConfig();
   database = createDatabase();
   await database.verify();
-  const userModule = createUserModule({ database, security, externalIdentity });
+  // GDP01: local registration also creates the customer record (same transaction).
+  const customerProfiles = createCustomerAccountProfiles({ database });
+  const userModule = createUserModule({
+    database,
+    security,
+    externalIdentity,
+    customerProfiles,
+  });
   const { userService } = userModule;
   const authMiddleware = new AuthMiddleware(userService);
+  const sharedResourcesModule = createSharedResourcesModule({ authMiddleware });
   const authorizationModule = createAuthorizationEnforcementModule({
     database,
     userService,
@@ -72,7 +89,27 @@ try {
     database,
     authMiddleware,
   });
-  
+  const forecastModule = createForecastModule({ database, authMiddleware });
+  const procurementScenarios = createProcurementScenarios({
+    backoffice: backofficeClient(`http://127.0.0.1:${config.port}/api/v1`),
+    confirmToken: process.env.PLANNING_SUPPLIER_CONFIRM_TOKEN,
+  });
+  const planningInputModule =
+    process.env.PLANNING_SERVICE_READ_TOKEN || process.env.PLANNING_RECORDS_TOKEN
+      ? createPlanningInputModule({
+          database,
+          demandReader: forecastModule.forecasts,
+          fixtures: process.env.PLANNING_FIXTURE_DIRECTORY
+            ? await FixtureRegistry.fromDirectory(process.env.PLANNING_FIXTURE_DIRECTORY)
+            : await FixtureRegistry.bundled(),
+          credentials: {
+            readToken: process.env.PLANNING_SERVICE_READ_TOKEN,
+            recordsToken: process.env.PLANNING_RECORDS_TOKEN,
+            supplierConfirmToken: process.env.PLANNING_SUPPLIER_CONFIRM_TOKEN,
+          },
+        })
+      : undefined;
+
   const app = createApp({
     userModule,
     componentTypeModule,
@@ -87,6 +124,10 @@ try {
     catalogueModule,
     kitchenConfigurationModule,
     authorizationModule,
+    sharedResourcesModule,
+    forecastModule,
+    procurementScenarios,
+    planningInputModule,
     securityLogger: authorizationModule.securityLogger,
   });
 
@@ -105,6 +146,8 @@ try {
     server.close(async () => {
       try {
         await authorizationModule.securityLogger.flush();
+        await sharedResourcesModule.flushAudit();
+        await planningInputModule?.dispose();
         await database.close();
       } catch {
         process.exitCode = 1;

@@ -6,6 +6,7 @@ import {
   CustomerId,
   CustomerName,
   DietaryRestriction,
+  HealthDataConsent,
 } from '../../../src/modules/customer-management/domain/model/values.js';
 
 const userId = 'USR-00001';
@@ -14,6 +15,7 @@ const dto = (overrides = {}) => ({
   email: ' ANA@example.com ',
   phoneNumber: '+351 912-345-678',
   dietaryRestrictions: [{ name: 'Lactose', description: 'Avoid dairy' }],
+  healthDataConsent: true,
   ...overrides,
 });
 const makeCustomer = (id = 'CUST-0001', values = {}) =>
@@ -28,6 +30,7 @@ const makeCustomer = (id = 'CUST-0001', values = {}) =>
       DietaryRestriction.create(restriction.name, restriction.description),
     ),
     values.userId ?? null,
+    HealthDataConsent.grant(),
   );
 
 function setup() {
@@ -41,6 +44,8 @@ function setup() {
     search: jest.fn().mockResolvedValue([customer]),
     save: jest.fn().mockImplementation(async (value) => value),
   };
+  repository.update = async (id, change) =>
+    repository.save(await change(await repository.findById(id)));
   const userDirectory = {
     findById: jest.fn().mockResolvedValue({
       email: 'ana@example.com',
@@ -131,7 +136,7 @@ describe('BCK02 CustomerService', () => {
       dietaryRestrictions: [{ name: 'Gluten', description: null }],
       userId,
     });
-    expect(userDirectory.findById).toHaveBeenCalledWith(userId);
+    expect(userDirectory.findById).toHaveBeenCalledWith(userId, undefined);
     expect(repository.save).toHaveBeenCalledWith(customer);
   });
 

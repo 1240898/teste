@@ -1,0 +1,10 @@
+# SYS08 - installed as /etc/laprizza/backup/backup.conf (root:root, 0644).
+# No secrets here: credentials live in /root/.config/laprizza/*.env (0600).
+B2_BUCKET=laprizza-3de01-backups
+B2_ENDPOINT=https://s3.eu-central-003.backblazeb2.com
+RETENTION_DAYS=14        # local copies; the bucket lifecycle rule uses the same value
+MIN_LOCAL_COPIES=24      # never keep fewer database backups than this
+MIN_CONFIG_COPIES=7      # never keep fewer configuration copies than this
+MIN_FREE_MB=1024         # refuse to run with less free space in /var/backups
+PG_IMAGE=postgres:18
+AWS_IMAGE=amazon/aws-cli

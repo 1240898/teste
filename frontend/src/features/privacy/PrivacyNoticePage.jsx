@@ -7,11 +7,17 @@ const SECTIONS = [
   ['privacyControllerTitle', ['privacyController']],
   [
     'privacyDataTitle',
-    ['privacyDataAccount', 'privacyDataCustomer', 'privacyDataAccess'],
+    [
+      'privacyDataAccount',
+      'privacyDataCustomer',
+      'privacyDataHealth',
+      'privacyDataConsents',
+      'privacyDataAccess',
+    ],
   ],
   ['privacyPurposeTitle', ['privacyPurpose']],
   ['privacyRetentionTitle', ['privacyRetention']],
-  ['privacyRightsTitle', ['privacyRights']],
+  ['privacyRightsTitle', ['privacyRights', 'privacySelfService']],
 ];
 
 export default function PrivacyNoticePage() {

@@ -1,0 +1,118 @@
+name: Procurement Prolog and input API tests
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      revision:
+        description: Commit to validate (the selected release SHA during deployment)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  ai-tests:
+    name: Prolog calculation and JavaScript JSON round trips
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container: swipl:9.2.9
+    env:
+      NODE_ENV: test
+      SWIPL: swipl
+      RUN_DATABASE_TESTS: '1'
+      PGHOST: postgres
+      PGPORT: '5432'
+      PGDATABASE: laprizza_ai06_test
+      PGUSER: laprizza
+      PGPASSWORD: ci-only-planning-test-password
+      PGSSLMODE: disable
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: laprizza_ai06_test
+          POSTGRES_USER: laprizza
+          POSTGRES_PASSWORD: ci-only-planning-test-password
+        options: >-
+          --health-cmd "pg_isready -U laprizza -d laprizza_ai06_test"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    steps:
+      - name: Checkout selected revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install source API dependencies
+        run: npm --prefix backend ci
+
+      - name: Run Prolog tests
+        run: swipl -q -s ai/tests/bom_tests.pl -s ai/tests/input_mapper_tests.pl -s ai/tests/requirements_planning_tests.pl -g run_tests -t halt
+
+      - name: Run JSON boundary tests
+        run: node ai/tests/json_boundary_tests.mjs
+
+      - name: Run Prolog to HTTP input API integration tests
+        run: node ai/tests/input_integration_tests.mjs
+
+      - name: Test backend input API and PostgreSQL snapshot isolation
+        working-directory: backend
+        run: npm test -- --runInBand tests/integration/planning-inputs tests/integration/forecast-planning
+
+  backend-image-smoke:
+    name: Start backend image with AI06 enabled
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: planning_smoke
+          POSTGRES_USER: laprizza
+          POSTGRES_PASSWORD: smoke-test-only
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U laprizza -d planning_smoke"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+      - name: Build and start backend with default bundled fixtures
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: ${{ job.services.postgres.ports[5432] }}
+          PGDATABASE: planning_smoke
+          PGUSER: laprizza
+          PGPASSWORD: smoke-test-only
+          PGSSLMODE: disable
+          JWT_SECRET: smoke-only-backend-secret-at-least-32-bytes
+          AUTH_IDLE_TIMEOUT_SECONDS: '172800'
+          ACTIVITY_REPORT_INTERVAL_SECONDS: '60'
+          ACCESS_TOKEN_TTL: 15m
+          SMTP_HOST: 127.0.0.1
+          SMTP_FROM: smoke@example.invalid
+          PLANNING_SERVICE_READ_TOKEN: smoke-only-planning-reader-at-least-32-bytes
+          PLANNING_RECORDS_TOKEN: smoke-only-planning-records-at-least-32-bytes
+        run: |
+          docker build -t laprizza-ai06-smoke backend
+          trap 'docker logs laprizza-ai06-smoke || true; docker rm -f laprizza-ai06-smoke >/dev/null 2>&1 || true' EXIT
+          args=(--network host -e PGHOST -e PGPORT -e PGDATABASE -e PGUSER -e PGPASSWORD -e PGSSLMODE)
+          docker run --rm "${args[@]}" laprizza-ai06-smoke node scripts/database.js migrate
+          docker run -d --name laprizza-ai06-smoke "${args[@]}" -e JWT_SECRET \
+            -e AUTH_IDLE_TIMEOUT_SECONDS -e ACTIVITY_REPORT_INTERVAL_SECONDS -e ACCESS_TOKEN_TTL \
+            -e SMTP_HOST -e SMTP_FROM \
+            -e PLANNING_SERVICE_READ_TOKEN -e PLANNING_RECORDS_TOKEN laprizza-ai06-smoke
+          curl --fail --retry 15 --retry-connrefused --retry-delay 1 \
+            -H "Authorization: Bearer $PLANNING_SERVICE_READ_TOKEN" -H 'Content-Type: application/json' \
+            --data '{"id":"daily-sales","version":"1","type":"fixture","productIds":["PROD-90030"]}' \
+            http://127.0.0.1:3000/api/v1/internal/planning/supplier-offers

@@ -12,6 +12,7 @@ import ChangePasswordPage from '../features/authentication/pages/ChangePasswordP
 import LocalRegistrationPage from '../features/authentication/pages/LocalRegistrationPage.jsx';
 import AdminUserManagementPage from '../features/user-management/AdminUserManagementPage.jsx';
 import SecurityAuditPage from '../features/security-audit/SecurityAuditPage.jsx';
+import SharedResourcesPage from '../features/shared-resources/SharedResourcesPage.jsx';
 import CataloguePage from '../features/catalogue/CataloguePage.jsx';
 import CatalogueProductPage from '../features/catalogue/CatalogueProductPage.jsx';
 import PrivacyNoticePage from '../features/privacy/PrivacyNoticePage.jsx';
@@ -19,10 +20,14 @@ import RouteView from './RouteView.jsx';
 import { useLocale } from '../shared/locale/localeContext.js';
 import { messageKey } from '../shared/locale/messageKeys.js';
 import { isSafeReturnPath } from './navigation/navigationPolicy.js';
+import MyDataPage from '../features/customer-profile/MyDataPage.jsx';
+import { customerProfileApi } from '../features/customer-profile/customerProfileApi.js';
 
 import {
   accountSection,
   auditSection,
+  sharedResourcesSection,
+  myDataSection,
   passwordPath,
   passwordSection,
   registrationSection,
@@ -173,9 +178,13 @@ export function GoogleCallbackRoute() {
   const { acceptAuthToken } = useAuth();
   const navigate = useNavigate();
   const onSignedIn = useCallback(
-    (session) => {
+    async (session) => {
       void acceptAuthToken(session);
-      navigate('/', { replace: true });
+      // GDP01 requests a phone number before customer features on first Google sign-in.
+      const incomplete = await customerProfileApi.needsCompletion(
+        session?.accessToken,
+      );
+      navigate(incomplete ? myDataSection.path : '/', { replace: true });
     },
     [acceptAuthToken, navigate],
   );
@@ -275,6 +284,22 @@ export function SecurityAuditRoute({ onView }) {
   );
 }
 
+export function SharedResourcesRoute({ onView }) {
+  const auth = useAuth();
+  return (
+    <ProtectedRoute section={sharedResourcesSection} onView={onView}>
+      <RouteView
+        onView={onView}
+        kind="section"
+        titleKey={sharedResourcesSection.labelKey}
+        currentSectionId={sharedResourcesSection.id}
+      >
+        <SharedResourcesPage token={auth.token} canManage={auth.hasAnyRole('ADMINISTRATOR')} />
+      </RouteView>
+    </ProtectedRoute>
+  );
+}
+
 /**
  * WEB03 (BR 4, AC 4): public sections (catalogue, privacy notice). The guard
  * allows every status, Guest included, and never waits for /auth/me.
@@ -289,6 +314,27 @@ export function PublicSectionRoute({ section, onView, titleKey, children }) {
         currentSectionId={section.id}
       >
         {children}
+      </RouteView>
+    </ProtectedRoute>
+  );
+}
+
+/** GDP01: "My data" — own record, allergens and consents (Customer role). */
+export function MyDataRoute({ onView }) {
+  const auth = useAuth();
+  return (
+    <ProtectedRoute section={myDataSection} onView={onView}>
+      <RouteView
+        onView={onView}
+        kind="section"
+        titleKey={myDataSection.labelKey}
+        currentSectionId={myDataSection.id}
+      >
+        <MyDataPage
+          token={auth.token}
+          user={auth.user}
+          refreshSession={auth.refresh}
+        />
       </RouteView>
     </ProtectedRoute>
   );

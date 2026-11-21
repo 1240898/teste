@@ -1,0 +1,56 @@
+@startuml class_diagram_requirements
+title AI02 — Procurement calculation and result ownership
+hide empty members
+skinparam classAttributeIconSize 0
+skinparam shadowing false
+class "AI05 execution service" as Service <<application>>
+interface "Planning records" as Records <<port>>
+class "Private Backoffice adapter" as Store <<infrastructure>>
+class "AI06 input adapter" as Inputs <<AI06>> {
+  +load_inputs(+Execution, -Outcome)
+}
+class "requirements_planning" as Planner <<proposed Prolog module>> {
+  +requirements_plan(+Input, -Outcome)
+}
+class "bom" as Bom <<implemented Prolog module>> {
+  +bom_requirements(+Input, -Outcome)
+}
+class "PlanningResult" as Result <<aggregate root>>
+class "Daily requirement" as Day <<result value>> {
+  dueDate, productId, requiredUnits
+  onTimeUnits, lateUnits, unfulfilledUnits
+}
+class "Allocation" as Allocation <<result value>> {
+  sourceType, sourceRef, availableDate, units
+}
+class "Supplier proposal" as Proposal <<result value>> {
+  supplierId, orderDate
+}
+class "Proposal line" as Line <<result value>> {
+  lineId, productId, packCount, purchasedUnits
+  expectedDeliveryDate, costCents
+}
+Service ..> Inputs
+Service ..> Planner
+Service ..> Records
+Store ..|> Records
+Planner ..> Bom : daily pizza demand
+Planner ..> Result : calculates contents
+Result "1" *-- "0..*" Day
+Result "1" *-- "0..*" Proposal
+Day "1" *-- "0..*" Allocation
+Proposal "1" *-- "1..*" Line
+class "Opening stock entry" as Opening <<snapshot value>>
+class "Pending receipt" as Receipt <<snapshot value>>
+class "Feasible batch" as Batch <<result value>> {
+  batchId, productId, availableDate, producedUnits
+}
+Result "1" *-- "0..*" Batch
+Allocation ..> Opening : openingStock (snapshotId, productId)
+Allocation ..> Receipt : pendingReceipt (receiptId)
+Allocation ..> Line : purchaseProposalLine (lineId)
+Allocation ..> Batch : internalProduction (batchId)
+note bottom of Allocation
+  Each allocation references exactly one source.
+end note
+@enduml

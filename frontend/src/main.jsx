@@ -6,6 +6,7 @@ import './styles/index.css';
 // WEB01 module slot (moduleRoutes ids): a real dynamic import per module. A
 // section is enabled and routable only once its loader is registered here.
 const modules = {
+  planning: () => import('./features/planning/PlanningPage.jsx'),
   kitchenViewer: () => import('./visualization/KitchenViewerPage.jsx'),
   // WEB06 (ALN-3): /kitchen/configurations, /new and /:configurationId (MANAGER).
   kitchenConfigurations: () =>

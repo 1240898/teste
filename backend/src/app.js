@@ -31,6 +31,10 @@ export function createApp({
   catalogueModule,
   kitchenConfigurationModule,
   authorizationModule,
+  sharedResourcesModule,
+  forecastModule,
+  procurementScenarios,
+  planningInputModule,
   securityLogger = config.isTest
     ? noOpSecurityLogger
     : new SecurityAuditLogger(),
@@ -39,6 +43,9 @@ export function createApp({
 
   app.use(cors({ origin: config.corsOrigin, credentials: true }));
   app.use(requestLogger());
+  app.use('/api/v1/planning', express.json({ limit: '4mb' }));
+  app.use('/api/v1/internal/planning', express.json({ limit: '4mb' }));
+  app.use('/api/v1/internal/planning-records', express.json({ limit: '4mb' }));
   app.use(express.json());
 
   app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(openApiSpec));
@@ -64,6 +71,10 @@ export function createApp({
     catalogueModule,
     kitchenConfigurationModule,
     authorizationModule,
+    sharedResourcesModule,
+    forecastModule,
+    procurementScenarios,
+    planningInputModule,
   });
 
   app.use('/api/v1', apiV1);

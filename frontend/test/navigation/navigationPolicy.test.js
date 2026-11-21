@@ -23,15 +23,16 @@ const allModules = {
   planning: () => {},
 };
 
-// WEB03 Table 1 plus the AA05 Administrator-only security audit section.
+// WEB03 Table 1 plus the AA05 audit and SYS04 documents sections.
 // Guest-only sections are excluded.
 const TABLE_1 = {
   GUEST: ['catalogue', 'privacyNotice'],
-  CUSTOMER: ['catalogue', 'privacyNotice', 'account', 'myPrivacy'],
+  CUSTOMER: ['catalogue', 'privacyNotice', 'account', 'myPrivacy', 'sharedResources'],
   EMPLOYEE: [
     'catalogue',
     'privacyNotice',
     'account',
+    'sharedResources',
     'products',
     'kitchenViewer',
   ],
@@ -39,6 +40,7 @@ const TABLE_1 = {
     'catalogue',
     'privacyNotice',
     'account',
+    'sharedResources',
     'products',
     'customers',
     'categories',
@@ -55,6 +57,7 @@ const TABLE_1 = {
     'catalogue',
     'privacyNotice',
     'account',
+    'sharedResources',
     'users',
     'securityAudit',
   ],
@@ -63,15 +66,16 @@ const TABLE_1 = {
 // Menu the SPA renders today (getVisibleSections), with every lazy module
 // supplied: Table 1 restricted to the sections that are implemented and
 // enabled, plus the guest-only entry points for Guest. Pages still owned by
-// other stories (WEB05 management pages, GDP "my privacy") are disabled (D8).
+// other stories (WEB05 management pages) are disabled (D8).
 const ENABLED_MENU = {
   GUEST: ['catalogue', 'privacyNotice', 'registration'],
-  CUSTOMER: ['catalogue', 'privacyNotice', 'account'],
-  EMPLOYEE: ['catalogue', 'privacyNotice', 'account', 'kitchenViewer'],
+  CUSTOMER: ['catalogue', 'privacyNotice', 'account', 'myPrivacy', 'sharedResources'],
+  EMPLOYEE: ['catalogue', 'privacyNotice', 'account', 'sharedResources', 'kitchenViewer'],
   MANAGER: [
     'catalogue',
     'privacyNotice',
     'account',
+    'sharedResources',
     'kitchenViewer',
     'kitchenConfigurations',
     'planning',
@@ -80,6 +84,7 @@ const ENABLED_MENU = {
     'catalogue',
     'privacyNotice',
     'account',
+    'sharedResources',
     'users',
     'securityAudit',
   ],
@@ -204,6 +209,7 @@ describe('WEB03 navigation policy', () => {
     ['/kitchen/viewer', true],
     ['/manage/products/PROD-00123/edit', true],
     ['/admin/users', true],
+    ['/documents', true],
     ['//evil.example', false],
     ['https://evil.example/x', false],
     ['/\\evil.example', false],
@@ -218,29 +224,39 @@ describe('WEB03 navigation policy', () => {
     expect(isSafeReturnPath(value)).toBe(expected);
   });
 
-  test('UT07: disabled sections and modules without a loader are neither visible nor matched as enabled', () => {
+  test('UT07: modules without a loader are hidden and the customer profile route is enabled', () => {
     const manager = signedIn('MANAGER');
     expect(getVisibleSections(manager).map(({ id }) => id)).toEqual([
-      'catalogue', 'privacyNotice', 'account',
+      'catalogue', 'privacyNotice', 'account', 'sharedResources',
     ]);
     expect(
       getVisibleSections(manager, { modules: { planning: () => {} } }).map(
         ({ id }) => id,
       ),
-    ).toEqual(['catalogue', 'privacyNotice', 'account', 'planning']);
-    expect(getSection('myPrivacy').enabled).toBe(false);
+    ).toEqual(['catalogue', 'privacyNotice', 'account', 'sharedResources', 'planning']);
+    expect(getSection('myPrivacy').enabled).toBe(true);
     expect(getSection('users').enabled).toBe(true);
     expect(getSection('stock').enabled).toBe(true);
   });
 
-    test('several roles give the union of the enabled menus, in declared order', () => {
+  test('several roles give the union of the enabled menus, in declared order', () => {
     expect(menuIds(signedIn('CUSTOMER', 'MANAGER'))).toEqual(
-      ENABLED_MENU.MANAGER,
+      [
+        'catalogue',
+        'privacyNotice',
+        'account',
+        'myPrivacy',
+        'sharedResources',
+        'kitchenViewer',
+        'kitchenConfigurations',
+        'planning',
+      ],
     );
     expect(menuIds(signedIn('ADMINISTRATOR', 'EMPLOYEE'))).toEqual([
       'catalogue',
       'privacyNotice',
       'account',
+      'sharedResources',
       'kitchenViewer',
       'users',
       'securityAudit',

@@ -26,18 +26,22 @@ import {
   AccountRoute,
   ChangePasswordRoute,
   GoogleCallbackRoute,
+  MyDataRoute,
   PublicSectionRoute,
   RegistrationRoute,
   SecurityAuditRoute,
+  SharedResourcesRoute,
   UserManagementRoute,
 } from './routeComponents.jsx';
 import {
   accountSection,
   auditSection,
   catalogueSection,
+  myDataSection,
   passwordPath,
   privacySection,
   registrationSection,
+  sharedResourcesSection,
   usersSection,
 } from './navigation/routeSections.js';
 
@@ -156,8 +160,16 @@ function AppRoutes({ modules }) {
           element={<UserManagementRoute onView={setView} />}
         />
         <Route
+          path={myDataSection.path}
+          element={<MyDataRoute onView={setView} />}
+        />
+        <Route
           path={auditSection.path}
           element={<SecurityAuditRoute onView={setView} />}
+        />
+        <Route
+          path={sharedResourcesSection.path}
+          element={<SharedResourcesRoute onView={setView} />}
         />
         <Route
           path={catalogueSection.path}

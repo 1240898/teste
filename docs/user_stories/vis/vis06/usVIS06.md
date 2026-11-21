@@ -261,3 +261,57 @@ test('disables the spotlight parameters but leaves its switch operable', async (
   expect(parameters.every((input) => input.disabled)).toBe(true);
 });
 ```
+
+## 5. Implementation
+
+### 5.1. File structure
+
+| File | Responsibility |
+| --- | --- |
+| [KitchenViewerPage.jsx](../../../../frontend/src/visualization/KitchenViewerPage.jsx) | Reads the authenticated user's roles and grants light editing to a user with the Manager role. |
+| [KitchenViewer.jsx](../../../../frontend/src/visualization/viewer/KitchenViewer.jsx) and [defaultSceneModules.js](../../../../frontend/src/visualization/scene/defaultSceneModules.js) | Create one light-controls module per viewer attempt, insert it after VIS05 lighting and before VIS07 camera controls, and mount the Manager panel below the canvas after the first successful render. |
+| [LightControlsModule.js](../../../../frontend/src/visualization/scene/modules/LightControlsModule.js) and [sceneObjectNames.js](../../../../frontend/src/visualization/scene/sceneObjectNames.js) | Resolve the ambient light and key spotlight by their shared scene names, capture each starting intensity and validate edits to the live Three.js lights. |
+| [LightControlsPanel.jsx](../../../../frontend/src/visualization/viewer/LightControlsPanel.jsx), [messages.js](../../../../frontend/src/shared/locale/messages.js) and [index.css](../../../../frontend/src/styles/index.css) | Present a labelled, collapsible folder per light, with native form inputs, PT/EN labels and responsive layout. |
+
+### 5.2. Applying an edit
+
+The intensity slider expresses a percentage of each light's VIS05 starting intensity. For example, 150% multiplies the current layout's initial spotlight intensity by 1.5. The checkbox changes the light's visibility independently, so switching a light off and on preserves its chosen colour and intensity. While it is off, the panel disables its parameter inputs and the module rejects edits to those parameters.
+
+The key spotlight also exposes its cutoff half-angle (1–75°) and penumbra (0–100%). The module converts cutoff degrees to radians. The penumbra slider passes a value between 0 and 1 and displays it as a percentage. A changed cutoff or re-enabled spotlight requests a new shadow pass on the next frame. Colour, intensity and penumbra edits reuse the existing shadow map.
+
+If either VIS05 light is missing or incompatible, the Manager sees a translated notice below the canvas. The kitchen remains available for inspection, and **Reload** starts a fresh attempt. Restaurant Staff can consult the kitchen without binding the controls.
+
+## 6. Integration, Verification & Demonstration
+
+### 6.1. Automated verification
+
+| Acceptance criteria | Verification evidence |
+| --- | --- |
+| AC1 – one folder per light | The viewer test locates both folders in the panel immediately below the viewport and checks the input count for each source. |
+| AC2 and AC5 – independent switches and disabled parameters | The module tests switch each source independently, reject edits while it is off and confirm that re-enabling restores its selected intensity. The viewer test checks that the spotlight's four parameter inputs are disabled while its checkbox remains operable. |
+| AC3 – colour and intensity | Tests with real Three.js lights check the sRGB hex round-trip and intensity at 0%, 100% and 200% of each baseline. Zero intensity leaves the light enabled. |
+| AC4 – spotlight cutoff and penumbra | Module tests cover the slider limits, degree-to-radian conversion, rejection of spotlight commands on the ambient light and the shadow refresh conditions. |
+
+The viewer tests also cover PT/EN switching with a focused control, restoring focus to **Reload** when editing permission is withdrawn, first-render failure and recovery from an incompatible binding. 
+
+Checks run on the frontend directory:
+
+```sh
+npm test -- --runInBand
+npm run lint
+npm run build
+npm run check:bundle
+```
+
+### 6.2. Browser demonstration
+
+1. Open the active kitchen as a Manager. Below the canvas, change the ambient colour and the spotlight intensity. Switch each source off and on and verify that only its own controls disable and its settings return.
+2. Narrow and widen the spotlight cutoff, then change the penumbra. Inspect the illuminated area and shadow edges. Use **Reload** and verify that the layout ID and version stay the same while the lights return to the VIS05 defaults.
+3. Switch between PT and EN with a control focused. Operate the panel with the keyboard and pointer. Check that scrolling over the panel preserves the camera position and that dragging and scrolling on the canvas still move the camera.
+4. Open the same kitchen as Restaurant Staff. Verify that the scene is visible and the lighting panel is absent.
+
+## 7. Observations, Dependencies & Limitations
+
+- VIS05 owns the lights, shadow map and environment lighting. Reflections from the environment can remain visible when both controlled lights are off.
+- Edits apply only to the current viewer attempt. They make no API write and do not change the saved kitchen configuration or another user's view.
+- A session renewal can cause the protected route to remount the viewer during permission confirmation. If that happens, the rebuilt scene starts with the VIS05 defaults. Switching language within a mounted viewer preserves the selected settings.

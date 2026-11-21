@@ -56,6 +56,12 @@ jobs:
           git merge-base --is-ancestor "$sha" "origin/$DEFAULT_BRANCH"
           printf 'sha=%s\n' "$sha" >> "$GITHUB_OUTPUT"
 
+  ai-validation:
+    needs: resolve
+    uses: ./.github/workflows/ai-checks.yml
+    with:
+      revision: ${{ needs.resolve.outputs.sha }}
+
   backend-validation:
     needs: resolve
     runs-on: ubuntu-latest
@@ -168,7 +174,7 @@ jobs:
         run: npm run build && npm run check:bundle
 
   package:
-    needs: [resolve, backend-validation, frontend-validation]
+    needs: [resolve, backend-validation, frontend-validation, ai-validation]
     runs-on: ubuntu-latest
     outputs:
       artifact_name: ${{ steps.meta.outputs.artifact_name }}

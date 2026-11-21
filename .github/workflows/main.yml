@@ -10,6 +10,9 @@ on:
   workflow_dispatch:
 
 jobs:
+  ai-checks:
+    uses: ./.github/workflows/ai-checks.yml
+
   # =========================================================================
   # JOB 1: VALIDAR BACKEND E TESTES (Unit + Integration)
   # =========================================================================

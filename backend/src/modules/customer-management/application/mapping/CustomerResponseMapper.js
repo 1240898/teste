@@ -9,6 +9,7 @@ export class CustomerResponseMapper {
       dietaryRestrictions: customer.dietaryRestrictions.map((x) => x.toJSON()),
       userId: customer.userId?.getValue() ?? null,
       active: customer.active,
+      healthDataConsent: customer.healthDataConsent.toJSON(),
     });
   }
   static toDTOList(customers) {

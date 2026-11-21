@@ -159,7 +159,10 @@ export class FileSecurityAuditOutbox {
     return target;
   }
 
-  async #syncDirectory(path) {
+    async #syncDirectory(path) {
+    // NTFS already journals directory entries, so skipping is safe there.
+    if (process.platform === 'win32') return;
+
     const directory = await open(path, 'r');
     try {
       await directory.sync();

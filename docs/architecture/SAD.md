@@ -105,7 +105,7 @@ In the Sprint 2 design, the SPA sends API requests through the Gateway. Backoffi
 
 ### 2.4 Procurement Component Diagram (C4 Level 3)
 
-The Gateway sends calculation requests to AI05 and requests for supplier scenarios or saved results to the planning API. AI01 calculates material needs from pizza BOMs. AI02 uses that calculation to plan daily replenishment and select suppliers.
+Following the latest AI06 clarification, the portal Backoffice invokes AI05 with scheduling and selection information. Prolog then reads the source API. The Gateway/caller wiring in the component view is still an AI05/WEB07 integration task. AI01 calculates material needs from pizza BOMs. AI02 uses that calculation to plan daily replenishment and select suppliers.
 
 AI06 reads catalogue, order or forecast and stock data from Backoffice. It reads confirmed offers from Procurement when needed and maps the inputs to Prolog. Procurement saves results with the input versions used.
 
@@ -184,15 +184,15 @@ AI02 uses offers from the selected confirmed version for products it may need to
 
 #### Manager access
 
-The Gateway forwards the Manager's access bearer to Procurement for execution, replay, result reads and supplier scenario operations. On each request, Procurement passes that bearer to `GET /api/v1/internal/planning-access` on the Backoffice service network. This endpoint reuses AA04's `AuthMiddleware` and `resolveActor` to check the token, the server-side session and the current account and roles. It then applies `requireRole('MANAGER')`. A successful check returns only the actor ID. Procurement applies the requested record's access rules before it reads or writes planning data.
+Execution and replay requests reach the portal Backoffice through the Gateway. Before invoking Prolog, the portal must reuse AA04's `AuthMiddleware`, `resolveActor` and `requireRole('MANAGER')` to check the server-side session and current roles. For protected planning reads and supplier operations exposed by Procurement, the planned authority remains `GET /api/v1/internal/planning-access` on Backoffice, with the same checks. Procurement also applies the requested record's access rules. These public paths and the authority endpoint remain AI05/WEB07 integration work; AI06 exposes no public execution endpoint.
 
 A revoked or expired session returns `401`. A valid session whose user no longer has `MANAGER` returns `403`. If the authority cannot be reached, the request fails before protected data is released or work starts. The check runs again for a retry or result read. Access checks and protected planning responses use `Cache-Control: no-store`. The Manager bearer is not stored with the execution or passed to AI06. [AA04 protected operations](../user_stories/aa/aa04/AA04.md#protected-operations)
 
-AI06 uses a server-configured Bearer credential over HTTPS. Its scopes are `planning:operational:read`, `planning:inputs:read` and `planning:supplier-offers:read` for the relevant APIs. Procurement's records component has a separate credential with `planning:records:read` and `planning:records:write`. It seals snapshots on AI06's behalf through the local planning records interface. These permissions cover planning records only. The service and records endpoints stay private.
+AI06 uses the server-only `PLANNING_SERVICE_READ_TOKEN` over HTTPS for operational source reads and retained-input lookup. A distinct `PLANNING_RECORDS_TOKEN` permits only input-run claims and snapshot binding. Prolog uses the records permission to retain the raw document it collected and validated. Neither credential grants stock changes or operational purchase orders. These implemented private routes live under `/api/v1/internal/planning`; their exact permission matrix is in the [AI06 contract](../user_stories/ai/ai06/usAI06.md#43-internal-rest-contracts). Public Manager bearers are not substitutes for service credentials.
 
 #### Read and write paths
 
-The Gateway routes forecast reads and edits to Backoffice. Procurement validates and confirms supplier scenarios, authorises executions and replays, and publishes results. It uses the following private Backoffice operations under `/api/v1/internal/planning-records`. Backoffice checks service permissions and enforces storage constraints. Procurement applies the planning rules.
+The Gateway routes forecast reads and edits to Backoffice. Procurement validates and confirms supplier scenarios and publishes results. The following table remains the target public execution/result persistence contract for AI05/WEB07 under `/api/v1/internal/planning-records`, not a claim that these routes are implemented by AI06. AI05 must associate its public execution with AI06's retained input reference; it must not capture a second independent business dataset. Backoffice checks service permissions and storage constraints; Procurement applies the planning rules.
 
 | Record | Write by Procurement records component | Read by Procurement records component |
 | --- | --- | --- |
@@ -207,7 +207,7 @@ Procurement checks access before attempting to reserve or read an execution. The
 - **Complete.** Only a write for the current unexpired `attemptNo` in `RUNNING` can change the outcome. A success must reference the snapshot already bound to the execution. The adapter saves the outcome and moves to `COMPLETED` or `FAILED` in one transaction. Once `COMPLETED`, the saved result is final. A late or repeated outcome write returns the stored state without modifying the execution.
 - **Recover.** The result read reports the stored status and whether another attempt is eligible. An expired `RUNNING` attempt is reported as retryable. If Procurement loses the reply to an outcome write, it checks the stored state before reporting an outcome. A calculation result is returned as completed after the save is confirmed.
 
-The storage adapter writes only Procurement records. Operational stock and purchase orders remain under Backoffice operations. AI06 reads operational data through the Backoffice input API in a single read-only transaction. [AI06 snapshot design](https://github.com/Departamento-de-Engenharia-Informatica/LEI-SEM5-PI-2026-27-3DE-01/blob/7231b23c53152e9914bbd6e55e6105f7338f6bf0/docs/user_stories/ai/ai06/usAI06.md#45-snapshot-and-replay)
+The storage adapter writes only Procurement records. Operational stock and purchase orders remain under Backoffice operations. The latest AI06 clarification makes Prolog responsible for obtaining data over HTTP: the portal invokes it with scheduling/selectors, and Prolog opens a coherent Backoffice view and requests selected raw groups. Those current reads share one read-only PostgreSQL transaction; Backoffice does not push a complete KB on invocation. AI06 now has internal input-acquisition leases and retained snapshots; the public execution/result lifecycle and caller routing above remain AI05/WEB07 integration work. [AI06 snapshot design](https://github.com/Departamento-de-Engenharia-Informatica/LEI-SEM5-PI-2026-27-3DE-01/blob/7231b23c53152e9914bbd6e55e6105f7338f6bf0/docs/user_stories/ai/ai06/usAI06.md#45-snapshot-and-replay)
 
 ## 3. Key Scenarios
 

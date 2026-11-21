@@ -232,10 +232,15 @@ export default function ManagementWorkspace({ config, api }) {
     let payload;
     try {
       payload = config.toPayload
-        ? config.toPayload(form, Boolean(editing))
+        ? config.toPayload(form, Boolean(editing), baseForm)
         : parseValues(config.fields, form);
     } catch {
       setFeedback({ severity: 'error', messageKey: 'managementInvalidJson' });
+      return;
+    }
+    const validationMessage = config.validatePayload?.(payload);
+    if (validationMessage) {
+      setFeedback({ severity: 'error', messageKey: validationMessage });
       return;
     }
     setFeedback(null);

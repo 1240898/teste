@@ -22,6 +22,12 @@ export class ICustomerRepository {
   async save() {
     throw new Error('Not implemented');
   }
+  async update() {
+    throw new Error('Not implemented');
+  }
+  async updateOwnedContact() {
+    throw new Error('Not implemented');
+  }
   async search() {
     throw new Error('Not implemented');
   }

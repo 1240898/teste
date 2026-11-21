@@ -2,7 +2,7 @@
 
 LaPrizza is an information system for managing the business and operations of a pizzeria. The project is developed as a monorepo by the ISEP 2026/2027 team for LAPR5, with contributions across Software Engineering, Software Architecture, Artificial Intelligence, Systems Administration, and Graphic Systems and Interaction.
 
-The planned platform covers user and customer management, products and menus, allergens, pizza configuration, stock, orders, kitchen operations, and preparation scheduling. The current increment includes working back-end modules for authentication and user management, customer management, product categories, allergens, pizza sizes and component types, products, and stock information/history. The React client is an initial web interface, and the `ai/` scheduling service is still a placeholder.
+The planned platform covers user and customer management, products and menus, allergens, pizza configuration, stock, orders, kitchen operations, and preparation scheduling. The current increment includes working back-end modules for authentication and user management, customer management, product categories, allergens, pizza sizes and component types, products, and stock information/history. The React client is an initial web interface. The `ai/` module provides AI01 material requirements and AI06 authorised HTTP input loading, with versioned demonstrations. See the [Prolog run instructions](ai/README.md).
 
 ## Repository structure
 
@@ -10,7 +10,7 @@ The planned platform covers user and customer management, products and menus, al
 .
 ├── backend/       # Express REST API, PostgreSQL migrations, and tests
 ├── frontend/      # React + Vite web client
-├── ai/            # Planned Prolog kitchen scheduling service
+├── ai/            # AI01 calculations, AI06 HTTP inputs, demonstrations and tests
 ├── infra/         # Local PostgreSQL Docker Compose configuration
 ├── docs/          # Architecture, user stories, planning, and guidelines
 └── README.md

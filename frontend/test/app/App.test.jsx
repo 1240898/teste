@@ -74,6 +74,8 @@ function mockBackend({
   roles,
   localCredential = false,
   fixture = () => response(200, {}),
+  // GDP01: GET /customers/me (404 = profile not completed yet).
+  customerProfile = () => response(200, {}),
 } = {}) {
   globalThis.fetch = jest.fn(async (url, options) => {
     const path = new URL(url).pathname.replace('/api/v1', '');
@@ -93,6 +95,7 @@ function mockBackend({
         roles: typeof roles === 'function' ? roles() : (roles ?? ['CUSTOMER']),
       });
     if (path === '/auth/google/callback') return response(200, session);
+    if (path === '/customers/me') return customerProfile();
     if (path === '/auth/password') return fixture(path, options);
     if (path === '/kitchen-configurations/active')
       return fixture(path, options);
@@ -269,6 +272,18 @@ it('clears the Google callback query, posts it once, and navigates to the confir
     code: 'one-time-code',
     state: 'matching-state',
   });
+});
+
+it('sends a first Google sign-in without a phone number to "My data" (AA02 clarification)', async () => {
+  mockBackend({
+    customerProfile: () =>
+      response(404, { error: { message: 'Customer profile not completed' } }),
+  });
+  sessionStorage.setItem(OIDC_STATE_KEY, 'matching-state');
+  await open('/auth/callback/google?code=one-time-code&state=matching-state');
+
+  expect(window.location.pathname).toBe('/account/privacy');
+  expect(window.location.search).toBe('');
 });
 
 it('opens an existing deep link and shows a common-shell fallback for unknown paths', async () => {
@@ -628,12 +643,12 @@ it('rechecks permissions after a 403 and keeps the roles the user still has', as
   expect(container.querySelector('main').textContent).not.toContain(
     'Manager-only page',
   );
-  // The only remaining role (CUSTOMER) keeps just the public sections.
+  // The remaining CUSTOMER role keeps the public sections, My data and Documents.
   expect(
     [...container.querySelectorAll('.app-sidebar [data-section-link]')].map(
       (link) => link.getAttribute('href'),
     ),
-  ).toEqual(['/catalogue', '/privacy']);
+  ).toEqual(['/catalogue', '/privacy', '/account/privacy', '/documents']);
   await act(async () => container.querySelector('header a').click());
   expect(container.querySelector('main').textContent).toContain('Hello, Ana');
 });

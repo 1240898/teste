@@ -178,29 +178,45 @@ verify_running_images() {
 }
 
 smoke() {
-  local failed=0 api_result api_status api_body
+  # Keep identical in deploy.sh and rollback.sh.
+  # $1: Compose file of the release being checked. Releases that mount the HTTPS
+  # certificate serve the application on 2229 (HTTPS) and only redirect on 2228;
+  # older releases serve it over HTTP on 2228.
+  local compose=$1 failed=0 api_result api_status api_body redirect
   local base_url="http://127.0.0.1:2228"
+  local -a tls=()
 
-  if ! curl --fail --silent --show-error --max-time 10 \
+  if uses_https "$compose"; then
+    base_url="https://127.0.0.1:2229"
+    tls=(--cacert "$TLS_CERT")
+    if ! redirect=$(curl --silent --show-error --max-time 10 --output /dev/null \
+      --write-out '%{http_code} %{redirect_url}' "http://127.0.0.1:2228/register") ||
+      [[ "$redirect" != '301 https://127.0.0.1:2229/register' ]]; then
+      echo 'Smoke check failed: HTTP port 2228 does not redirect approved clients to HTTPS' >&2
+      failed=1
+    fi
+  fi
+
+  if ! curl "${tls[@]}" --fail --silent --show-error --max-time 10 \
     "$base_url/api/v1/health" |
     python3 -c 'import json,sys; assert json.load(sys.stdin).get("status")=="ok"'; then
     echo 'Smoke check failed: API health' >&2
     failed=1
   fi
 
-  if ! curl --fail --silent --show-error --max-time 10 \
+  if ! curl "${tls[@]}" --fail --silent --show-error --max-time 10 \
     "$base_url/register" | grep -q 'id="root"'; then
     echo 'Smoke check failed: /register SPA entry' >&2
     failed=1
   fi
 
-  if ! curl --fail --silent --show-error --max-time 10 \
+  if ! curl "${tls[@]}" --fail --silent --show-error --max-time 10 \
     "$base_url/register/x/y" | grep -q 'id="root"'; then
     echo 'Smoke check failed: nested SPA entry' >&2
     failed=1
   fi
 
-  if api_result=$(curl --silent --show-error --max-time 10 \
+  if api_result=$(curl "${tls[@]}" --silent --show-error --max-time 10 \
     -w '\n%{http_code}' \
     "$base_url/api/v1/does-not-exist"); then
 
@@ -433,6 +449,32 @@ ACCESS_LOG_DIR="/var/log/laprizza/access"
 [[ -r "$ACCESS_LIST" ]] || { echo "SYS02 allowed-networks file unavailable: $ACCESS_LIST" >&2; exit 2; }
 [[ -d "$ACCESS_LOG_DIR" ]] || { echo "SYS02 denied-access log directory missing: $ACCESS_LOG_DIR" >&2; exit 2; }
 
+# SYS02: trusted proxies whose X-Forwarded-For identifies the real client.
+TRUSTED_PROXIES="/etc/laprizza/access/trusted-proxies.conf"
+[[ -r "$TRUSTED_PROXIES" ]] || { echo "SYS02 trusted-proxies file unavailable: $TRUSTED_PROXIES" >&2; exit 2; }
+if grep -Ev '^[[:space:]]*(#.*)?$|^[[:space:]]*set_real_ip_from[[:space:]]+[0-9A-Fa-f:.]+(/[0-9]{1,3})?;[[:space:]]*(#.*)?$' "$TRUSTED_PROXIES" >/dev/null; then
+  echo "SYS02: $TRUSTED_PROXIES may only contain 'set_real_ip_from <address>[/<prefix length>];' lines and comments; no release was changed." >&2
+  exit 2
+fi
+
+# HTTPS: self-signed certificate and key kept on the VM, outside the image and Git.
+TLS_CERT="/etc/laprizza/tls/laprizza.crt"
+TLS_KEY="/etc/laprizza/tls/laprizza.key"
+[[ -r "$TLS_CERT" ]] || { echo "HTTPS certificate unavailable: $TLS_CERT; no release was changed." >&2; exit 2; }
+[[ -e "$TLS_KEY" ]] || { echo "HTTPS private key missing: $TLS_KEY; no release was changed." >&2; exit 2; }
+if ! openssl x509 -in "$TLS_CERT" -noout -checkend 0 >/dev/null 2>&1; then
+  echo "HTTPS certificate is invalid or expired: $TLS_CERT; no release was changed." >&2
+  exit 2
+fi
+if ! openssl x509 -in "$TLS_CERT" -noout -checkend 2592000 >/dev/null 2>&1; then
+  echo "Warning: HTTPS certificate $TLS_CERT expires within 30 days; renew it (see deploy/README.md)." >&2
+fi
+# Keep identical in deploy.sh and rollback.sh.
+# Releases whose Compose file mounts the certificate serve HTTPS on 2229.
+uses_https() {
+  grep -q '/etc/laprizza/tls:/etc/nginx/tls' "$1"
+}
+
 # SYS02: the smoke checks reach Nginx from the gateway of the laprizza-backend
 # network, so that gateway must belong to an allowed network. Compose applies
 # the fixed subnet (172.24.0.0/16) only when it creates the network; an existing
@@ -550,7 +592,7 @@ export WEB_IMAGE_TAG="${ACTIVE_WEB_REF#laprizza-web:}"
   SCHEMA_OBSERVED="$CURRENT_SCHEMA"
   [[ "$HAS_UNKNOWN_APPLIED" == false ]] || { echo 'Deployment stopped: active database has migrations unknown to the active image.' >&2; exit 3; }
   if [[ "$HAS_PENDING" == false ]]; then
-    smoke
+    smoke "$ACTIVE_COMPOSE"
     echo 'Release is already active; database state and smoke checks passed without changing release files.'
     exit 0
   fi
@@ -585,22 +627,23 @@ SCHEMA_OBSERVED="$CURRENT_SCHEMA"
 PRE_MIGRATION_SCHEMA="$CURRENT_SCHEMA"
 [[ "$HAS_UNKNOWN_APPLIED" == false ]] || { echo 'Deployment stopped: active database has migrations unknown to the candidate image.' >&2; exit 3; }
 
-# TODO (SYS08): Reativar a validação de backups antes das migrações.
-# Temporariamente desativada enquanto a SYS08 não estiver implementada.
-# if [[ "$HAS_PENDING" == true && "$EMPTY_DATABASE" == true ]]; then
-#   echo 'Verified-backup gate skipped because the database is empty.'
-# elif [[ "$HAS_PENDING" == true ]]; then
-#   [[ -f "$ROOT/backups/verified.json" ]] || { echo 'Migration stopped: no verified backup evidence is available; the repository has no SYS08 backup producer yet.' >&2; exit 3; }
-#   python3 - "$ROOT/backups/verified.json" "$CURRENT_SCHEMA" <<'PY'
-# import datetime, json, sys
-# d=json.load(open(sys.argv[1]))
-# assert d.get('restorable') is True
-# assert d.get('schema_version') == sys.argv[2]
-# t=datetime.datetime.fromisoformat(d['verified_at'].replace('Z','+00:00'))
-# assert t.tzinfo is not None and (datetime.datetime.now(datetime.timezone.utc)-t).total_seconds() <= 86400
-# assert d.get('backup_id')
-# PY
-# fi
+# SYS08: migrations on a non-empty database require a recent, verified backup.
+# The evidence is written by the daily restore drill (laprizza-backup daily).
+if [[ "$HAS_PENDING" == true && "$EMPTY_DATABASE" == true ]]; then
+  echo 'Verified-backup gate skipped because the database is empty.'
+elif [[ "$HAS_PENDING" == true ]]; then
+  [[ -f "$ROOT/backups/verified.json" ]] || { echo 'Migration stopped: no verified backup evidence is available (SYS08: run laprizza-backup daily).' >&2; exit 3; }
+  python3 - "$ROOT/backups/verified.json" "$CURRENT_SCHEMA" <<'PY' || { echo 'Migration stopped: the verified backup is missing, older than 24 hours or from another schema (SYS08).' >&2; exit 3; }
+import datetime, json, sys
+d=json.load(open(sys.argv[1]))
+assert d.get('restorable') is True
+assert d.get('schema_version') == sys.argv[2]
+t=datetime.datetime.fromisoformat(d['verified_at'].replace('Z','+00:00'))
+assert t.tzinfo is not None and (datetime.datetime.now(datetime.timezone.utc)-t).total_seconds() <= 86400
+assert d.get('backup_id')
+PY
+  echo "Verified backup $(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["backup_id"])' "$ROOT/backups/verified.json") accepted for migration."
+fi
 
 if [[ "$HAS_PENDING" == true && -n "$OLD_SHA" ]]; then
   if rehearse_schema_migration; then
@@ -660,7 +703,7 @@ PY
     recovery_state=$(printf '%s\n' "$recovery_state" | tail -n 1)
     recovery_schema=$(python3 -c 'import json,sys;print(json.loads(sys.stdin.read())["current_version"])' <<<"$recovery_state") || return 1
     SCHEMA_OBSERVED="$recovery_schema"
-    smoke || return 1
+    smoke "$recovery_compose" || return 1
     write_active "$OLD_SHA" "$OLD_REV" "$PRE_MIGRATION_SCHEMA" "$recovery_schema"
   else
     echo 'No prior release is available for automatic recovery' >&2
@@ -767,7 +810,7 @@ if [[ $activation_rc -eq 0 ]] && ! verify_running_images "$COMPOSE_FILE" "$expec
   echo 'Candidate containers do not use the image IDs in the release manifest.' >&2
   activation_rc=1
 fi
-if [[ $activation_rc -eq 0 ]]; then smoke; smoke_rc=$?; else smoke_rc=$activation_rc; fi
+if [[ $activation_rc -eq 0 ]]; then smoke "$COMPOSE_FILE"; smoke_rc=$?; else smoke_rc=$activation_rc; fi
 set -e
 if [[ $smoke_rc -ne 0 ]]; then
   echo 'Candidate validation failed; restoring the previously active application release.' >&2

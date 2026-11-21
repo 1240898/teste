@@ -55,6 +55,15 @@ export class AuthController {
   async getCurrentUser(req, res) {
     res.json(await this.userService.getCurrentUser(req.user));
   }
+  // GDP01 (G4): give or withdraw marketing consent.
+  async updateMarketingConsent(req, res) {
+    res.json(
+      await this.userService.updateOwnMarketingConsent(
+        req.user,
+        req.body.marketingConsent,
+      ),
+    );
+  }
   // AA01: change of the local password by the authenticated user.
   async changePassword(req, res) {
     await this.userService.changePassword(

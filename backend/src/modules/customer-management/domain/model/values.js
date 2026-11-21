@@ -114,6 +114,43 @@ export class DietaryRestriction {
     };
   }
 }
+/**
+ * GDP01 (GDPR Art. 9(2)(a)): explicit consent to process allergen and dietary data.
+ * The timestamp records when the customer last gave or withdrew consent.
+ */
+export class HealthDataConsent {
+  constructor(given = false, timestamp = null) {
+    const validDate =
+      timestamp instanceof Date && Number.isFinite(timestamp.getTime());
+    if (typeof given !== 'boolean' || (timestamp !== null && !validDate))
+      invalid('Invalid health data consent');
+    if (given && !validDate) invalid('Invalid health data consent');
+    this.given = given;
+    this.timestamp = validDate ? new Date(timestamp.getTime()) : null;
+    Object.freeze(this);
+  }
+  static none() {
+    return new HealthDataConsent(false, null);
+  }
+  static grant(now = new Date()) {
+    return new HealthDataConsent(true, now);
+  }
+  static withdraw(now = new Date()) {
+    return new HealthDataConsent(false, now);
+  }
+  static restore(given, timestamp) {
+    return new HealthDataConsent(given, timestamp ?? null);
+  }
+  isGiven() {
+    return this.given;
+  }
+  toJSON() {
+    return {
+      given: this.given,
+      timestamp: this.timestamp ? this.timestamp.toISOString() : null,
+    };
+  }
+}
 export class LinkedUserId {
   constructor(value) {
     if (typeof value !== 'string' || !/^USR-\d{5,}$/i.test(value.trim()))

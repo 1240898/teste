@@ -5,7 +5,7 @@
 - **Sprint:** 2 (IARTI Sprint B)
 - **Actor:** LaPrizza Manager
 - **Team responsibility:** All members, per the [Sprint 2 plan](../../../Planning/Sprint2/sprintPlanning.md#ai01--prolog-bill-of-materials-and-stock-requirements).
-- **Status:** Analysis and design for review. The worked examples specify expected results for the implementation and demonstration.
+- **Status:** Core calculation implemented with versioned input mocks. AI05 and AI06 integration follows their implementation. [Run the calculation and tests](../../../../ai/README.md)
 - [Technical design](#4-design) describes the Prolog model, calculation, integration and verification plan.
 
 The Manager needs a Prolog Bill of Materials (BOM) calculation that takes a set of pizza quantities by size and reports how much the selected stock can cover and what must be replenished. For the integrated forecast flow, demand comes from the selected forecast, independently of the status or contents of operational orders. AI06 can also provide ordered pizza quantities for a selected order-based scenario, including predefined or generated orders for demonstration. Both sources provide the same planning information about the pizzas, sizes and quantities.
@@ -64,7 +64,7 @@ Procurement saves the BOM result with its scenario, stock coverage and hypotheti
 
 **Supplier orders.** The AI01 result reports quantities that need replenishment. AI02 can turn those quantities into a supplier order proposal with one supplier, proposed order and delivery dates and lines in product-specific stock units. Each line uses an offer for the product. A future operational supplier purchase order would require separate explicit confirmation in the Backoffice. The proposed quantities and associated stock balances are planning results for consultation in Sprint 2.
 
-The scenario can also supply a preparation recipe for an internally produced aggregate. Its yield is the number of output units per batch, and each ingredient quantity is expressed in the corresponding item's abstract stock units. Sprint 2 uses a simulated scenario to demonstrate these recipes. An operational source remains subject to agreement with AI06. The [S03 example](#51-simulated-recipe-and-worked-result) shows how the stock of a preparation covers part of the demand before the residual triggers production. The hypothetical balance belongs to the result. The Backoffice retains ownership of operational stock.
+The scenario can also supply a preparation recipe for an internally produced aggregate. Its yield is the number of output units per batch, and each ingredient quantity is expressed in the corresponding item's abstract stock units. Sprint 2 uses versioned simulated fixtures to demonstrate these recipes; the live catalogue mapping uses the terminal-component rule in section 4.3.3. The [S03 example](#51-simulated-recipe-and-worked-result) shows how the stock of a preparation covers part of the demand before the residual triggers production. The hypothetical balance belongs to the result. The Backoffice retains ownership of operational stock.
 
 Supplier scenarios, offers and daily plans are described in the [WEB07 domain model](../../web/web07/usWEB07.md#25-domain-model-excerpt). Direct-sale items, such as a drink ordered alongside a pizza, enter AI02's demand with an explicit consumption factor when stock is tracked.
 
@@ -78,7 +78,7 @@ Supplier scenarios, offers and daily plans are described in the [WEB07 domain mo
 | Stock snapshot | BCK09 exposes `availableUnits` by product. A current open `StockInformation` period indicates stock control. Balances are non-negative integers in product-specific abstract stock units. See [BCK09](../../bck/bck09/usBCK09.md). | Capture tracking status and balances from a consistent view. Distinguish tracked stock of zero, an explicitly untracked item and a missing balance. Use the same distinction for simulated inputs. |
 | Forecast and execution | Each demand line identifies the sellable product, applicable size and quantity. WEB07 adds daily dates. AI06 adds the selected versions or retrieval times and origins of the input datasets. | For a BOM calculation, supply the selected demand set with its scenario identity. For daily planning, AI02 invokes the same calculation for the applicable demand and stock on each day. A reproducible replay needs the actual original input data or references that resolve to those exact versions. |
 
-The listed HTTP paths are relative to `/api/v1`. They identify available source data, while AI05 and AI06 define planning routes, service authorization and the integrated input contract. The current [`ai/` directory](../../../../ai/README.md) is a placeholder. The related [WEB07 analysis](https://github.com/Departamento-de-Engenharia-Informatica/LEI-SEM5-PI-2026-27-3DE-01/blob/d6bf71d8fcdc52e1c620ec803dc551f76a5464b1/docs/user_stories/web/web07/usWEB07.md) describes the forecast workflow and the need to check recipe completeness.
+The listed HTTP paths are relative to `/api/v1`. They identify available source data, while AI05 and AI06 define planning routes, service authorization and the integrated input contract. The [`ai/` directory](../../../../ai/README.md) contains the AI01 calculation, versioned input mocks and tests. The related [WEB07 analysis](https://github.com/Departamento-de-Engenharia-Informatica/LEI-SEM5-PI-2026-27-3DE-01/blob/d6bf71d8fcdc52e1c620ec803dc551f76a5464b1/docs/user_stories/web/web07/usWEB07.md) describes the forecast workflow and the need to check recipe completeness.
 
 ### 2.4. Calculation rules
 
@@ -93,12 +93,12 @@ The listed HTTP paths are relative to `/api/v1`. They identify available source 
 | BR07 | Calculate using request-local input and working balances. Return hypothetical balances as results. Repeated or concurrent runs use their own snapshots and working balances. Any simulated input marks the calculation as a simulation. |
 | BR08 | Missing or inconsistent required data invalidates the affected calculation. Identify the scenario and offending field, product, size or recipe path in the error. AI05 distinguishes invalid values, missing information and input-service unavailability. A valid shortage is a successful, reportable calculation. |
 
-#### Proposed calculation semantics
+#### Calculation semantics
 
 1. Validate the input set, including pizza and size eligibility, amounts, tracking status, classification and reachable recipes. Start the gross requirements with the component demands from all pizza lines. Only the scenario's declared recipes and classifications determine expansion.
 2. Process every item after all its parent assemblies have contributed demand. This combines direct and nested demand for the same item before applying its stock and rounding its production. Stable ordering by product ID makes equivalent inputs easy to compare. A graph with shared descendants can be handled without expanding the same stock independently per branch.
 3. For a terminal item or a purchased aggregate, report the residual in stock units. For an internally produced aggregate, multiply each ingredient quantity per batch by the required number of batches. For a recipe stated per output unit, the same calculation uses an explicit yield of one. Do not infer a yield from the product ID or acquisition type.
-4. For a batch that yields `Y` units, the proposed whole-batch convention is `batches = ceil(residual / Y)`. When the residual is positive, `produced = batches × Y` and `surplus = produced − residual`. The hypothetical closing balance is `opening − withdrawn + surplus`. The worked examples use that convention for the IARTI simulation. Batch semantics and treatment of surplus in multi-day planning need alignment with AI06 and AI02 before the interface is fixed.
+4. For a batch that yields `Y` units, the implemented convention is `batches = ceil(residual / Y)`, calculated with integer arithmetic. When the residual is positive, `produced = batches × Y` and `surplus = produced − residual`. The hypothetical closing balance is `opening − withdrawn + surplus`. AI02 owns the decision to carry a balance to the next day after checking whether the planned production can obtain its materials; AI01 returns the quantities for the demand set supplied.
 
 #### Result and error semantics
 
@@ -107,16 +107,16 @@ The listed HTTP paths are relative to `/api/v1`. They identify available source 
 - Keep quantities for different products in their own units. A material summary can show aggregate and ingredient rows for traceability. Only terminal or purchased-item shortfalls contribute to the replenishment list, with rows summed by product ID.
 - Report unknown products or sizes, inactive references, incompatible sizes, missing consumption, missing stock data for tracked items, invalid or negative counts, invalid recipe quantities or yields, missing classification for an aggregate and cyclic paths. Provide no apparently complete result when required input is invalid or unavailable.
 
-### 2.5. Decisions to confirm before implementation
+### 2.5. Implementation decisions and integration boundaries
 
 | ID | Decision | Owner |
 | --- | --- | --- |
-| OP01 | Agree how AI06 serves the simulated internal recipes and their stock. The analysis proposes a documented, versioned fixture behind the same planning interface as catalogue-backed input. Confirm whether any internally produced component also has an approved operational recipe source. | AI06, AI01 and ARC01, with IARTI if specific demonstration evidence is required |
-| OP02 | Agree on classification for terminal products, definition of recipe quantities per unit or per batch, allowed yields, and how AI02 carries usable surplus across days. Supply explicit values for demonstrable recipes. | AI01, AI02 and AI06 |
-| OP03 | Agree on the operational source for direct-sale consumption, explicit tracking status in scenario inputs, and how to represent a recipe with an untracked internal component. The worked examples give internal preparations explicit stock and consumption values. | BCK05/BCK09, AI06 and AI02 |
-| OP04 | Agree on the AI05 request contract and AI06 route for a BOM execution, how result and snapshot versions are linked for historical replay, and how the Manager invokes a BOM-only run. The AI01/AI06 demand mapping is defined in [section 4.3.1](#431-demand-mapping-in-ai06). | AI05, AI06 and WEB07 |
-| OP05 | Establish whether finished pizzas can be stocked and consumed from stock in a LaPrizza planning scenario. The classroom briefcase example does this for the final product. The AI01 examples here expand pizza demand into components directly. | AI01 and AI06 |
-| OP06 | Confirm how the Backoffice order API exposes the selected size to AI06. The simulated order fixture supplies the size explicitly. | AI06 and the Backoffice ordering workflow |
+| OP01 | Versioned input fixtures supply internal recipes and stock through `planning_input`. Live catalogue components use the terminal classification in section 4.3.3; descriptive compositions do not become production recipes. | AI01 fixtures; AI06 source adapter |
+| OP02 | Recipes declare positive integer batch yields and ingredient quantities. Round production up to whole batches and report surplus in the hypothetical closing balance. AI02 handles daily feasibility and balance transfer. | AI01, AI02 and AI06 |
+| OP03 | Tracking is explicit. Ordinary untracked components use `none` consumption. Quantified preparations and their ingredients require tracked stock. Direct-sale consumption and its source mapping belong to AI02 and AI06. | AI01 validation; AI06 and AI02 integration |
+| OP04 | The core consumes `planning_input` and returns `ok(Lines)` or a diagnostic. Sections 4.1 and 4.3 define access, execution IDs and retained snapshots. This implementation uses local mocks; AI05, AI06 and WEB07 will connect those service paths. | AI01 core; AI05, AI06 and WEB07 integration |
+| OP05 | Pizza demand expands directly into components; finished pizzas have no stock balance in this contract. The briefcase is a stocked aggregate inside a synthetic training BOM, preserving the teacher's stock-first calculation. Arbitrary assembly-root requests are outside this API. | AI01 and AI06 |
+| OP06 | Every selected BOM requires an explicit size. The S13 fixture supplies the medium size. AI06 must resolve the recorded order size and personalised configuration before calling AI01 and reject incomplete source data. | AI01 validation; AI06 order mapping |
 
 ## 3. IARTI support material
 
@@ -174,22 +174,24 @@ AI06 uses a separate read-only service identity for the operational input endpoi
 
 The diagram uses a class-style view for Prolog data and predicates. The public calculation predicate accepts the ground `planning_input{...}` dict built by AI06. An in-memory demonstration uses the same shape. A demand line is `pizza_demand(Date, BomId, Quantity)`, with `Date = none` for standalone AI01. A recipe is `recipe(ProductId, YieldUnits, Ingredients)` with `ingredient(ProductId, UnitsPerBatch)` entries. Look up pizza definitions by scenario-local BOM ID. Per-item lookups and accumulated quantities use the product ID as the key.
 
-| Proposed predicate | Role |
+| Predicate | Role |
 | --- | --- |
 | `bom_requirements(+Input, -Outcome)` | Run the calculation for one ground input. Return exactly one `ok(Lines)` or `error(Diagnostic)`. |
 | `prepare_bom(+Input, -Prepared)` | Read the `planning_input` keys defined below. Validate `pizza_demand/3`, `bom/4`, `item/6`, `recipe/3` and `stock/2`, build lookups and produce initial component demand and parent-first item order. |
 | `net_requirements(+Prepared, -Lines)` | Traverse that order with an accumulated demand map. Calculate stock coverage and production, propagate ingredient requirements and produce one row per item with positive demand. |
+| `stock_lists(+Lines, -Withdraw, -Order)` | Project successful rows to positive `(Quantity, ProductId)` pairs for the teacher's LWS and LOS. Exported alongside `bom_requirements/2`. |
 
-The second and third predicates are internal responsibilities. They separate the validation of a complete input set from arithmetic on a prepared graph. `Lines` is sorted by product ID. A withdrawal list and a replenishment list can both be projected from the rows by taking only positive quantities in the relevant field. This retains the intent of `manage_stock/4` and `join_equals/2` from the professor's example while tracking one balance and one requirement total per item. The calculation passes values through predicates for each request. The adapter handles expected validation errors separately from unexpected runtime failures.
+The second and third predicates are internal responsibilities. They separate the validation of a complete input set from arithmetic on a prepared graph. `Lines` is sorted by product ID. `stock_lists/3` takes positive `withdrawnUnits` and `replenishmentUnits`, respectively, preserving row order and the string product IDs. This retains the intent of `manage_stock/4` and `join_equals/2` from the professor's example while tracking one balance and one requirement total per item. List order can differ from the teacher's traversal; quantities match. The calculation passes values through predicates for each request. The adapter handles expected validation errors separately from unexpected runtime failures.
 
 #### 4.2.1. Input model
 
-This is the proposed normalised model at the AI01 boundary. AI06 owns its transport contract and provides the source records needed to construct it. IDs refer to the selected input set throughout. Quantities are integers, with one product-specific abstract stock unit per item. A pizza demand line uses counts of pizzas.
+This is the normalised model at the AI01 boundary. AI06 owns its transport contract and provides the source records needed to construct it. IDs refer to the selected input set throughout. Quantities are integers, with one product-specific abstract stock unit per item. A pizza demand line uses counts of pizzas.
 
 AI06's `load_inputs/2` returns `ok(Input)` where `Input` has tag `planning_input`. The calculation reads these exact keys and terms. Business identifiers are case-sensitive strings. Classification, tracking flags and `none` are atoms. [Complete producer mapping and example](../ai06/usAI06.md#44-data-mapping-to-prolog)
 
 | Dict key | Value consumed by `prepare_bom/2` |
 | --- | --- |
+| `meta` | Execution metadata. Require string `scenarioId` and `mode`, where mode is `"current"` or `"historicalReplay"`. Mode validation does not retrieve or authenticate a historical snapshot. |
 | `pizza_demand` | List of `pizza_demand(Date, BomId, Qty)`. Date is `none` or a validated `date(Year, Month, Day)`. AI01 totals the supplied rows. |
 | `pizza_boms` | List of `bom(BomId, PizzaId, SizeId, Components)` with `component(ProdId, Units)` terms. An absent catalogue pizza ID is `none`. Untracked component consumption is `none`. |
 | `items` | List of `item(ProdId, Kind, Tracked, AcqType, StockUnit, UnitsPerSale)`. Kinds are `terminal` or `aggregate`. Aggregate acquisition is `produced` or `purchased`. Optional fields that do not apply are `none`. |
@@ -238,15 +240,13 @@ AI02 selects one day's `pizza_demand/3` rows and supplies that day's hypothetica
 
 ### 4.3. Integration contract proposal
 
-`POST /api/v1/planning/executions` starts a run. WEB07 generates an `executionId` (UUID) before sending the request and keeps it with the original selection. A forecast request includes `forecastId`, `forecastVersion` and `planningType`. Use `BILL_OF_MATERIALS` for AI01. WEB07 supplies the confirmed supplier scenario ID and version when requesting `REQUIREMENTS_PLANNING` for AI02. A replay sends a new `executionId` and `replayedFrom` to identify the completed run whose selection and inputs it uses.
-
-`GET /api/v1/planning/executions/{executionId}/result` checks the current Manager's access and returns the stored status and `retryable` flag. For a completed BOM run, the result includes the execution and scenario IDs, mode, input sources, simulation flag and requirement lines. After a lost response, WEB07 checks this endpoint with the ID it already has. If the run is retryable or the authorised lookup returns `404`, the Manager can resubmit the same ID and selection. A duplicate submission for an active or completed run returns the stored state and starts no new attempt. A changed selection for the same authorised ID returns `409`. [WEB07 recovery flow](../../web/web07/usWEB07.md#execution-recovery)
+AI01 uses `planningType: "BILL_OF_MATERIALS"` in the shared API. A completed BOM run returns its requirement rows under `result.data`. Start, status, history, retry and replay use the same envelope as AI02. [Shared planning execution API](../../../architecture/planning-execution-api.md) · [WEB07 recovery flow](../../web/web07/usWEB07.md#execution-recovery)
 
 #### 4.3.1. Demand mapping in AI06
 
-For a first run, AI06 calls Backoffice `POST /api/v1/internal/planning/operational-inputs` with the authorised selection and prepares the input before the calculation. The proposed `GET /api/v1/planning/executions/{executionId}/inputs` reads a snapshot already stored by Procurement. AI06 maps the bound snapshot to the `planning_input` dict above. [AI06 REST and snapshot design](../ai06/usAI06.md#43-internal-rest-contracts)
+For a first run, AI06 opens a private Backoffice read view with the authorised selection. For a retry or replay with saved inputs, AI06 reads the retained snapshot through its internal input-run API. It maps the bound snapshot to the `planning_input` dict above. [AI06 REST and snapshot design](../ai06/usAI06.md#43-internal-rest-contracts)
 
-An `OrderItem` links to `PizzaSize`. `PersonalizedPizzaConfiguration` holds the selected components. Simulated orders provide these values directly. How AI06 reads them from the order API is open (OP06). [Sprint 2 domain model](https://github.com/Departamento-de-Engenharia-Informatica/LEI-SEM5-PI-2026-27-3DE-01/blob/a5a622a15cda51400a56d630533e5383cc05281a/docs/architecture/domainModel/domainmodel.puml)
+An `OrderItem` links to `PizzaSize`. `PersonalizedPizzaConfiguration` holds the selected components. Simulated orders provide these values directly. AI06 must resolve the recorded size before constructing this input, as specified in OP06; connecting the order API belongs to that adapter. [Sprint 2 domain model](https://github.com/Departamento-de-Engenharia-Informatica/LEI-SEM5-PI-2026-27-3DE-01/blob/a5a622a15cda51400a56d630533e5383cc05281a/docs/architecture/domainModel/domainmodel.puml)
 
 | Selected input | Mapping into AI01 |
 | --- | --- |
@@ -367,24 +367,24 @@ In an IARTI fixture, each item declares its `kind`. An aggregate must also decla
 | Service integration | Run S10–S21 with AI05 and AI06. Verify execution, replay and result access after session revocation or Manager role removal. Change inputs during S17 capture and verify the stored set is coherent. Check historical replay, product eligibility, diagnostic responses and read-only use of stock. Recover a saved result after a lost response and verify that a stale failure leaves the saved success intact. |
 | IARTI demonstration | Use the S03 fixture for a worked explanation and a larger fixture covering at least three pizza sizes, two doughs or bases, 20 ingredients and eight pizza types as described in the first deck. Show an API-backed catalogue run, internal and purchased aggregate shortages, and reproducible output. Record the Prolog invocation, input snapshot and actual results in AI04. |
 
-The verification scenarios describe expected behavior for implementation. The worked numerical example is already documented in the analysis.
+The scenario matrix describes expected behavior across the core calculation and its future integration. Sections 6 and 7 record the implemented core, its mock boundary and the local verification evidence.
 
-### 4.5. Design decisions for integration review
+### 4.5. Implemented decisions and integration boundaries
 
-| Analysis reference | Proposed decision and remaining alignment |
+| Analysis reference | Implemented decision and integration boundary |
 | --- | --- |
-| OP01 | Supply internal recipes via a versioned AI06 demonstration scenario. Confirm the fixture's storage and serving mechanism with AI06. Any operational preparation-recipe source needs an agreed business definition. |
-| OP02 | Use the catalogue and fixture classification rules in section 4.3.3. Fixture preparation uses explicit batch yields. Agree with AI02 on the conditions for carrying simulated surplus. |
-| OP03 | Require explicit tracking status. The demonstrator uses tracked inputs for internal recipes. Agree on direct-sale consumption configuration and the treatment of any untracked internal preparation inputs with BCK05/BCK09 and AI06. |
-| OP04 | Use the authorisation and record paths in the SAD, the snapshot binding in section 4.1 and the execution ID and recovery contract in section 4.3. Forecast and order demand share the `bomId` contract. Confirm how WEB07 offers the BOM-only action. |
-| OP05 | Treat the ordered pizza as the root defining component demand for this design. Confirm with AI06 if a future scenario must support stock of finished pizzas, as illustrated by the briefcase example. |
-| OP06 | Require an explicit selected size in the input for each catalogue pizza order line. Use the size supplied by the simulated fixture and confirm the Backoffice source with AI06 before mapping real catalogue orders. |
+| OP01 | `bom_fixtures.pl` supplies versioned internal recipes and stock through the AI06 input shape. The live classification rule remains the one in section 4.3.3. AI06 will connect the sources. |
+| OP02 | Whole batches are rounded up using integer arithmetic. Recipe yields and ingredient quantities are explicit; surplus is returned as a hypothetical balance. AI02 checks daily feasibility before carrying it forward. |
+| OP03 | Ordinary untracked components use `none` consumption. Quantified internal recipes require tracked preparations and ingredients with explicit balances. Direct-sale demand is outside the AI01 calculation. |
+| OP04 | The CLI calls the same core contract intended for AI05/AI06. Authorisation, sealed snapshots, execution recovery and stored results follow sections 4.1 and 4.3 when those USs are implemented. |
+| OP05 | Finished pizza stock is outside the input model. A training BOM wraps the teacher's briefcase aggregate to exercise stock of the finished assembly. Section 6.3 explains this adapter and its limits. |
+| OP06 | The selected BOM must have an explicit known size. S13 tests the normalised order case and rejects a missing size. AI06 must resolve the original order size before this boundary. |
 
 ## 5. Acceptance scenarios and expected evidence
 
 ### 5.1. Simulated recipe and worked result
 
-Use fixed product IDs in the eventual fixture. The names below make the arithmetic readable. Quantities are abstract stock units for the corresponding item.
+The `worked` fixture uses fixed product IDs. The names below make the arithmetic readable. Quantities are abstract stock units for the corresponding item.
 
 | Input | Definition |
 | --- | --- |
@@ -436,7 +436,185 @@ All opening stock values remain persisted as entered. In this result, production
 
 For the Sprint 2 demonstration, retain the versioned input, AI05 request and result, Prolog calculation evidence and stock snapshots before and after execution. Show an API-backed catalogue case and the reproducible internal-recipe simulation. The demonstration can use the small worked example to explain the arithmetic and the larger IARTI dataset to show multiple pizza configurations. Record observed outcomes and limitations in AI04.
 
-## 6. References
+## 6. Implementation
+
+### 6.1. Implemented file structure
+
+```text
+ai/
+├── src/
+│   ├── bom.pl
+│   └── json_boundary.pl
+├── fixtures/
+│   └── bom_fixtures.pl
+├── tests/
+│   ├── bom_tests.pl
+│   └── json_boundary_tests.mjs
+├── demo_bom.pl
+└── README.md
+```
+
+| File | Implemented responsibility |
+| --- | --- |
+| [bom.pl](../../../../ai/src/bom.pl) | Exports `bom_requirements/2` and `stock_lists/3`. Validates the input, builds the dependency order, calculates stock coverage, production and replenishment, and projects LWS/LOS. |
+| [bom_fixtures.pl](../../../../ai/fixtures/bom_fixtures.pl) | Exports `bom_fixture/2`. Supplies ten versioned input mocks using the AI06 `planning_input` contract. |
+| [json_boundary.pl](../../../../ai/src/json_boundary.pl) | Exports `write_planning_json/2`. Shared JSON output validation for the demo and future AI05 handlers, retaining valid scenario and execution references on error. |
+| [demo_bom.pl](../../../../ai/demo_bom.pl) | Exports `demo/1` for JSON and `demo_stock/1` for the teacher's LWS/LOS lists. Imports the shared JSON boundary. |
+| [bom_tests.pl](../../../../ai/tests/bom_tests.pl) | Contains 55 PlUnit test definitions, producing 70 checks through parameterised cases. |
+| [json_boundary_tests.mjs](../../../../ai/tests/json_boundary_tests.mjs) | Contains 13 Node.js tests using the shared Prolog serializer and JavaScript JSON round trips. |
+| [AI checks workflow](../../../../.github/workflows/ai-checks.yml) | Runs both suites on relevant PRs and manual requests. Reused by scheduled CI and by deployment for the selected release SHA. |
+| [AI README](../../../../ai/README.md) | Documents the input, result, fixtures and execution commands. The repository README links to these instructions. |
+
+### 6.2. Core calculation
+
+The `bom` module exposes one calculation entry point. `prepare_bom/2` and `net_requirements/2` are internal predicates. The input is a ground `planning_input` dict using the keys and terms in section 4.2.1. Business IDs remain strings.
+
+1. **Validate and index.** `prepare_bom/2` checks required fields, quantities, classifications, tracking, references and eligibility. It requires mode `"current"` or `"historicalReplay"`; an unknown mode yields `INVALID_MODE` with the received value as its reference, while an absent field yields `MISSING_FIELD`. A BOM size of `none` yields `MISSING_FIELD` at `pizza_boms.sizeId`, with the BOM ID as its reference. A supplied invalid size yields `INVALID_REFERENCE`; an unknown string size ID yields `UNKNOWN_SIZE`. `index_records` uses `library(assoc)` to build indexes by ID and reject duplicate definitions. An explicitly untracked component uses `none` consumption and has no opening balance.
+2. **Validate the graph.** `visit_items` and `visit_item` traverse the selected components and reachable internal recipes. The active path detects cycles, while the visited index recognises shared ingredients. Recipes and tracked balances are checked even when stock covers the selected demand. Purchased aggregates and terminal items end the traversal.
+3. **Accumulate pizza demand.** `add_pizza_demand`, `add_component_demand` and `add_demand` sum `quantity × unitsPerPizza` by product ID. A zero contribution adds no demand.
+4. **Net in dependency order.** `net_items` processes parents before ingredients, after all parents can contribute demand. It withdraws `min(required, available)` from the opening balance and calculates the residual once per product.
+5. **Plan internal production.** `plan_item` uses `(residual + yield - 1) // yield` whole batches. `add_ingredient_demand` adds the resulting ingredient quantities to the same demand accumulator. Purchased and terminal residuals become replenishment. Internal production reports its surplus as hypothetical remaining stock.
+6. **Return stable rows.** `net_requirements` sorts the requirement dicts by product ID. Expected validation errors are caught by `bom_requirements/2` and returned as `error(Diagnostic)`, including the scenario and execution references when available. Unexpected runtime errors propagate to the caller.
+
+All indexes and accumulators belong to the call. The opening-stock index is read to calculate each product's coverage and the resulting balance is returned in its requirement row. Repeated and concurrent calls retain independent inputs.
+
+For the defence, follow `visit_item` → `net_items` → `plan_item`: discover and validate the recipe graph, use stock after all parent contributions, then calculate whole production batches or terminal shortages. Short comments mark these steps in the source. `library(assoc)` provides ID-to-value maps; `foldl` passes an updated accumulator along a list. `throw` and `catch` turn expected validation failures into diagnostics. They do not update stock facts.
+
+### 6.3. Adaptation of the teaching example
+
+The `briefcase` fixture preserves the parts, assembly relationships and opening balances supplied in `pizza-BOM.pl`. Terminal `part/1` definitions become planning items. `setp/2` definitions become recipes with an explicit yield of one. Repeated parts become explicit ingredient quantities, including two locks per bottom and two metal latches per lid.
+
+The stock-first expansion is implemented through the dependency traversal and netting pass. The teaching example's `retract/asserta` stock updates are represented by local calculations and result balances. Shared demand is accumulated before stock allocation and batch rounding.
+
+The public input starts with pizza BOM demand. It expands a pizza directly into its components and has no finished-pizza stock balance. To reuse this boundary, the classroom fixture defines a synthetic `teaching-assembly` BOM with `training-size` and one briefcase per unit. The briefcase is a stocked aggregate inside that BOM, so the same algorithm withdraws its 10 available units before producing the remaining 50. These references are training data, not live catalogue pizzas. A generic request such as `manage_stock(60, lid, LWS, LOS)` is outside the implemented interface.
+
+For the request for 60 briefcases, local execution produced the following withdrawals and shortages.
+
+| Item | Withdrawn from opening stock | Replenishment |
+| --- | ---: | ---: |
+| Briefcase | 10 | 0 |
+| Bottom | 20 | 0 |
+| Lid | 30 | 0 |
+| Lock | 45 | 15 |
+| Handle | 25 | 5 |
+| Lower frame | 30 | 0 |
+| Upper frame | 20 | 0 |
+| Metal latch | 40 | 0 |
+| Steel bar | 50 | 0 |
+
+`stock_lists/3` produces these quantities in the teacher's pair format. Run:
+
+```sh
+swipl -q -s ai/demo_bom.pl -g "demo_stock(briefcase)" -t halt
+```
+
+```prolog
+LWS=[(20,"bottom"),(10,"briefcase"),(25,"handle"),(30,"lid"),(45,"lock"),(30,"lower_frame"),(40,"metal_latch"),(50,"steel_bar"),(20,"upper_frame")]
+LOS=[(5,"handle"),(15,"lock")]
+```
+
+The lists contain positive quantities in product-ID order. IDs are strings under the AI06 contract; the teacher uses atoms. LOS describes quantities missing from stock. Supplier selection and operational purchase orders remain outside this projection.
+
+### 6.4. Input mocks and demonstration entry point
+
+`bom_fixtures` supplies `worked`, `sufficient_stock`, `shortage`, `shared_ingredient`, `personalized`, `ordered_ham_cheese`, `cheese_example`, `briefcase`, `iarti` and `iarti_balanced`. Each fixture has fixed references, a stable UUID execution reference and `simulation:true`. The two large fixtures have provenance version `2`, recording the added purchased pesto aggregate; the others keep version `1`. These UUIDs are local mock references; AI05 will allocate real execution IDs. `fixture_input` assembles the complete dict and its eligibility and provenance. The `iarti` fixture has three sizes, two internally produced doughs, twenty terminal ingredients, one purchased aggregate and eight pizza types, producing 24 size-specific BOMs.
+
+`ordered_ham_cheese` covers S13's normalised order input. `iarti_balanced` reuses the large dataset with stock that covers most ingredients, partially covers ham, mozzarella and pesto, and has no basil. It also demonstrates stocked dough and batch surplus. `iarti` remains available as a severe-shortage case. In both large fixtures, pizza 8 consumes 20 g of purchased pesto per size factor: total demand is 280 g, opening stock is 100 g and replenishment is exactly 180 g. No pesto recipe is needed or expanded. This prepares the calculation part of AI06 AS03 in one run; connecting catalogue data and mixed-source provenance remains AI06 integration.
+
+The local demonstration loads a fixture, calls `bom_requirements/2` and adds the returned lines or diagnostic to the fixture metadata for JSON output. This provides a runnable boundary for the current implementation. AI06 will supply the same input contract through its adapter, and AI05 will invoke the calculation in its authorised execution workflow.
+
+Before serialisation, `json_boundary:write_planning_json/2` recursively checks integers throughout the response. JSON numbers must be between `-9007199254740991` and `9007199254740991`, inclusive. An out-of-range value produces `error` with code `JSON_INTEGER_OUT_OF_RANGE`, the field path and the exact decimal value as a diagnostic string. Non-empty string `scenarioId` and `executionId` values are preserved in both the response and its diagnostic; malformed references are omitted. Validation happens before any bytes are written, so a failure cannot leave a partial result. Quantity fields are never silently rounded or converted to strings. The Prolog calculation retains arbitrary-precision integer arithmetic. AI05 can import the shared module without depending on the demo and must validate safe numeric inputs at the web boundary when connected; this demo does not implement an HTTP handler.
+
+## 7. Verification and demonstration
+
+### 7.1. Running the automated tests
+
+Use SWI-Prolog 9.2 or later, with `swipl` available on the command line. Run from the repository root.
+
+```sh
+swipl -q -s ai/tests/bom_tests.pl -g run_tests -t halt
+node ai/tests/json_boundary_tests.mjs
+```
+
+Local verification used SWI-Prolog 9.2.9 for Windows x64. All 70 Prolog checks and 13 Node.js boundary tests passed. The Node.js tests call the Prolog serializer, parse the JSON in JavaScript and check safe values after JSON re-encoding. They cover the safe limits, nested metadata, the reported `9007199254740993` value, actual calculated quantities, all ten demos, preserved diagnostic references and direct use of `json_boundary.pl` without loading the demo. A portable SWI-Prolog executable can be passed as the first argument to the Node.js script. `git diff --check` also passed. The Prolog tests cover the following parts of the scenario matrix.
+
+The reusable [AI workflow](../../../../.github/workflows/ai-checks.yml) runs the same two commands in a `swipl:9.2.9` container, with Node.js selected from `frontend/.nvmrc`. Relevant PRs and manual dispatches run it directly. [Scheduled CI](../../../../.github/workflows/main.yml) also calls it. [Deployment](../../../../.github/workflows/deploy.yml) passes the SHA selected by its `resolve` job; `package` depends on the AI validation succeeding. This adds an AI test gate for the exact release being deployed. Rollback keeps its separate recovery path. The GitHub-hosted run remains to be observed after these changes are pushed.
+
+| Design scenarios | Implemented verification |
+| --- | --- |
+| S01–S06 | Exact S03 rows, sufficient stock, terminal shortages, purchased aggregates, shared ingredients, input reordering and batch surplus. |
+| S07–S09 | Empty and zero demand, invalid quantities, unknown references, missing consumption, missing stock and recipes, untracked components, shared descendants, self-cycles and multi-level cycles. |
+| S10, core only | Repeatability, a single result per call, unchanged input terms and concurrent calls using different stock balances. These verify local value handling without mutable stock facts; they do not prove backend snapshot isolation. |
+| S11, eligibility only | Inactive product and size flags are rejected in the supplied input. A separate test checks that valid mode metadata does not change material arithmetic. Backend deactivation, retained-input retrieval and historical replay remain integration checks. |
+| S12 | The AI06 cheese example and the same pizza demand represented with an AI02 calendar date. The calculation reports 600 g required and 200 g missing. |
+| S13, normalised input | Five medium ham-and-cheese pizzas require 10 mozzarella and 5 ham units. Stocks of 6 and 5 leave 4 mozzarella units missing. Equivalent dated forecast demand gives the same rows; size `none` yields `MISSING_FIELD`, while supplied invalid values yield `INVALID_REFERENCE`. Reading and normalising a real order remains AI06 integration. |
+| S14 | Distinct personalised BOMs sharing a catalogue pizza and size, including a BOM without a catalogue reference. |
+| S18–S19 | Terminal treatment of a live-style produced component and diagnostics for invalid kinds or unresolved aggregate classification. |
+| Additional checks | Duplicate references, malformed and non-ground input, invalid or missing mode, calendar dates, exact large integer arithmetic, diagnostic context, exact briefcase LWS/LOS, zero-quantity filtering, the IARTI dataset counts, the balanced-stock variant and exactly 180 g of purchased pesto replenishment in both large fixtures. |
+
+The concurrency test runs two calls together. Both require 600 g of cheese. One receives 400 g and reports 200 g missing, while the other receives 600 g and reports zero missing. The first input still contains its original 400 g after both calls.
+
+### 7.2. Running the local demonstrations
+
+```sh
+swipl -q -s ai/demo_bom.pl -g "demo(worked)" -t halt
+swipl -q -s ai/demo_bom.pl -g "demo(sufficient_stock)" -t halt
+swipl -q -s ai/demo_bom.pl -g "demo(cheese_example)" -t halt
+swipl -q -s ai/demo_bom.pl -g "demo(briefcase)" -t halt
+swipl -q -s ai/demo_bom.pl -g "demo(iarti)" -t halt
+swipl -q -s ai/demo_bom.pl -g "demo(iarti_balanced)" -t halt
+swipl -q -s ai/demo_bom.pl -g "demo(ordered_ham_cheese)" -t halt
+swipl -q -s ai/demo_bom.pl -g "demo_stock(briefcase)" -t halt
+```
+
+All ten fixtures were executed locally and their JSON output was parsed successfully. Their simulation flag and scenario reference matched the selected fixture. The LWS/LOS demonstration was also executed and matched section 6.3.
+
+| Fixture | Observed result |
+| --- | --- |
+| `worked` | Seven rows matching S03, with shortages of 4 cheese, 1 water and 2 flour, and 1 premix remaining. |
+| `sufficient_stock` | Three rows for base, cheese and tomato, all with zero replenishment. |
+| `shortage` | Shortages of 6 cheese and 15 tomato. |
+| `shared_ingredient` | Three units of premix demand, one unit withdrawn and one two-unit batch. All material deficits are zero. |
+| `personalized` | Shortages of 4 cheese and 1 ham. |
+| `ordered_ham_cheese` | Ten mozzarella units required, six withdrawn and four missing; five ham units required and covered. |
+| `cheese_example` | 600 g required, 400 g withdrawn and 200 g to replenish. |
+| `briefcase` | Nine rows with shortages of 15 locks and 5 handles. |
+| `iarti` | Twenty-three requirement rows, fifteen products with replenishment and non-negative hypothetical balances. Purchased pesto contributes exactly 180 g of replenishment. |
+| `iarti_balanced` | Twenty-three rows. Shortages of 1,420 g mozzarella, 380 g ham, 180 g pesto and 70 g basil. Tomato closes with 560 g, flour with 4,000 g and classic dough with 2 units. |
+
+### 7.3. Testing a custom pizza quantity
+
+Load the modules from the repository root in an interactive SWI-Prolog session.
+
+```prolog
+?- [ai/demo_bom].
+```
+
+The following query uses the `worked` recipes and opening stock and selects five medium Margheritas.
+
+```prolog
+?- bom_fixtures:bom_fixture(worked, Base),
+   put_dict(pizza_demand, Base,
+            [pizza_demand(none, "medium-margherita", 5)], Input),
+   bom:bom_requirements(Input, Outcome),
+   writeln(Outcome).
+```
+
+Local execution required 5 bases, 10 cheese and 15 tomato. The 3 stocked bases cover part of the demand, leaving 2 to produce. Those bases require 4 premix and 2 water. After withdrawing 3 premix, one batch supplies the remaining unit and leaves 1 premix in hypothetical stock. The only replenishment is 2 cheese. Change the quantity or use `large-margherita` to exercise another selected BOM.
+
+## 8. Dependencies and remaining integration
+
+| Boundary | Current implementation and integration work |
+| --- | --- |
+| AI06 | Local versioned fixtures supply `planning_input`. The AI06 implementation will obtain and normalise the selected back-end inputs and retain a coherent snapshot. |
+| AI05 and WEB07 | The CLI demonstration invokes the calculation directly. The service workflow will provide current Manager checks, execution records, result consultation and public error handling. S15–S16 and S20–S21 depend on that workflow. |
+| Backoffice source data | Core tests exercise eligibility and data errors using normalised input. S13's order-to-input mapping and S17's transactional capture belong to the adapter and back-end integration. |
+| AI02 | The core accepts dated demand rows. AI02 will select each day's rows, supply hypothetical opening balances and plan suppliers and deliveries. |
+| AI04 | The observed local calculation and test results above can be used as report evidence. End-to-end API and persistence evidence follows the integrated workflow. |
+
+The current implementation delivers the AI01 calculation and runnable demonstrations with the requested mocks. The source and service criteria in AI01-AC01 and AI01-AC02 need their AI05 and AI06 connections for end-to-end acceptance. Stock and purchase-order integration checks follow those connections.
+
+## 9. References
 
 - *LEI-2026-27-Sem5-Project_v1-Sprint2US.pdf*, AI01 and AI02 on printed pp. 15–17, AI05 and AI06 on printed pp. 18–19, and integrated Sprint 2 deliverables on printed p. 25.
 - Paulo Matos's replies supplied for this analysis on pizza-only catalogue BOMs and IARTI scope, the execution stock snapshot, WEB07/AI06 data requirements, inactive references, and the supplier limits follow-up.

@@ -219,6 +219,7 @@ describe('AA02 Google sign-in HTTP contract (fake provider, in-memory persistenc
       name: 'Local Ana',
       email: 'ana.silva@gmail.com',
       password: 'LocalSecure123!',
+      phoneNumber: '+351912345678',
     });
     const response = await signIn(app);
     expect(response.status).toBe(409);
@@ -291,6 +292,7 @@ describe('AA03 role resolution after Google sign-in', () => {
       .send({
         name: 'Local Rui',
         email: 'rui@example.com',
+        phoneNumber: '+351912345678',
         password: 'LocalSecure123!',
       });
     expect(registration.status).toBe(201);

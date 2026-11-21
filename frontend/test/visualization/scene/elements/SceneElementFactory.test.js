@@ -1,5 +1,7 @@
 import {
   Bone,
+  Box3,
+  Vector3,
   BoxGeometry,
   Group,
   Mesh,
@@ -25,13 +27,15 @@ function setup() {
   const material = new MeshBasicMaterial();
   const scene = new Group().add(new Mesh(geometry, material));
   const steel = new Texture();
+  const steelRough = new Texture();
   const model = { scene };
   const getModel = jest.fn((id) =>
     id === 'AST-MDL-FRIDGE-01' ? model : undefined,
   );
   const assets = {
     getModel,
-    getTexture: (id) => (id === 'AST-TEX-STEEL-COLOR' ? steel : undefined),
+    getTexture: (id) =>
+      ({ 'AST-TEX-STEEL-COLOR': steel, 'AST-TEX-STEEL-ROUGH': steelRough })[id],
   };
   const shapes = createProceduralShapeFactory();
   const materials = createKitchenMaterialFactory(assets);
@@ -39,6 +43,11 @@ function setup() {
   const factory = createSceneElementFactory({ assets, shapes, materials });
   return { factory, assets, model, geometry, material, shapes, materials };
 }
+
+const steelSet = {
+  colorMapAssetId: 'AST-TEX-STEEL-COLOR',
+  roughnessMapAssetId: 'AST-TEX-STEEL-ROUGH',
+};
 
 const element = (overrides) => ({
   id: 'element-1',
@@ -63,7 +72,7 @@ test('UT04 - builds a procedural element with the cached geometry, its material 
       shape: 'BOX',
       size: { x: 2.4, y: 0.9, z: 0.7 },
     },
-    material: { colorMapAssetId: 'AST-TEX-STEEL-COLOR', metalness: 0.8 },
+    material: { ...steelSet, metalness: 0.8 },
   });
   const root = factory.create(counter);
   expect(root.name).toBe('counter-1');
@@ -106,7 +115,7 @@ test('UT06 - applies the material override only when the element has one', () =>
   const withOverride = factory.create(
     element({
       model: { source: 'ASSET', assetId: 'AST-MDL-FRIDGE-01' },
-      material: { colorMapAssetId: 'AST-TEX-STEEL-COLOR' },
+      material: steelSet,
     }),
   );
   expect(materials.applyOverride).toHaveBeenCalledTimes(1);
@@ -172,14 +181,25 @@ test.each([
   ],
   [
     'missing texture',
-    { material: { colorMapAssetId: 'AST-TEX-NOPE' } },
+    {
+      material: {
+        colorMapAssetId: 'AST-TEX-NOPE',
+        roughnessMapAssetId: 'AST-TEX-STEEL-ROUGH',
+      },
+    },
     'asset-missing',
+  ],
+  [
+    'invalid material (VIS04-ALN-8)',
+    { material: { ...steelSet, roughness: 1.2 } },
+    'invalid-material',
   ],
 ])('UT07 - %s fails with the element id', (_, overrides, reason) => {
   const { factory } = setup();
   const value = element({
     id: 'broken-1',
     model: { source: 'PROCEDURAL', shape: 'BOX', size: { x: 1, y: 1, z: 1 } },
+    material: steelSet,
     ...overrides,
   });
   expect(() => factory.create(value)).toThrow(
@@ -224,7 +244,10 @@ test('releases a detached clone skeleton if its material override fails', () => 
     factory.create(
       element({
         model: { source: 'ASSET', assetId: 'AST-MDL-FRIDGE-01' },
-        material: { colorMapAssetId: 'AST-TEX-MISSING' },
+        material: {
+          colorMapAssetId: 'AST-TEX-MISSING',
+          roughnessMapAssetId: 'AST-TEX-STEEL-ROUGH',
+        },
       }),
     ),
   ).toThrow(expect.objectContaining({ reason: 'asset-missing' }));
@@ -249,6 +272,7 @@ test('UT05b - parts of an imported model never shadow an element id (BR 3)', () 
     element({
       id: 'door-upper',
       model: { source: 'PROCEDURAL', shape: 'BOX', size: { x: 1, y: 1, z: 1 } },
+      material: steelSet,
     }),
   );
   scene.add(fridge, door); // the fridge is traversed first
@@ -260,4 +284,56 @@ test('UT05b - parts of an imported model never shadow an element id (BR 3)', () 
   expect(fridge.getObjectByName('part:door-upper')).toBe(part);
   // The loaded model itself is not renamed (it is shared by every clone).
   expect(model.scene.children[0].name).toBe('door-upper');
+});
+
+test('T28 - an invalid element material keeps the MaterialBuildError as cause', () => {
+  const { factory } = setup();
+  const counter = element({
+    id: 'counter-9',
+    model: { source: 'PROCEDURAL', shape: 'BOX', size: { x: 1, y: 1, z: 1 } },
+    material: { colorMapAssetId: 'AST-TEX-STEEL-COLOR' },
+  });
+  let error;
+  try {
+    factory.create(counter);
+  } catch (caught) {
+    error = caught;
+  }
+  expect(error).toBeInstanceOf(ElementBuildError);
+  expect(error).toMatchObject({
+    elementId: 'counter-9',
+    reason: 'invalid-material',
+  });
+  expect(error.cause).toMatchObject({
+    name: 'MaterialBuildError',
+    property: 'roughnessMapAssetId',
+    reason: 'incomplete-maps',
+  });
+});
+test('non-uniform placement tiles each face in world metres and keeps local bounds and caching correct', () => {
+  const { factory } = setup();
+  const cube = element({
+    model: { source: 'PROCEDURAL', shape: 'BOX', size: { x: 1, y: 1, z: 1 } },
+    material: steelSet,
+  });
+  const build = (x, y, z) =>
+    factory.create({ ...cube, placement: { ...identity, scale: { x, y, z } } });
+  const root = build(2, 1, 3);
+  const geometry = meshesOf(root)[0].geometry;
+  const uv = geometry.getAttribute('uv');
+  const normal = geometry.getAttribute('normal');
+  const top = Array.from({ length: uv.count }, (_, i) => i).filter(
+    (i) => normal.getY(i) > 0.5,
+  );
+  const span = (values) => Math.max(...values) - Math.min(...values);
+  expect(span(top.map((i) => uv.getX(i)))).toBe(2);
+  expect(span(top.map((i) => uv.getY(i)))).toBe(3);
+  expect(geometry.boundingBox.getSize(new Vector3()).toArray()).toEqual([
+    1, 1, 1,
+  ]);
+  expect(
+    new Box3().setFromObject(root).getSize(new Vector3()).toArray(),
+  ).toEqual([2, 1, 3]);
+  expect(meshesOf(build(2, 1, 3))[0].geometry).toBe(geometry);
+  expect(meshesOf(build(1, 1, 1))[0].geometry).not.toBe(geometry);
 });

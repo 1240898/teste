@@ -85,6 +85,37 @@ it('sends a POST body as JSON and returns null without parsing a 204 response', 
   expect(json).not.toHaveBeenCalled();
 });
 
+it('uploads a document as bytes and reads the authenticated download as a blob', async () => {
+  const file = new Blob(['Shared procedure']);
+  const path = '/shared-resources/example.txt';
+  const accessToken = 'in-memory-token';
+  globalThis.fetch = jest.fn()
+    .mockResolvedValueOnce({ ok: true, status: 201, json: async () => ({ name: 'example.txt' }) })
+    .mockResolvedValueOnce({ ok: true, status: 200, blob: async () => file });
+
+  await expect(apiClient.post(path, {
+    body: file,
+    accessToken,
+    headers: { 'X-Confirm-Shared-Publication': 'true' },
+  })).resolves.toEqual({ name: 'example.txt' });
+  expect(fetch).toHaveBeenNthCalledWith(1, expect.stringContaining(path), expect.objectContaining({
+    body: file,
+    headers: expect.objectContaining({
+      'Content-Type': 'application/octet-stream',
+      'X-Confirm-Shared-Publication': 'true',
+      Authorization: `Bearer ${accessToken}`,
+    }),
+  }));
+
+  await expect(apiClient.get(path, { accessToken, responseType: 'blob' })).resolves.toBe(file);
+  expect(fetch).toHaveBeenNthCalledWith(2, expect.stringContaining(path), expect.objectContaining({
+    headers: expect.objectContaining({
+      Accept: 'application/octet-stream',
+      Authorization: `Bearer ${accessToken}`,
+    }),
+  }));
+});
+
 it.each([401, 403, 503])(
   'preserves HTTP status %s without exposing request headers or the access token',
   async (status) => {

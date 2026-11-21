@@ -7,5 +7,9 @@ export const passwordSection = getSection('accountPassword');
 export const passwordPath = passwordSection.path;
 export const usersSection = getSection('users');
 export const auditSection = getSection('securityAudit');
+export const sharedResourcesSection = getSection('sharedResources');
 export const catalogueSection = getSection('catalogue');
 export const privacySection = getSection('privacyNotice');
+
+// GDP01: the Customer's own data and consents.
+export const myDataSection = getSection('myPrivacy');

@@ -2,6 +2,7 @@ import { UserRole } from '../../../user-authentication-management/domain/model/v
 import { OperationPolicyEntry } from './OperationPolicyEntry.js';
 
 const entries = [
+  ['customers.selfService', [UserRole.CUSTOMER]],
   ['customers.create', [UserRole.MANAGER]],
   ['customers.search', [UserRole.MANAGER]],
   [
@@ -27,9 +28,11 @@ const entries = [
   ['componentTypes.manage', [UserRole.MANAGER]],
   ['componentConfigurations.manage', [UserRole.MANAGER]],
   ['predefinedPizzas.manage', [UserRole.MANAGER]],
+  ['planning.manage', [UserRole.MANAGER]],
   ['stock.manage', [UserRole.MANAGER]],
   ['users.manage', [UserRole.ADMINISTRATOR]],
   ['securityAudit.read', [UserRole.ADMINISTRATOR]],
+  ['sharedResources.manage', [UserRole.ADMINISTRATOR]],
   ['listKitchenConfigurations', [UserRole.MANAGER]],
   ['getActiveKitchenConfiguration', [UserRole.MANAGER, UserRole.EMPLOYEE]],
   ['validateKitchenConfiguration', [UserRole.MANAGER]],

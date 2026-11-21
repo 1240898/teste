@@ -1,59 +1,66 @@
 @startuml sequence_diagram_load_planning_inputs
-title AI06 - Load inputs for a calculation
+title AI06 - Prolog obtains business data through HTTP
 autonumber
 hide footbox
 skinparam shadowing false
+participant "Portal Backoffice" as Portal
+participant "AI05 caller" as AI05
+participant "planning_inputs.pl" as AI06
+participant "Backoffice source API" as Sources
+participant "Input records adapter" as Records
+database "PostgreSQL" as DB
 
-participant "Planning API\n(AI05)" as AI05
-participant "Input adapter\n(AI06)" as Adapter
-participant "Procurement\nplanning records" as Records
-participant "Backoffice\ninput API" as Backoffice
-participant "Backoffice\nstorage adapter" as Storage
-
-AI05 -> Adapter : load_inputs(Execution with attemptNo, Outcome)
-Adapter -> Records : GET inputs by execution ID
-Records -> Storage : Resolve the bound or original snapshot
-Storage --> Records : Lookup outcome
-alt 200 Stored snapshot
-    Records --> Adapter : Stored or original snapshot
-    opt Replay needs the binding
-        Adapter -> Records : Bind the original snapshot for this attempt
-        Records -> Storage : Bind the replay in one transaction
-        Storage --> Records : Bound snapshot or storage diagnostic
-        Records --> Adapter : Binding outcome
+note over Portal,AI05 : Current Manager/session and record-access checks belong to the caller.
+Portal -> Records : Register fixed selection / claim input lease
+Records --> Portal : attemptNo and server expiry
+Portal -> AI05 : Invoke Prolog with selectors and scheduling context
+AI05 -> AI06 : load_inputs(Execution, Outcome)
+AI06 -> Records : GET input-runs/{executionId}/inputs
+alt 200 Retained current or historical inputs
+  Records --> AI06 : Stored document, selection and snapshot ID
+  AI06 -> AI06 : Check selection and schema
+else 409 INPUTS_NOT_SEALED for the current attempt
+  Records --> AI06 : Current input lease
+  AI06 -> Sources : POST read-views (selectors)
+  opt Current catalogue, stock or receipt source selected
+    Sources -> DB : BEGIN REPEATABLE READ READ ONLY; pin snapshot
+  end
+  Sources --> AI06 : View ID, revision, demand and provenance
+  loop Selected products, sizes, configurations, recipes, stock and AI02 pending deliveries
+    AI06 -> Sources : POST read-views/{id}/{group} (selected IDs)
+    Sources -> DB : Raw selected reads on the same connection, when current
+    Sources --> AI06 : Records with same view ID and revision
+    AI06 -> AI06 : Resolve components and follow produced recipes
+  end
+  opt AI02 input
+    AI06 -> Sources : Read selected products' offers from confirmed version
+    Sources --> AI06 : Exact version, offers and provenance
+  end
+  AI06 -> Sources : DELETE read-views/{id} (also on failure)
+  Sources -> DB : ROLLBACK and release transient read connection
+  AI06 -> AI06 : Validate candidate and map to Prolog
+  alt Valid complete candidate
+    AI06 -> Records : PUT inputs (attemptNo, validated raw document)
+    Records -> DB : Lock input run; check lease and seal first candidate
+    alt Current lease and no previous binding
+      DB --> Records : New retained snapshot
+    else Concurrent load already sealed inputs
+      DB --> Records : Previously retained winner
+    else Stale lease or storage failure
+      DB --> Records : 409 STALE_ATTEMPT or 503
     end
-else 409 INPUTS_NOT_SEALED for current run
-    Records --> Adapter : Capture required
-    Adapter -> Backoffice : Read the selected operational inputs
-    Backoffice --> Adapter : 200 consistent inputs or source diagnostic
-    opt Operational read succeeded and AI02 needs offers
-        Adapter -> Records : Read offers from the selected confirmed version
-        Records --> Adapter : 200 offers or source diagnostic
-    end
-    alt Source data is valid
-        Adapter -> Records : Bind validated candidate with attemptNo
-        Records -> Storage : Lock execution and resolve the binding
-        alt Current attempt with no binding
-            Storage -> Storage : Store and link candidate in one transaction
-            Storage --> Records : Candidate now bound
-        else Concurrent load already sealed a snapshot
-            Storage --> Records : Existing snapshot and its stored data
-        else Attempt is stale
-            Storage --> Records : 409 STALE_ATTEMPT
-        else Storage fails
-            Storage --> Records : 503 storage diagnostic
-        end
-        Records --> Adapter : Bound snapshot or diagnostic
-    else Read failed or data is invalid
-        Adapter -> Adapter : Prepare source error or 422 input diagnostic
-    end
-else Missing execution, missing historical inputs or failed lookup
-    Records --> Adapter : 404, 422, 503 or access diagnostic
+    Records --> AI06 : Winner or diagnostic
+  else Invalid or incomplete source data
+    AI06 -> AI06 : Return diagnostic without retaining partial data
+  end
+else Other lookup or access failure
+  Records --> AI06 : 401, 403, 404, 409, 422 or 503
+  AI06 -> AI06 : Stop; no fallback to current data
 end
-alt Bound snapshot available
-    Adapter -> Adapter : Build the local planning_input dict
-    Adapter --> AI05 : ok(Input)
-else Input or storage diagnostic
-    Adapter --> AI05 : error(Diagnostic)
+alt Retained snapshot available
+  AI06 -> AI06 : Build planning_input from stored winner
+  AI06 --> AI05 : ok(Input) for AI01 or AI02
+else Error
+  AI06 --> AI05 : error(Diagnostic with execution context)
 end
 @enduml

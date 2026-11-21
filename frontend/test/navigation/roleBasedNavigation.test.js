@@ -70,6 +70,8 @@ function mockBackend({ roles, me, business = () => response(200, {}) } = {}) {
     }
     if (path === '/security/audit-logs')
       return response(200, { items: [], total: 0, limit: 25, offset: 0 });
+    if (path === '/shared-resources')
+      return response(200, { items: [{ name: 'Example.txt' }] });
     if (path.startsWith('/fixture/')) {
       backend.businessCalls += 1;
       return business(path);
@@ -102,6 +104,8 @@ const menuLinks = () =>
 const main = () => container.querySelector('main').textContent;
 // Public sections (Table 1) shown in the side menu for every status.
 const PUBLIC_LINKS = ['/catalogue', '/privacy'];
+const SIGNED_IN_LINKS = ['/account', ...PUBLIC_LINKS, '/documents'];
+const CUSTOMER_LINKS = ['/account', ...PUBLIC_LINKS, '/account/privacy', '/documents'];
 
 const outcomes = [];
 // A module page whose button sends `count` business requests at the same time.
@@ -158,13 +162,12 @@ beforeEach(() => {
 describe('WEB03 role-based navigation (SPA)', () => {
   test.each([
     [undefined, ['/register', ...PUBLIC_LINKS]],
-    [['CUSTOMER'], ['/account', ...PUBLIC_LINKS]],
-    [['EMPLOYEE'], ['/account', ...PUBLIC_LINKS, '/kitchen/viewer']],
+    [['CUSTOMER'], CUSTOMER_LINKS],
+    [['EMPLOYEE'], [...SIGNED_IN_LINKS, '/kitchen/viewer']],
     [
       ['MANAGER'],
       [
-        '/account',
-        ...PUBLIC_LINKS,
+        ...SIGNED_IN_LINKS,
         '/kitchen/viewer',
         '/kitchen/configurations',
         '/planning',
@@ -172,13 +175,12 @@ describe('WEB03 role-based navigation (SPA)', () => {
     ],
     [
       ['ADMINISTRATOR'],
-      ['/account', ...PUBLIC_LINKS, '/admin/users', '/admin/security-audit'],
+      [...SIGNED_IN_LINKS, '/admin/users', '/admin/security-audit'],
     ],
     [
       ['CUSTOMER', 'MANAGER'],
       [
-        '/account',
-        ...PUBLIC_LINKS,
+        ...CUSTOMER_LINKS,
         '/kitchen/viewer',
         '/kitchen/configurations',
         '/planning',
@@ -187,8 +189,7 @@ describe('WEB03 role-based navigation (SPA)', () => {
     [
       ['ADMINISTRATOR', 'EMPLOYEE'],
       [
-        '/account',
-        ...PUBLIC_LINKS,
+        ...SIGNED_IN_LINKS,
         '/kitchen/viewer',
         '/admin/users',
         '/admin/security-audit',
@@ -198,6 +199,25 @@ describe('WEB03 role-based navigation (SPA)', () => {
     mockBackend({ roles });
     await open('/', allModules);
     expect(menuLinks()).toEqual(expected);
+  });
+
+  test.each([['CUSTOMER', false], ['ADMINISTRATOR', true]])(
+    'SYS04: %s can list documents and management controls are visible: %s',
+    async (role, canManage) => {
+      mockBackend({ roles: [role] });
+      await open('/documents');
+      await settle();
+      expect(main()).toContain('Example.txt');
+      expect(main()).toContain('Download');
+      expect(Boolean(container.querySelector('main input[type="file"]'))).toBe(canManage);
+    },
+  );
+
+  test('SYS04: a guest opening the documents page is sent to sign in', async () => {
+    mockBackend();
+    await open('/documents');
+    expect(window.location.pathname).toBe('/login');
+    expect(fetch.mock.calls.some(([url]) => new URL(url).pathname.endsWith('/shared-resources'))).toBe(false);
   });
 
   test.each([
@@ -238,7 +258,7 @@ describe('WEB03 role-based navigation (SPA)', () => {
     await act(async () => window.dispatchEvent(new Event('focus')));
     await settle();
 
-    expect(menuLinks()).toEqual(['/account', ...PUBLIC_LINKS]);
+    expect(menuLinks()).toEqual(CUSTOMER_LINKS);
   });
 
   test.each([['CUSTOMER'], ['EMPLOYEE'], ['ADMINISTRATOR']])(
@@ -298,7 +318,7 @@ describe('WEB03 role-based navigation (SPA)', () => {
     expect(backend.meCalls - meBefore).toBe(1);
     expect(main()).toContain('You do not have permission to access this page.');
     expect(main()).not.toContain('Planning fixture');
-    expect(menuLinks()).toEqual(['/account', ...PUBLIC_LINKS]);
+    expect(menuLinks()).toEqual(CUSTOMER_LINKS);
     expect(outcomes).toEqual([403]);
   });
 

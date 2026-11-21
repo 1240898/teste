@@ -28,6 +28,13 @@ export class AuthRoutes {
       this.authMiddleware.verifyToken,
       controller.getCurrentUser.bind(controller),
     );
+    // GDP01 (G4): self-service marketing consent (Table 1, Customer role).
+    router.put(
+      '/auth/me/marketing-consent',
+      this.authMiddleware.verifyToken,
+      ValidationMiddleware.validate(schemas.marketingConsent),
+      controller.updateMarketingConsent.bind(controller),
+    );
     // AA01: change of the local password by the authenticated user.
     router.patch(
       '/auth/password',

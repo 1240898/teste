@@ -9,7 +9,13 @@ import {
   Vector3,
 } from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { LAYOUT_ASSEMBLY_LINE, LAYOUT_ROOT } from '../sceneObjectNames.js';
+import {
+  AMBIENT_LIGHT,
+  KEY_SPOTLIGHT,
+  LIGHTING_ROOT,
+  LAYOUT_ASSEMBLY_LINE,
+  LAYOUT_ROOT,
+} from '../sceneObjectNames.js';
 
 /** The caller owns the filtered target. Temporary room resources end here. */
 export function buildEnvironmentMap(renderer, release) {
@@ -66,7 +72,7 @@ export function createKitchenLightingModule({
       const { center, radius } = getLayoutSphere(scene);
       const distance = 2.5 * radius;
       const root = new Group();
-      root.name = 'lighting:root';
+      root.name = LIGHTING_ROOT;
       const previousEnvironment = scene.environment;
       const previousIntensity = scene.environmentIntensity;
       let key;
@@ -89,7 +95,7 @@ export function createKitchenLightingModule({
       };
 
       const ambient = new AmbientLight(0xffffff, 0.45);
-      ambient.name = 'lighting:ambient';
+      ambient.name = AMBIENT_LIGHT;
       // Inverse-square falloff gives the same centre illumination at every layout size.
       key = new SpotLight(
         0xffffff,
@@ -99,7 +105,7 @@ export function createKitchenLightingModule({
         0.15,
         2,
       );
-      key.name = 'lighting:key';
+      key.name = KEY_SPOTLIGHT;
       key.target.name = 'lighting:key-target';
       key.target.position.copy(center);
       key.position

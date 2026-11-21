@@ -6,6 +6,7 @@ import {
   CustomerSearchCriteria,
   DietaryRestriction,
   LinkedUserId,
+  HealthDataConsent,
 } from '../../../src/modules/customer-management/domain/model/values.js';
 
 const createCustomer = (restrictions = []) =>
@@ -14,6 +15,8 @@ const createCustomer = (restrictions = []) =>
     CustomerName.create(' Ana Silva '),
     ContactInfo.create(' ANA@example.com ', '+351 912-345-678'),
     restrictions,
+    null, 
+    HealthDataConsent.grant(),
   );
 
 describe('BCK02 customer domain', () => {

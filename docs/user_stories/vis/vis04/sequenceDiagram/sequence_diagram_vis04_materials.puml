@@ -1,0 +1,222 @@
+
+
+@startuml sequence_diagram_vis04_materials
+autonumber
+skinparam shadowing true
+skinparam responseMessageBelowArrow true
+
+title Sequence Diagram - VIS04 Textures and Materials (PBR Creation, Asset Override, Failure & Disposal)
+
+participant Viewer as "KitchenViewer\n(VIS01)"
+participant Engine as "ViewerEngine\n(VIS01)"
+participant Layout as "KitchenLayoutModule\n(VIS02)"
+participant Room as "KitchenRoomBuilder\n(VIS02)"
+participant Factory as "SceneElementFactory\n(VIS02)"
+participant Create as "createKitchenMaterialFactory\n(VIS04, KitchenMaterialFactory.js)"
+participant MatFactory as "materials :\nKitchenMaterialFactory\n(object returned, VIS04)"
+participant Parser as "MaterialParser\n(VIS04)"
+participant Helper as "MaterialApplicationHelper\n(VIS04)"
+participant Assets as "LoadedAssets\n(VIS01)"
+participant Three as "three\n(MeshStandardMaterial / Texture /\nSkeletonUtils)"
+
+note over Viewer, Three
+    Precondition: the VIS01 activeConfigurationParser has checked that every *MapAssetId exists
+    and is a TEXTURE asset (BR 13); all textures and glTF models are preloaded into LoadedAssets.
+    The WEB06 back end has already applied MATERIAL_REQUIRED, INCOMPLETE_TEXTURE_SET and
+    MODEL_TEXTURES_MISSING (BR 6, BR 7). Every map is ALWAYS cloned: LoadedAssets is never mutated.
+end note
+
+== 1. Material factory creation (one per build, D15) ==
+
+activate Viewer
+Viewer -> Engine : await load(configuration, assets, defaultSceneModules, signal)
+activate Engine
+Engine -> Layout : build(context)
+activate Layout
+Layout -> Create : createMaterialFactory(context.assets)\n(option, default createKitchenMaterialFactory)
+activate Create
+create MatFactory
+Create -> MatFactory : <<create>> factory object (closure over assets,\nmaterial cache, created materials / textures)
+MatFactory --> Create : factory
+Create --> Layout : materials: KitchenMaterialFactory
+deactivate Create
+
+== 2. Room surfaces and procedural elements (required = true) ==
+
+Layout -> Room : build(dimensions, floorMaterial, wallMaterial, materials)
+activate Room
+Room -> MatFactory : create(floorMaterial)  (default required = true;\nno worldScaleUv, ALN-7)
+activate MatFactory
+MatFactory -> Parser : parse(floorMaterial, { required: true })
+activate Parser
+Parser -> Parser : roughness / metalness in [0, 1]; color matches #RRGGBB;\ncolor map + one of roughness / normal / bump (BR 6);\nfill defaults #ffffff / 1 / 0 (BR 16)
+Parser --> MatFactory : dto (valid; invalid case in section 4)
+deactivate Parser
+MatFactory -> MatFactory : cache lookup by JSON of dto (D5):\nhit -> return the same material (steps below skipped)
+
+loop for each map present in dto (color, roughness, normal, bump)
+    MatFactory -> Assets : getTexture(assetId)
+    activate Assets
+    Assets --> MatFactory : source texture\n(undefined -> MissingTextureError(assetId))
+    deactivate Assets
+    MatFactory -> Three : source.clone()
+    activate Three
+    Three --> MatFactory : map (shares the image data)
+    deactivate Three
+    MatFactory -> MatFactory : prepareMap(): wrapS = wrapT = RepeatWrapping;\ncolorSpace = SRGBColorSpace (color map) | NoColorSpace (others);\nneedsUpdate = true; track in createdTextures[]
+end
+
+note right of MatFactory
+    Normal and bump maps may be used together (D10).
+    Normal maps follow the OpenGL convention.
+    color tints the color map and roughness multiplies
+    the roughness map: the defaults keep the maps unchanged.
+end note
+
+MatFactory -> Three : new MeshStandardMaterial({ color, map, roughness, roughnessMap,\nmetalness, normalMap, bumpMap })
+activate Three
+Three --> MatFactory : pbrMaterial
+deactivate Three
+MatFactory -> MatFactory : track pbrMaterial in createdMaterials[]
+MatFactory --> Room : pbrMaterial
+deactivate MatFactory
+Room -> Room : walls: create(wallMaterial, { required: true }) (same steps);\nroom surfaces have UVs in metres (VIS02 D7)
+Room --> Layout : roomObjects
+deactivate Room
+
+Layout -> Factory : create(proceduralElement)
+activate Factory
+Factory -> Factory : shapes.geometry(shape, size): geometry with\nUVs in metres per face (D13, VIS04-ALN-4)
+Factory -> MatFactory : create(element.material, { required: true })
+activate MatFactory
+MatFactory -> MatFactory : parse + prepareMap + MeshStandardMaterial + track\n(same steps as above)
+MatFactory --> Factory : pbrMaterial
+deactivate MatFactory
+Factory -> Factory : mesh = new Mesh(geometry, pbrMaterial)
+Factory --> Layout : elementGroup
+deactivate Factory
+
+== 3. Asset element (imported model, WEB06 ALN-6) ==
+
+Layout -> Factory : create(assetElement)
+activate Factory
+Factory -> Assets : getModel(assetId)
+activate Assets
+Assets --> Factory : gltf
+deactivate Assets
+Factory -> Three : SkeletonUtils.clone(gltf.scene)
+activate Three
+Three --> Factory : root (own skeleton; source model unchanged, D16)
+deactivate Three
+
+alt element.material absent
+    Factory -> Factory : keep the model's own materials and textures (BR 8)
+else element.material present (override)
+    Factory -> MatFactory : applyOverride(root, element.material)
+    activate MatFactory
+    MatFactory -> Parser : parse(element.material, { required: false })
+    activate Parser
+    Parser --> MatFactory : dto (complete texture set: defaults filled;\nscalars only: absent scalars not filled)
+    deactivate Parser
+
+    alt dto has maps (complete set; e.g. embeddedTextureSet = false, BR 7)
+        MatFactory -> MatFactory : pbrMaterial = createFromDto(dto)\n(prepareMap + MeshStandardMaterial + track, as in section 2)
+        MatFactory -> Helper : applyToMeshes(root, pbrMaterial)
+        activate Helper
+        Helper -> Three : root.traverse(): for each Mesh,\nmaterial = pbrMaterial (array: every entry = pbrMaterial)
+        activate Three
+        Three --> Helper : every mesh updated (geometry / UVs preserved)
+        deactivate Three
+        Helper --> MatFactory : done
+        deactivate Helper
+    else scalars only (model has embedded textures, BR 7)
+        MatFactory -> Helper : tintMeshes(root, dto)
+        activate Helper
+        Helper -> Three : root.traverse() with Map<original, clone>: for each Mesh and each\noriginal material (array entries too): reuse the clone if it exists,\notherwise clone = original.clone() and set only the given\ncolor / roughness / metalness; replace on the mesh
+        activate Three
+        Three --> Helper : one tinted clone per distinct material (same map, normalMap, ...)
+        deactivate Three
+        Helper --> MatFactory : clones[]
+        deactivate Helper
+        MatFactory -> MatFactory : track clones in createdMaterials[]
+    end
+
+    MatFactory --> Factory : done
+    deactivate MatFactory
+end
+
+Factory --> Layout : elementGroup
+deactivate Factory
+Layout --> Engine : build complete
+deactivate Layout
+Engine --> Viewer : true
+deactivate Engine
+Viewer -> Viewer : state "ready"
+
+== 4. Invalid material: the build fails (D7, D11) ==
+
+Viewer -> Engine : await load(configuration, assets, defaultSceneModules, signal)
+activate Engine
+Engine -> Layout : build(context)
+activate Layout
+Layout -> Factory : create(proceduralElement)
+activate Factory
+Factory -> MatFactory : create(element.material, { required: true })
+activate MatFactory
+MatFactory -> Parser : parse(element.material, { required: true })
+activate Parser
+Parser --> MatFactory : throw MaterialBuildError(property, reason)\n(invalid-range | invalid-color | incomplete-maps)
+deactivate Parser
+MatFactory --> Factory : throw MaterialBuildError
+deactivate MatFactory
+Factory -> Factory : wrap: ElementBuildError(element.id,\n"invalid-material", { cause }) (VIS02 D9, ALN-8)
+Factory --> Layout : throw ElementBuildError
+deactivate Factory
+Layout --> Engine : build() throws
+deactivate Layout
+Engine -> Engine : dispose the partial build (section 5): the factory\nreleases what it had already created
+Engine --> Viewer : load() rejects (ViewerEngineError,\ncause ElementBuildError -> MaterialBuildError)
+deactivate Engine
+Viewer -> Viewer : state "failed" (VIS01); no substitute material or texture
+note right of Layout
+    Floor / walls: create() is called by KitchenLayoutModule,
+    with no element id; the MaterialBuildError propagates
+    unchanged and the viewer also shows "failed".
+end note
+deactivate Viewer
+
+== 5. Engine-managed cleanup and disposal (VIS01 / VIS02) ==
+
+... Reload, close, switch of the active configuration, or failed build ...
+
+Viewer -> Engine : dispose()
+activate Engine
+Engine -> Layout : dispose()
+activate Layout
+Layout -> Factory : release(scene roots)
+activate Factory
+Factory --> Layout : scene references released
+deactivate Factory
+Layout -> MatFactory : dispose(release)
+activate MatFactory
+loop for each mat in createdMaterials[] (factory materials and tinted clones)
+    MatFactory -> Three : mat.dispose()
+end
+loop for each tex in createdTextures[]
+    MatFactory -> Three : tex.dispose()
+end
+note right of MatFactory
+    Releases ONLY what the factory created; a second
+    dispose() returns immediately. Source textures,
+    source models and their materials stay untouched.
+end note
+MatFactory --> Layout : factory resources disposed
+deactivate MatFactory
+Layout --> Engine : layout disposed
+deactivate Layout
+Engine -> Assets : dispose()
+activate Assets
+Assets --> Engine : base models and original textures released
+deactivate Assets
+deactivate Engine
+@enduml

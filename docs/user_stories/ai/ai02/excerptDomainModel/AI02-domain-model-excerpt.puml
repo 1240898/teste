@@ -1,0 +1,203 @@
+@startuml AI02-domain-model-excerpt
+' Source: origin/arc/domain-model-sprint-2, a5a622a15cda51400a56d630533e5383cc05281a
+' docs/architecture/domainModel/domainmodel.puml
+title AI02 - Sprint 2 domain model excerpt
+skinparam classAttributeIconSize 0
+skinparam backgroundColor white
+skinparam packageStyle rectangle
+skinparam shadowing false
+hide empty members
+hide empty methods
+
+package "Consumption Forecast Aggregate" <<Rectangle>> {
+
+    class ConsumptionForecast <<entity>> <<aggregateRoot>> {
+        + startDate : Date
+        + endDate : Date
+        + version : int
+    }
+
+    class ForecastId <<vo>> {
+        + value : string
+    }
+
+    class ForecastName <<vo>> {
+        + name : String
+    }
+
+    class ForecastEntry <<vo>> {
+        + date : Date
+        + quantity : int
+    }
+
+    ConsumptionForecast "1" *-- "1" ForecastId : identified by >
+    ConsumptionForecast "1" *-- "1" ForecastName : named >
+    ConsumptionForecast "1" *-- "0..*" ForecastEntry : contains >
+
+}
+
+package "Supplier Scenario Aggregate" <<Rectangle>> {
+
+    class SupplierScenario <<entity>> <<aggregateRoot>> {
+        + importedAt : DateTime
+        + confirmedAt : DateTime [0..1]
+    }
+
+    class ScenarioId <<vo>> {
+        + value : string
+    }
+
+    enum ScenarioStatus <<enum>> {
+        IMPORTED
+        CONFIRMED
+        SUPERSEDED
+    }
+
+    class Supplier <<entity>> {
+    }
+
+    class SupplierId <<vo>> {
+        + value : string
+    }
+
+    class SupplierName <<vo>> {
+        + name : String
+    }
+
+    class SupplierOffer <<entity>> {
+        + coveredUnits : int
+        + leadTimeDays : int
+        + supplyLimit : Integer
+    }
+
+    class "Money" as OfferMoney <<vo>> {
+        + amount : BigDecimal
+        + currency : String
+    }
+
+    enum OfferOrigin <<enum>> {
+        MANUAL
+        LLM_GENERATED
+    }
+
+    SupplierScenario "1" *-- "1" ScenarioId : identified by >
+    SupplierScenario "1" --> "1" ScenarioStatus : status >
+    SupplierScenario "1" *-- "1..*" Supplier : lists >
+    SupplierScenario "1" *-- "0..*" SupplierOffer : contains >
+    Supplier "1" *-- "1" SupplierId : identified by >
+    Supplier "1" *-- "0..1" SupplierName : named >
+    SupplierOffer "1" *-- "1" OfferMoney : price >
+    SupplierOffer "1" --> "1" OfferOrigin : origin >
+    SupplierOffer "0..*" --> "1" Supplier : offered by >
+
+}
+
+package "Planning Result Aggregate" <<Rectangle>> {
+
+    class PlanningResult <<entity>> <<aggregateRoot>> {
+        + requestedAt : DateTime
+        + finishedAt : DateTime [0..1]
+        + referenceDate : Date
+        + simulation : boolean
+    }
+
+    class ResultId <<vo>> {
+        + value : string
+    }
+
+    enum PlanningType <<enum>> {
+        BILL_OF_MATERIALS
+        REQUIREMENTS_PLANNING
+    }
+
+    enum PlanningExecutionStatus <<enum>> {
+        PENDING
+        RUNNING
+        COMPLETED
+        FAILED
+    }
+
+    class InputProvenance <<vo>> {
+        + source : String
+        + versionOrRetrievedAt : String
+        + simulated : boolean
+    }
+
+    class InputSnapshot <<vo>> {
+        + content : JSON
+    }
+
+    class PlanLine <<entity>> {
+        + requirementDate : Date
+        + requiredUnits : int
+        + availableUnits : int
+        + remainingUnits : int
+        + replenishmentUnits : int
+        + orderDate : Date [0..1]
+        + expectedDeliveryDate : Date [0..1]
+        + unmetUnits : int
+    }
+
+    class PlanWarning <<vo>> {
+        + code : String
+        + message : String
+    }
+
+    PlanningResult "1" *-- "1" ResultId : identified by >
+    PlanningResult "1" --> "1" PlanningType : type >
+    PlanningResult "1" --> "1" PlanningExecutionStatus : status >
+    PlanningResult "1" *-- "1..*" InputProvenance : inputs used >
+    PlanningResult "1" *-- "0..1" InputSnapshot : forecast copy >
+    PlanningResult "1" *-- "1" InputSnapshot : stock snapshot >
+    PlanningResult "1" *-- "1" InputSnapshot : pizza BOM snapshot >
+    PlanningResult "1" *-- "0..*" PlanLine : daily plan >
+    PlanningResult "1" *-- "0..*" PlanWarning : warnings >
+
+}
+
+package "Product Aggregate" <<Rectangle>> {
+    class Product <<entity>> <<aggregateRoot>> {
+        + isActive : boolean
+    }
+
+    class ProductId <<vo>> {
+        + value : string
+    }
+
+    class SellableProduct <<entity>> {
+    }
+
+    class PredefinedPizza <<entity>> {
+    }
+
+    Product <|-- SellableProduct
+    SellableProduct <|-- PredefinedPizza
+    Product "1" *-- "1" ProductId : identified by >
+}
+
+package "Pizza Size Aggregate" <<Rectangle>> {
+
+    class PizzaSize <<entity>> <<aggregateRoot>> {
+        + isActive : boolean
+    }
+
+    class PizzaSizeId <<vo>> {
+        + id : string
+    }
+
+    class PizzaSizeName <<vo>> {
+        + name : string
+    }
+
+    PizzaSize "1" *-- "1" PizzaSizeId : identified by >
+    PizzaSize "1" *-- "1" PizzaSizeName : named >
+}
+
+ForecastEntry "0..*" --> "1" Product : consumption of >
+ForecastEntry "0..*" --> "0..1" PizzaSize : for size >
+SupplierOffer "0..*" --> "1" Product : supplies >
+PlanningResult "0..*" --> "0..1" ConsumptionForecast : executed for >
+PlanningResult "0..*" --> "0..1" SupplierScenario : used >
+PlanLine "0..*" --> "1" Product : concerns >
+PlanLine "0..*" --> "0..1" Supplier : proposed supplier >
+@enduml

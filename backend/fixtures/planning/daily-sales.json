@@ -1,0 +1,120 @@
+{
+  "componentConfigurations": [ {"productId":"PROD-90003","sizeId":"PSIZE-0002","stockUnitsConsumed":120} ],
+  "demandLines": [
+    {
+      "date":"2026-11-23",
+      "productId":"PROD-90020",
+      "quantity":5,
+      "sizeId":"PSIZE-0002",
+      "type":"pizza"
+    },
+    {"date":"2026-11-24","productId":"PROD-90030","quantity":6,"type":"directSale"}
+  ],
+  "forecast": {"endDate":"2026-11-24","id":"daily-sales-forecast","startDate":"2026-11-23","version":"1"},
+  "id":"daily-sales",
+  "openingStock": [
+    {"availableUnits":400,"productId":"PROD-90003","stockUnit":"g"},
+    {"availableUnits":4,"productId":"PROD-90030","stockUnit":"unit"}
+  ],
+  "pendingDeliveries": [],
+  "pizzaConfigurations": [ {"components": [ {"productId":"PROD-90003","quantity":1} ],"productId":"PROD-90020"} ],
+  "products": [
+    {
+      "acquisitionType":"none",
+      "isActive":true,
+      "isPizza":false,
+      "isPizzaComponent":true,
+      "isSellable":false,
+      "kind":"terminal",
+      "productId":"PROD-90003",
+      "stockUnit":"g",
+      "stockUnitsPerSale":null,
+      "tracked":true
+    },
+    {
+      "acquisitionType":"PRODUCED",
+      "isActive":true,
+      "isPizza":true,
+      "isPizzaComponent":false,
+      "isSellable":true,
+      "kind":"terminal",
+      "productId":"PROD-90020",
+      "stockUnit":null,
+      "stockUnitsPerSale":null,
+      "tracked":false
+    },
+    {
+      "acquisitionType":"PURCHASED",
+      "isActive":true,
+      "isPizza":false,
+      "isPizzaComponent":false,
+      "isSellable":true,
+      "kind":"terminal",
+      "productId":"PROD-90030",
+      "stockUnit":"unit",
+      "stockUnitsPerSale":2,
+      "tracked":true
+    }
+  ],
+  "recipes": [],
+  "sizes": [ {"isActive":true,"sizeId":"PSIZE-0002"} ],
+  "supplierScenario": {
+    "id":"daily-sales",
+    "offers": [
+      {
+	"coveredUnits":5000,
+	"leadTimeDays":1,
+	"priceEur":"75.00",
+	"productId":"PROD-90003",
+	"stockUnit":"g",
+	"supplierId":"SUP-01"
+      },
+      {
+	"coveredUnits":2000,
+	"leadTimeDays":0,
+	"priceEur":"31.00",
+	"productId":"PROD-90003",
+	"stockUnit":"g",
+	"supplierId":"SUP-02"
+      },
+      {
+	"coveredUnits":250,
+	"leadTimeDays":2,
+	"priceEur":"5.00",
+	"productId":"PROD-90003",
+	"stockUnit":"g",
+	"supplierId":"SUP-03"
+      },
+      {
+	"coveredUnits":10,
+	"dailyLimit":0,
+	"leadTimeDays":1,
+	"priceEur":"8.50",
+	"productId":"PROD-90030",
+	"stockUnit":"unit",
+	"supplierId":"SUP-01"
+      },
+      {
+	"coveredUnits":10,
+	"dailyLimit":30,
+	"leadTimeDays":1,
+	"priceEur":"8.50",
+	"productId":"PROD-90030",
+	"stockUnit":"unit",
+	"supplierId":"SUP-02"
+      },
+      {
+	"coveredUnits":10,
+	"leadTimeDays":1,
+	"priceEur":"8.50",
+	"productId":"PROD-90030",
+	"stockUnit":"unit",
+	"supplierId":"SUP-03"
+      }
+    ],
+    "status":"CONFIRMED",
+    "supplierIds": ["SUP-01", "SUP-02", "SUP-03" ],
+    "version":"1"
+  },
+  "version":"1"
+}

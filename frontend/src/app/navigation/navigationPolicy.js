@@ -138,6 +138,14 @@ export const SECTIONS = Object.freeze([
     group: SectionGroup.MY_ACCOUNT,
     roles: ['CUSTOMER'],
     owner: 'GDP01',
+    enabled: true,
+  }),
+  section({
+    id: 'sharedResources',
+    path: '/documents',
+    group: SectionGroup.MY_ACCOUNT,
+    owner: 'SYS04',
+    enabled: true,
   }),
   section({
     id: 'products',

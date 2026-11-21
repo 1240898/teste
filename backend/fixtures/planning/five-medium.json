@@ -1,0 +1,69 @@
+{
+  "componentConfigurations": [ {"productId":"PROD-90003","sizeId":"PSIZE-0002","stockUnitsConsumed":120} ],
+  "demandLines": [ {"productId":"PROD-90020","quantity":5,"sizeId":"PSIZE-0002","type":"pizza"} ],
+  "id":"five-medium",
+  "openingStock": [ {"availableUnits":400,"productId":"PROD-90003","stockUnit":"g"} ],
+  "pendingDeliveries": [],
+  "pizzaConfigurations": [ {"components": [ {"productId":"PROD-90003","quantity":1} ],"productId":"PROD-90020"} ],
+  "products": [
+    {
+      "acquisitionType":"none",
+      "isActive":true,
+      "isPizza":false,
+      "isPizzaComponent":true,
+      "isSellable":false,
+      "kind":"terminal",
+      "productId":"PROD-90003",
+      "stockUnit":"g",
+      "stockUnitsPerSale":null,
+      "tracked":true
+    },
+    {
+      "acquisitionType":"PRODUCED",
+      "isActive":true,
+      "isPizza":true,
+      "isPizzaComponent":false,
+      "isSellable":true,
+      "kind":"terminal",
+      "productId":"PROD-90020",
+      "stockUnit":null,
+      "stockUnitsPerSale":null,
+      "tracked":false
+    }
+  ],
+  "recipes": [],
+  "sizes": [ {"isActive":true,"sizeId":"PSIZE-0002"} ],
+  "supplierScenario": {
+    "id":"five-medium",
+    "offers": [
+      {
+	"coveredUnits":5000,
+	"leadTimeDays":1,
+	"priceEur":"75.00",
+	"productId":"PROD-90003",
+	"stockUnit":"g",
+	"supplierId":"SUP-01"
+      },
+      {
+	"coveredUnits":2000,
+	"leadTimeDays":0,
+	"priceEur":"31.00",
+	"productId":"PROD-90003",
+	"stockUnit":"g",
+	"supplierId":"SUP-02"
+      },
+      {
+	"coveredUnits":250,
+	"leadTimeDays":2,
+	"priceEur":"5.00",
+	"productId":"PROD-90003",
+	"stockUnit":"g",
+	"supplierId":"SUP-03"
+      }
+    ],
+    "status":"CONFIRMED",
+    "supplierIds": ["SUP-01", "SUP-02", "SUP-03" ],
+    "version":"1"
+  },
+  "version":"1"
+}

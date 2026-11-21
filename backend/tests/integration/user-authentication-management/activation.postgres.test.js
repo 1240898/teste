@@ -55,7 +55,13 @@ describeDB('AA07 activation with PostgreSQL', () => {
   const register = (email, marketingConsent = false) =>
     api
       .post(`${prefix}/register`)
-      .send({ name: 'Recipient', email, password, marketingConsent });
+      .send({
+        name: 'Recipient',
+        email,
+        password,
+        marketingConsent,
+        phoneNumber: '+351912345678',
+      });
   const invite = (email, activationMethod) =>
     api
       .post(`${prefix}/invitations`)

@@ -1,3 +1,4 @@
+import { planningMessages } from './planningMessages.js';
 import { kitchenConfigurationMessages } from './kitchenConfigurationMessages.js';
 // Each interface key has Portuguese and English copy. Business data is passed
 // as values and never used as a translation key.
@@ -61,6 +62,18 @@ const messages = {
   viewerFailed: [
     'O visualizador 3D parou devido a um erro.',
     'The 3D viewer stopped because of an error.',
+  ],
+  lightControls: ['Iluminação', 'Lighting'],
+  lightAmbient: ['Luz ambiente', 'Ambient light'],
+  lightKey: ['Projetor principal', 'Key spotlight'],
+  lightEnabled: ['Ligada', 'On'],
+  lightColour: ['Cor', 'Colour'],
+  lightIntensity: ['Intensidade', 'Intensity'],
+  lightCutoff: ['Semiângulo de abertura', 'Cutoff half-angle'],
+  lightPenumbra: ['Penumbra', 'Penumbra'],
+  lightUnavailable: [
+    'Os controlos de iluminação estão indisponíveis. Recarregue a cozinha para tentar novamente.',
+    'Lighting controls are unavailable. Reload the kitchen to try again.',
   ],
   viewerReload: ['Recarregar', 'Reload'],
   viewerResetView: ['Repor vista', 'Reset view'],
@@ -277,6 +290,27 @@ const messages = {
   account: ['Conta', 'Account'],
   userManagement: ['Gestão de utilizadores', 'User management'],
   securityAudit: ['Registos de segurança', 'Security audit logs'],
+  sharedResources: ['Documentos', 'Documents'],
+  sharedDocumentsLoading: ['A carregar documentos…', 'Loading documents…'],
+  sharedDocumentsLoadError: ['Não foi possível carregar os documentos.', 'Documents could not be loaded.'],
+  sharedDocumentsEmpty: ['Ainda não há documentos partilhados.', 'There are no shared documents yet.'],
+  sharedDocumentName: ['Documento', 'Document'],
+  sharedDocumentActions: ['Ações', 'Actions'],
+  sharedDocumentFile: ['Ficheiro (PDF, DOCX ou TXT, até 10 MiB)', 'File (PDF, DOCX or TXT, up to 10 MiB)'],
+  sharedDocumentDownload: ['Descarregar', 'Download'],
+  sharedDocumentPublish: ['Publicar', 'Publish'],
+  sharedDocumentReplace: ['Substituir', 'Replace'],
+  sharedDocumentDelete: ['Remover', 'Remove'],
+  sharedDocumentReplacing: ['Novo ficheiro para {name}', 'New file for {name}'],
+  sharedDocumentConfirmPublication: ['Confirmo que este documento pode ser lido por todas as contas ativas e não contém informação restrita.', 'I confirm this document can be read by all active accounts and contains no restricted information.'],
+  sharedDocumentConfirmDelete: ['Remover o documento {name}?', 'Remove the document {name}?'],
+  sharedDocumentPublished: ['Documento publicado.', 'Document published.'],
+  sharedDocumentReplaced: ['Documento substituído.', 'Document replaced.'],
+  sharedDocumentDeleted: ['Documento removido.', 'Document removed.'],
+  sharedDocumentMissing: ['O documento já não está disponível.', 'The document is no longer available.'],
+  sharedDocumentExists: ['Já existe um documento com este nome. Usa Substituir para o atualizar.', 'A document with this name already exists. Use Replace to update it.'],
+  sharedDocumentTooLarge: ['O ficheiro excede o limite de 10 MiB.', 'The file exceeds the 10 MiB limit.'],
+  sharedDocumentError: ['Não foi possível concluir a operação. Ao publicar, usa um PDF, DOCX ou TXT válido.', 'The operation could not be completed. When publishing, use a valid PDF, DOCX or TXT file.'],
   securityAuditIntro: [
     'Consulte tentativas de acesso negadas. Os registos não incluem palavras-passe, tokens ou conteúdo dos pedidos.',
     'Review denied access attempts. Events contain no passwords, tokens or request contents.',
@@ -564,26 +598,23 @@ const messages = {
   acquisitionType: ['Tipo de aquisição', 'Acquisition type'],
   purchased: ['Comprado', 'Purchased'],
   produced: ['Produzido', 'Produced'],
-  compositionItems: [
-    'Composição',
-    'Composition',
-  ],
+  compositionItems: ['Composição', 'Composition'],
   compositionSelectionHelp: [
     'Escolha componentes já existentes e indique a quantidade. Para não adicionar componentes, deixe a lista vazia.',
     'Choose existing components and enter the quantity. Leave the list empty if this product has no components.',
   ],
   addCompositionProduct: ['Adicionar componente', 'Add component'],
   removeCompositionProduct: ['Remover', 'Remove'],
-  refreshCompositionProducts: ['Atualizar lista de produtos', 'Refresh product list'],
+  refreshCompositionProducts: [
+    'Atualizar lista de produtos',
+    'Refresh product list',
+  ],
   noCompositionProducts: [
     'Não há componentes de pizza ativos disponíveis. Crie um produto marcado como componente de pizza ou atualize a lista.',
     'No active pizza components are available. Create a product marked as a pizza component or refresh the list.',
   ],
   componentTypeId: ['ID do tipo de componente', 'Component type ID'],
-  allergenIds: [
-    'Alergénios diretos',
-    'Direct allergens',
-  ],
+  allergenIds: ['Alergénios diretos', 'Direct allergens'],
   componentTypeBaseDough: ['Massa base', 'Base Dough'],
   componentTypeBaseSauce: ['Molho base', 'Base Sauce'],
   componentTypeCheese: ['Queijo', 'Cheese'],
@@ -707,12 +738,20 @@ const messages = {
     'User account: name, e-mail address, assigned roles and the sign-in method (protected password or Google account).',
   ],
   privacyDataCustomer: [
-    'Clientes: contactos, moradas e restrições alimentares, quando indicados.',
-    'Customers: contact details, addresses and dietary restrictions, when provided.',
+    'Clientes: nome, e-mail e número de telemóvel (obrigatório na ficha de cliente), para contacto sobre encomendas.',
+    'Customers: name, e-mail and mobile phone number (required in the customer record), to contact you about orders.',
+  ],
+  privacyDataHealth: [
+    'As alergias e restrições alimentares são opcionais. A LaPrizza só as regista com o seu consentimento explícito e apaga-as quando o retira.',
+    'Allergies and dietary restrictions are optional. LaPrizza records them only with your explicit consent and erases them when you withdraw it.',
+  ],
+  privacyDataConsents: [
+    'Consentimentos: a sua decisão sobre comunicações de marketing e sobre alergias e restrições alimentares, com a data em que a tomou.',
+    'Consents: your decision on marketing communications and on allergies and dietary restrictions, with the date you made it.',
   ],
   privacyDataAccess: [
-    'Registos de acesso: tentativas de acesso negadas, sem palavras-passe nem segredos de sessão.',
-    'Access records: denied access attempts, without passwords or session secrets.',
+    'Para proteger o acesso, a LaPrizza guarda registos de sessão, hashes dos tokens de recuperação e de ativação e uma auditoria das recusas de acesso. A auditoria inclui a data, a operação e, quando disponíveis, o identificador e os perfis da conta. O sistema usa temporariamente o IP para limitar tentativas de início de sessão.',
+    'To protect access, LaPrizza keeps session records, hashes of recovery and activation tokens, and an audit of access denials. The audit includes the time, the operation and, when available, the account identifier and roles. The system uses the IP address temporarily to limit sign-in attempts.',
   ],
   privacyPurposeTitle: ['Finalidades', 'Purposes'],
   privacyPurpose: [
@@ -721,8 +760,12 @@ const messages = {
   ],
   privacyRetentionTitle: ['Conservação', 'Retention'],
   privacyRetention: [
-    'Os dados são conservados apenas durante o tempo necessário para estas finalidades ou para cumprir obrigações legais.',
-    'Data is kept only for as long as needed for these purposes or to meet legal obligations.',
+    'A LaPrizza conserva os dados da conta e da ficha enquanto forem necessários para gerir o acesso ou prestar o serviço. Por omissão, conserva as sessões terminadas durante sete dias. Os prazos de eliminação de 24 horas para registos de recuperação e de 30 dias para convites de ativação são propostas que aguardam aplicação automática.',
+    'LaPrizza keeps account and customer record data while needed to manage access or provide the service. Ended sessions are retained for seven days by default. The proposed deletion periods of 24 hours for recovery records and 30 days for activation invitations are awaiting automated enforcement.',
+  ],
+  privacySelfService: [
+    'Em «Os meus dados», pode corrigir o nome e o telemóvel, gerir os alergénios e retirar consentimentos. O e-mail é de leitura. Pode pedir a sua retificação.',
+    'In My Data, you can correct your name and mobile number, manage allergens and withdraw consent. Your email address is read-only. You can request a correction.',
   ],
   privacyRightsTitle: ['Os seus direitos', 'Your rights'],
   privacyRights: [
@@ -731,14 +774,116 @@ const messages = {
   ],
   // WEB06 - kitchen configuration page and validation issue codes.
   ...kitchenConfigurationMessages,
+  ...planningMessages,
 
-    pendingOutcomeNotice: [
+  // GDP01: phone number, profile completion and "My data" (consents).
+  managementCustomerConsent: [
+    'Confirmo que o cliente deu consentimento explícito para registar estas restrições alimentares.',
+    'I confirm that the customer explicitly consented to recording these dietary restrictions.',
+  ],
+  managementCustomerConsentRequired: [
+    'Confirme o consentimento explícito do cliente para guardar estas restrições alimentares.',
+    'Confirm the customer’s explicit consent before saving these dietary restrictions.',
+  ],
+  phoneNumberHint: [
+    'Formato internacional, por exemplo +351 912 345 678.',
+    'International format, for example +351 912 345 678.',
+  ],
+  invalidPhoneNumber: [
+    'Número de telemóvel inválido. Use o formato internacional, por exemplo +351 912 345 678.',
+    'Invalid phone number. Use the international format, for example +351 912 345 678.',
+  ],
+  myPrivacy: ['Os meus dados', 'My data'],
+  myDataIntro: [
+    'Consulte e atualize os seus dados de contacto, os seus alergénios e os seus consentimentos.',
+    'View and update your contact details, your allergens and your consents.',
+  ],
+  loadingMyData: ['A carregar os seus dados…', 'Loading your data…'],
+  myDataLoadFailed: [
+    'Não foi possível carregar os seus dados. Tente novamente.',
+    'Your data could not be loaded. Please try again.',
+  ],
+  completeProfile: ['Complete o seu perfil', 'Complete your profile'],
+  completeProfileIntro: [
+    'Para usar as funcionalidades de cliente, indique o seu número de telemóvel. Será usado apenas para o contactarmos sobre as suas encomendas.',
+    'To use the customer features, enter your mobile phone number. It is only used to contact you about your orders.',
+  ],
+  saveProfile: ['Guardar perfil', 'Save profile'],
+  profileCompletionFailed: [
+    'Não foi possível guardar o perfil. Verifique o número e tente novamente.',
+    'The profile could not be saved. Check the number and try again.',
+  ],
+  profileAlreadyCompleted: [
+    'O seu perfil já está completo.',
+    'Your profile is already complete.',
+  ],
+  save: ['Guardar', 'Save'],
+  contactDetails: ['Dados de contacto', 'Contact details'],
+  contactDetailsSaved: [
+    'Dados de contacto guardados.',
+    'Contact details saved.',
+  ],
+  contactDetailsFailed: [
+    'Não foi possível guardar os dados de contacto.',
+    'The contact details could not be saved.',
+  ],
+  myAllergens: ['Os meus alergénios', 'My allergens'],
+  myAllergensIntro: [
+    'Opcional. A informação sobre alergias é um dado de saúde: só a guardamos com o seu consentimento explícito e pode retirá-lo a qualquer momento.',
+    'Optional. Allergy information is health data: we only store it with your explicit consent and you can withdraw it at any time.',
+  ],
+  healthDataConsent: [
+    'Autorizo a LaPrizza a tratar a informação sobre as minhas alergias para me avisar de produtos que contenham esses alergénios.',
+    'I consent to LaPrizza processing my allergy information to warn me about products that contain those allergens.',
+  ],
+  otherRestrictionsHint: [
+    'Outras restrições registadas pelo restaurante (mantêm-se):',
+    'Other restrictions recorded by the restaurant (kept):',
+  ],
+  allergensSaved: ['Alergénios guardados.', 'Allergens saved.'],
+  allergensFailed: [
+    'Não foi possível guardar os alergénios.',
+    'The allergens could not be saved.',
+  ],
+  healthConsentRequired: [
+    'É necessário o seu consentimento explícito para guardar alergénios.',
+    'Your explicit consent is required to store allergens.',
+  ],
+  allergenNotFound: [
+    'Um dos alergénios escolhidos não existe.',
+    'One of the selected allergens does not exist.',
+  ],
+  withdrawHealthConsentWarning: [
+    'Ao retirar o consentimento, os alergénios guardados serão apagados.',
+    'Withdrawing consent erases the stored allergens.',
+  ],
+  healthConsentWithdrawn: [
+    'Consentimento retirado. Os alergénios foram apagados.',
+    'Consent withdrawn. The allergens were erased.',
+  ],
+  marketingCommunications: [
+    'Comunicações de marketing',
+    'Marketing communications',
+  ],
+  marketingConsentGiven: [
+    'Passará a receber e-mails de marketing.',
+    'You will now receive marketing emails.',
+  ],
+  marketingConsentWithdrawn: [
+    'Deixará de receber e-mails de marketing.',
+    'You will no longer receive marketing emails.',
+  ],
+  marketingConsentFailed: [
+    'Não foi possível guardar a sua preferência de marketing.',
+    'Your marketing preference could not be saved.',
+  ],
+  pendingOutcomeNotice: [
     'O resultado de uma operação anterior ainda não foi confirmado. Atualize os dados e verifique se foi aplicada antes de a repetir.',
     'The result of a previous operation has not been confirmed. Refresh the data and check whether it was applied before trying again.',
   ],
   pendingOutcomeConfirm: ['Verifiquei o resultado', 'I checked the result'],
 
-    pendingOutcomeApplied: [
+  pendingOutcomeApplied: [
     'A API confirma que a operação foi aplicada.',
     'The API confirms that the operation was applied.',
   ],
@@ -754,7 +899,7 @@ const messages = {
     'Dados atualizados a partir da API. Confirme na lista se a operação foi aplicada antes de a repetir; os valores foram repostos.',
     'Data refreshed from the API. Check in the list whether the operation was applied before repeating it; the values were restored.',
   ],
-  
+
   conflictingFields: [
     'Campos alterados por si e por outro gestor',
     'Fields changed by you and by another manager',
@@ -765,7 +910,7 @@ const messages = {
     'Escolha um valor para cada campo em conflito.',
     'Choose a value for each conflicting field.',
   ],
-    predefinedPizzaInactive: [
+  predefinedPizzaInactive: [
     'Pizza inativa: não aparece no catálogo.',
     'Inactive pizza: not shown in the catalogue.',
   ],
@@ -773,7 +918,7 @@ const messages = {
     'O produto não está marcado como vendável.',
     'The product is not marked as sellable.',
   ],
-    predefinedPizzaNotOffered: [
+  predefinedPizzaNotOffered: [
     'Pizza ativa e vendável, mas sem oferta no catálogo.',
     'Active and sellable pizza, but not offered in the catalogue.',
   ],

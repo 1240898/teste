@@ -52,6 +52,8 @@ export function createUserModule({
   requestActivationInvitation,
   invitationDelivery: injectedInvitationDelivery,
   sessionConfig,
+  // GDP01: customer-record creation at local registration (customer module).
+  customerProfiles = null,
 } = {}) {
   if (identityProvider === undefined)
     identityProvider = externalIdentity
@@ -119,6 +121,7 @@ export function createUserModule({
     sessionsConfig,
     {
       ...aa06,
+      customerProfiles,
       invitationDelivery,
       invitationTokenService,
       invitationValiditySeconds: activationConfig?.validitySeconds,

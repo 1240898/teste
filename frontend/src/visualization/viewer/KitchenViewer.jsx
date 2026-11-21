@@ -5,6 +5,8 @@ import { AssetLoadError, SceneAssetLoader } from '../scene/SceneAssetLoader.js';
 import { ViewerEngine } from '../scene/ViewerEngine.js';
 import { isWebGLAvailable } from '../scene/webglSupport.js';
 import { loadActiveKitchen } from './kitchenViewerLoader.js';
+import { withLightControls } from '../scene/defaultSceneModules.js';
+import ManagerLightControls from './LightControlsPanel.jsx';
 import ViewerStatusMessage from './ViewerStatusMessage.jsx';
 
 const defaults = {
@@ -21,10 +23,13 @@ export default function KitchenViewer({
   request,
   modules,
   dependencies = defaults,
+  canEditLights = false,
+  createLightControls,
 }) {
   const { t } = useLocale();
   const title = useId();
   const viewport = useRef(null);
+  const reloadButton = useRef(null);
   const currentRequest = useRef(request);
   const stopAttempt = useRef(null);
   const [attempt, setAttempt] = useState(0);
@@ -103,16 +108,20 @@ export default function KitchenViewer({
         engine = dependencies.createEngine(canvas, host, {
           onFatalError: failEngine,
         });
+        const controls = createLightControls?.();
+        const factories = controls
+          ? withLightControls(modules, controls)
+          : modules;
         const ownedAssets = assets;
         assets = undefined;
         const built = await engine.load(
           configuration,
           ownedAssets,
-          modules,
+          factories,
           signal,
         );
         if (signal.aborted || !built || !engine.start()) return;
-        publish({ status: 'ready', configuration });
+        publish({ status: 'ready', configuration, controls });
       } catch (error) {
         engine?.dispose();
         assets?.dispose();
@@ -135,7 +144,7 @@ export default function KitchenViewer({
       if (!signal.aborted) return run();
     });
     return cleanup;
-  }, [attempt, modules, dependencies]);
+  }, [attempt, modules, dependencies, createLightControls]);
 
   function restart() {
     stopAttempt.current?.();
@@ -174,6 +183,7 @@ export default function KitchenViewer({
             <button
               className="button button--secondary"
               type="button"
+              ref={reloadButton}
               onClick={restart}
             >
               {t('viewerReload')}
@@ -189,6 +199,13 @@ export default function KitchenViewer({
         role="img"
         aria-label={t('viewerCanvas')}
       />
+      {ready && canEditLights && state.controls && (
+        <ManagerLightControls
+          key={attempt}
+          controls={state.controls}
+          reloadButton={reloadButton}
+        />
+      )}
     </section>
   );
 }

@@ -7,13 +7,13 @@ The SYS work defines how LaPrizza is deployed, accessed and operated in the DEI 
 | ID | User Story | Documentation |
 |---|---|---|
 | SYS01 | Automated Deployment and Validation | [Detailed story](sys01/SYS01.md)|
-| SYS02 | Institutional Network Access Restriction | [Detailed story](sys01/SYS01.md)|
+| SYS02 | Institutional Network Access Restriction | [Detailed story](sys02/SYS02.md)|
 | SYS03 | Configurable Allowed Endpoints | [Detailed story](sys01/SYS01.md) |
-| SYS04 | Shared Resource Folder | [Detailed story](sys01/SYS01.md) |
+| SYS04 | Shared Resource Folder | [Deployment and validation](../../../deploy/README.md#sys04-shared-resource-folder) |
 | SYS05 | Controlled Linux Remote Shell Access | [Detailed story](sys01/SYS01.md) |
 | SYS06 | Operational Risk Assessment | [Detailed story](sys01/SYS01.md) |
 | SYS07 | Minimum Business Continuity Objective | [Detailed story](sys01/SYS01.md) |
-| SYS08 | Backup Strategy and Recovery Validation | [Detailed story](sys01/SYS01.md) |
+| SYS08 | Backup Strategy and Recovery Validation | [Detailed story](sys08/SYS08.md) |
 
 ## Deployment Representation
 

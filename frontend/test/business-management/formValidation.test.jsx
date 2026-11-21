@@ -6,6 +6,7 @@ import { jest } from '@jest/globals';
 import LocaleProvider from '../../src/shared/locale/LocaleProvider.jsx';
 import { AuthContext } from '../../src/features/authentication/state/authContext.js';
 import AllergensPage from '../../src/features/business-management/allergens/AllergensPage.jsx';
+import CustomersPage from '../../src/features/business-management/customers/CustomersPage.jsx';
 import ProductsPage from '../../src/features/business-management/products/ProductsPage.jsx';
 
 let container;
@@ -102,4 +103,103 @@ test('product form requires description and category and does not submit incompl
   expect(
     container.querySelector('#categoryId').getAttribute('aria-invalid'),
   ).toBe('true');
+});
+
+const customer = {
+  id: 'CUST-0001',
+  name: 'Ana Silva',
+  email: 'ana@example.com',
+  phoneNumber: '+351912345678',
+  active: true,
+};
+const milk = { name: 'Leite', allergenId: 7 };
+
+test('customer creation requires explicit confirmation before sending restrictions', async () => {
+  api.create.mockResolvedValue(customer);
+  await render(<CustomersPage api={api} />);
+  await click('Criar');
+  await setValue('name', customer.name);
+  await setValue('email', customer.email);
+  await setValue('phoneNumber', customer.phoneNumber);
+  await setValue('dietaryRestrictions', JSON.stringify([milk]));
+  const consent = container.querySelector('#healthDataConsent');
+  expect(consent.checked).toBe(false);
+
+  await click('Guardar');
+  expect(api.create).not.toHaveBeenCalled();
+  expect(container.textContent).toContain('Confirme o consentimento explícito');
+
+  await act(async () => consent.click());
+  await click('Guardar');
+  expect(api.create).toHaveBeenCalledWith(
+    expect.objectContaining({
+      healthDataConsent: true,
+      dietaryRestrictions: [milk],
+    }),
+  );
+});
+
+test('customer creation without restrictions does not require or transmit consent', async () => {
+  api.create.mockResolvedValue(customer);
+  await render(<CustomersPage api={api} />);
+  await click('Criar');
+  await setValue('name', customer.name);
+  await setValue('email', customer.email);
+  await setValue('phoneNumber', customer.phoneNumber);
+  await click('Guardar');
+
+  expect(api.create).toHaveBeenCalledWith({
+    name: customer.name,
+    email: customer.email,
+    phoneNumber: customer.phoneNumber,
+    dietaryRestrictions: [],
+  });
+});
+
+test('customer contact edit omits unchanged restrictions and consent', async () => {
+  const record = {
+    ...customer,
+    dietaryRestrictions: [milk],
+    healthDataConsent: { given: true },
+  };
+  api.list.mockResolvedValue([record]);
+  api.update = jest.fn().mockResolvedValue(record);
+  await render(<CustomersPage api={api} />);
+  await click('Editar');
+  expect(container.querySelector('#healthDataConsent').checked).toBe(false);
+  await setValue('name', 'Ana Costa');
+  await click('Guardar');
+
+  expect(api.update).toHaveBeenCalledWith(customer.id, {
+    name: 'Ana Costa',
+    email: customer.email,
+    phoneNumber: customer.phoneNumber,
+  });
+});
+
+test('customer restriction edit requires a new confirmation in the form', async () => {
+  const record = {
+    ...customer,
+    dietaryRestrictions: [milk],
+    healthDataConsent: { given: true },
+  };
+  api.list.mockResolvedValue([record]);
+  api.update = jest.fn().mockResolvedValue(record);
+  await render(<CustomersPage api={api} />);
+  await click('Editar');
+  const changed = [{ ...milk, description: 'Evitar leite' }];
+  await setValue('dietaryRestrictions', JSON.stringify(changed));
+
+  await click('Guardar');
+  expect(api.update).not.toHaveBeenCalled();
+
+  await act(async () => container.querySelector('#healthDataConsent').click());
+  await click('Guardar');
+  expect(api.update).toHaveBeenCalledWith(
+    customer.id,
+    expect.objectContaining({
+      dietaryRestrictions: changed,
+      healthDataConsent: true,
+    }),
+  );
 });

@@ -29,4 +29,18 @@ export class CustomerController {
     await this.service.activate(req.params.id);
     res.status(204).end();
   }
+  // GDP01: the authenticated Customer's own record.
+  async getMine(req, res) {
+    res.json(await this.service.getMine(req.user));
+  }
+  async completeMine(req, res) {
+    const customer = await this.service.completeMine(req.user, req.body);
+    res.location('/api/v1/customers/me').status(201).json(customer);
+  }
+  async updateMine(req, res) {
+    res.json(await this.service.updateMine(req.user, req.body));
+  }
+  async updateMyAllergens(req, res) {
+    res.json(await this.service.updateMyAllergens(req.user, req.body));
+  }
 }
